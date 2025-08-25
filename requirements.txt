@@ -1,0 +1,13 @@
+# VHS Capture Automation Dependencies
+# Install with: pip install -r requirements.txt
+# Note: pillow, numpy, opencv, rich and keyboard are managed by conda environment
+
+# Scientific computing (install after conda numpy to avoid conflicts)
+scipy
+
+# Terminal UI and keyboard input (also in conda environment)
+rich
+keyboard
+
+# TBC processing tools
+tbc-video-export>=0.1.8

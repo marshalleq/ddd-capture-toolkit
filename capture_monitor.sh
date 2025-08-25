@@ -1,0 +1,10 @@
+#!/bin/bash
+echo "Monitor this during your next capture:"
+echo "Terminal 1: iostat -x 1"
+echo "Terminal 2: watch -n 1 \"cat /sys/block/nvme0n1/stat\""
+echo "Terminal 3: sudo nvme smart-log /dev/nvme0n1 | grep temperature"
+echo ""
+echo "Watch for:"
+echo "- Write speeds dropping below 1GB/s"
+echo "- Temperature rising above 70°C"  
+echo "- %util staying above 80% consistently"

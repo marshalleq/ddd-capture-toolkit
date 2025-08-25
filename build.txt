@@ -1,0 +1,323 @@
+DdD Capture Toolkit
+DdD Capture Toolkit is a cross platform python script.  Mostly it has been tested on Fedora 41/42 however it has also been run on Mac and Windows Platforms, though these haven’t been tested recently.  I’ve put this together because there wasn’t a solution for audio if all you had was a Domesday Duplicator.  Now there is.
+
+This is early work, so there will be bugs to work through, especially on non Fedora KDE platforms I expect, but given this is python and most dependencies stand on their own, these should be minimal.
+
+System Features
+    • Semi-automated capture workflow
+    • Semi-automated video processing
+    • Video test chart creations tools (Used for A/V sync, also useful for tapping VCR’s and probably hack-dac too)
+    • Automated DVD creation (for recording charts to VHS)
+    • Semi-automated A/V capture sync calibration tools
+    • Mechanical Audio Alignments (vhs-decode-auto-audio-align)
+    • Mono/Stereo Analog Audio
+    • PAL / NTSC Support
+    • Cross Platform (Linux, Mac Windows)
+    • DVD Creation tools (For creating Video Test Charts on VHS)
+
+Hardware Support
+    • Domesday Duplicator
+    • Clockgenmod Lite
+
+Future possibilities depending on demand
+    • RF Audio Support (Likely)
+    • Incorporate tooling (LD-Decode etc) if there is demand and that makes things easier
+    • Passing capture / processing options through to the command line
+    • Other hardware?
+Recommended
+    • Small audio mixer to adjust audio levels
+    • RCA – Jack cable (for mixer)
+    • Jack cables for Clockgen Lite Audio inputs
+    • Headphones for monitoring
+    • Method for parallel Video output for monitoring e.g. VHS Composite out
+    • VHS Player etc
+Support
+https://digital-archivist.com/index.php/community/scene-by-scene-capturing-techniques/ddd-capture-toolkit/
+More about this script and how it works
+This started off as a project to simply add audio, but quickly evolved due to emerging problems.
+    • Firstly, having to start audio and video manually created capture start time differences requiring post processing which is often not very easy.
+    • Secondly, the audio drift issues caused by clock differences and mechanical player issues were not solvable if the audio wasn’t closely aligned due to the way the audio reads the timing information from the video stream.
+The most pressing of these initial challenges was that the Domesday Duplicator required pyAutoGui to click buttons which was problematic and introduced variable latencies, which is why I built the automated A/V Alignment.
+A/V Alignment / Calibration
+There are two main methods for A/V Calibration:
+    1. Method 1 involves creating a special test chart (with the script) that creates alignment information that can be recorded onto a VHS tape via DVD or MP4.  The method contains a 35 second repeating cycle (Test Chart 1kHz tone, Black Screen with no tone, Timecode information, Black screen no tone) so that the alignment information can be identified on the tape
+        1. For Audio there is Frequency Shift Keying stored into a 30 second timecode burst so that the alignment script can read and understand the timing information at a frame level.
+        2. For the video side of things, there is timecode information stored in visual binary strips on the top of the frames.
+However, after adding in the command line options to the Domesday Duplicator, better consistency is achievable and a new method arose, at this point I have temporarily paused work on the timecode test chart method, but will continue with it later on as it should be more accurate in the long run.
+    2. Method 2 involves analysing the time differences between initiating the request to start recording audio (and separately video), then noting when the file is created and when data is stored.  This isn’t 100% accurate but is very close and with a little tweaking works out quite well.  Initially mine detected a 0.83 delay required on the audio, which I tweaked to 0.8 which has achieved what looks like a perfect sync.  I assume this value will suit most people, at least on Linux (perhaps a different OS introduces different delays)
+Installing the hardware and software
+High level software dependences
+DdD Capture Toolkit is a python script that relies on a number of system dependencies.  These can all be installed via their normal methods, the only requirement is that they are in the system path so that the script can find them.  However, there are a few exceptions:
+    • AppImages are currently not supported
+    • You need to get the forked DomesdayDuplicator-cmdline as the official Domesday duplicator does not yet support commandline controls (Work for this is underway so hopefully they will integrate these changes soon)
+    • AutoAudioAlign is packaged within the script for simplicity, no need to install it
+
+These instructions are based on fedora but can be adapted to any OS, including Mac and Windows.
+
+High level hardware dependencies
+Domesday Duplicator
+Clockgen Lite
+Pin 40 connected for clock sync (optional but beneficial) see: https://github.com/namazso/cxadc-clockgen-mod
+
+High level software dependencies
+    • DomesdayDuplicator-cmdline
+    • LD-Decode
+    • VHS-Decode
+
+Other dependencies which are installed in the below guide include:
+    • sox
+    • mono
+    • git
+    • Development libraries / tools
+
+Installing and Running the DdD Capture Toolkit (Cross-Platform Setup)
+
+QUICK SETUP (RECOMMENDED - Works on Linux, macOS, Windows)
+==========================================================
+
+1. Install Miniconda (if not already installed):
+   Download from: https://docs.conda.io/en/latest/miniconda.html
+
+2. Clone and setup (3 commands):
+   git clone https://github.com/your-repo/ddd-capture-toolkit.git
+   cd ddd-capture-toolkit
+   ./setup.sh
+
+3. Run the toolkit:
+   ./start.sh
+
+That's it! The setup script automatically:
+- Detects your operating system (Linux/Mac/Windows)
+- Creates an isolated conda environment with all dependencies
+- Installs pre-compiled, optimised packages (no compilation needed)
+- Handles platform-specific requirements
+- Keeps everything isolated (no system modifications)
+
+Choose menu option 8 to check dependencies if you like.
+
+MANUAL SETUP (if automatic setup fails)
+=======================================
+
+If the automatic setup script doesn't work, you can set up manually:
+
+1. Create environment manually based on your platform:
+   conda env create -f environment-linux.yml    # Linux
+   conda env create -f environment-macos.yml    # macOS  
+   conda env create -f environment.yml          # Windows/Generic
+
+2. Activate environment and install Python packages:
+   conda activate ddd-capture-toolkit
+   pip install -r requirements.txt
+
+3. Install system packages for DVD creation:
+   # Fedora/RHEL/CentOS:
+   sudo dnf install genisoimage dvdauthor
+   
+   # Ubuntu/Debian:
+   sudo apt install genisoimage dvdauthor
+   
+   # Arch Linux:
+   sudo pacman -S cdrtools dvdauthor
+   
+   # macOS:
+   brew install cdrtools dvdauthor
+
+4. Run the application:
+   python3 ddd_main_menu.py
+
+TROUBLESHOoting:
+If you encounter dependency conflicts, see Changelog.md for details on recent fixes.
+
+There are two ways of starting it:
+1 – Use ./start.sh (recommended - handles environment activation automatically)
+2 - Manual: conda activate ddd-capture-toolkit && python3 ddd_main_menu.py
+
+Domesday Duplicator cmdline
+Obtain the command line version of Domesday Duplicator from here:
+This adds the following capabilities not found in the official version:
+
+--headless  #Run without showing GUI (requires –start-capture)
+--start-capture           Start capture automatically
+--stop-capture  #Stop any running capture and exit 
+--output-file <filename>  #Specify output filename (without extension) or full path
+# Also shows realtime RMS amplitude in console for monitoring
+
+Compile and run instructions:
+
+Dependencies
+    gcc-c++ \
+    cmake \
+    git \
+    qt6-qtbase-devel \
+    qt6-qtserialport-devel \
+    qt6-qttools-devel \
+    libusb1-devel \
+    pkgconfig
+
+
+cd Linux-Application    # Go to the application directory (has CMakeLists.txt)
+mkdir -p build          # Create build directory (if it doesn't exist)
+cd build                # Enter build directory
+cmake .. -DCMAKE_BUILD_TYPE=Release  # Configure (.. points to Linux-Application)
+make -j$(nproc)         # Build
+sudo make install
+
+Fix Domesday Duplicator fails with LIBUSB_ERROR_ACCESS errors when accessing as non-root
+Set up udev rules to allow your user to access the USB device without root privileges (Fedora 42 Method)
+Check if you’re in the dialout group (other distros may use plugdev)
+groups $USER
+
+If not, add yourself to the dialout group
+sudo usermod -a -G dialout $USER
+
+# 1. Find your device
+lsusb
+# On mine I get:
+Bus 008 Device 003: ID 1d50:603b OpenMoko, Inc. Raspiface
+
+# 2. Manually note IDs: vendor=1d50, product=603b
+
+# 3. Create udev rule using above id’s
+sudo tee /etc/udev/rules.d/99-domesday-duplicator.rules > /dev/null << 'EOF'
+# Domesday Duplicator - OpenMoko Raspiface
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="603b", MODE="0666"
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="603b", MODE="0666", GROUP="dialout" EOF
+
+# 4. Apply the rule
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+ Log out and log back in (or reboot) to ensure group membership takes effect.
+
+Verify the fix:
+•  Check device permissions: ls -l /dev/bus/usb/008/XXX (where XXX is your device number from lsusb)
+•  The device should show dialout group and 666 permissions
+•  Test with: ./Linux-Application/build/DomesdayDuplicator/DomesdayDuplicator --headless –start-capture
+
+Key Points
+•  On Fedora, use the dialout group instead of plugdev (which doesn't exist by default)
+•  The MODE="0666" makes the device world-writable, which is necessary for libusb access
+•  The device ID for Domesday Duplicator is 1d50:603b (OpenMoko Raspiface)
+•  You may still get mlock and priority warnings, but these don't prevent basic functionality
+    • Set the limited usb queue checkbox in the preferences of the gui and click save, then close the gui (i.e. run DomesdayDuplicator binary by itself to get the gui to come up)
+
+The first time you run this you will get mlock errors (at least on Fedora 42 you do).  It is crucial to resolve this as this can lead to dropouts of audio or video.
+
+To fix this we use the audio group which iwas originally created for low-latency processing and real time thread scheduling.  
+
+   sudo usermod -a -G audio $USER
+
+   sudo tee -a /etc/security/limits.conf << 'EOF'
+   # Real-time audio/video capture settings for Domesday Duplicator
+   @audio - memlock unlimited
+   @audio - rtprio 95
+   @audio - nice -19
+   EOF
+
+Log out completely and log back in (or reboot) for changes to take effect.
+
+Verify it worked with:
+   # Check you're in audio group
+   groups $USER | grep audio
+   
+   # Check memory lock limit (should show "unlimited")
+   ulimit -l
+   
+Note: Make sure you run the DomesdayDuplicator GUI first and manually select the correct Domesday device and also enable the limited USB queue for linux in preferences, then click save.
+   # Test the application
+   ./Linux-Application/build/DomesdayDuplicator/DomesdayDuplicator --headless –start-capture
+What these settings do:
+•  memlock unlimited: Allows unlimited memory locking to prevent swap-induced dropouts
+•  rtprio 95: Enables real-time thread scheduling priority (essential for capture timing)
+•  nice -19: Allows highest CPU scheduling priority
+
+ADVANCED SETUP: COMPILATION FROM SOURCE (Optional)
+===================================================
+
+NOTE: The above conda-based setup is recommended for most users. The compilation from source described below is only needed if:
+- You need absolute maximum performance (typically 1-5% improvement)
+- You need cutting-edge features not available in conda packages  
+- You're doing development work on the tools themselves
+
+For compilation within the conda environment (recommended over system-wide installation):
+All compilation should target the conda environment to keep things isolated:
+
+# Activate your environment first
+conda activate ddd-capture-toolkit
+
+# Then use CMAKE_INSTALL_PREFIX to target the conda environment
+CMAKE_INSTALL_PREFIX=$CONDA_PREFIX
+
+This approach gives you:
+- Custom compilation optimisations
+- Isolated installation (no system pollution)
+- Easy cleanup (just delete the environment)
+- Compatibility with the rest of the toolkit
+
+The remainder of this document focuses on compilation from source methods. Most users should skip this section and use the conda-based setup above.
+
+Fix USB power Management
+# Disable USB autosuspend to prevent dropouts
+echo 'ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0001", TEST=="power/control", ATTR{power/control}="on"' | sudo tee /etc/udev/rules.d/50-domesday-duplicator.rules
+
+# Reload udev rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+Fix USB Buffer Size
+# Increase USB memory buffer sizes (requires reboot)
+echo 'vm.dirty_bytes = 67108864' | sudo tee -a /etc/sysctl.conf
+echo 'vm.dirty_background_bytes = 33554432' | sudo tee -a /etc/sysctl.conf
+
+Monitor I/O during captures
+# Run this in a separate terminal during capture:
+watch -n 1 'iostat -x 1 1; echo ""; cat /proc/pressure/io'
+
+Make sure trim is enabled on your SSD drive.
+
+Incorporate into script – to be done
+# When starting captures:
+nice -n -10 DomesdayDuplicator --start-capture --headless
+
+Install ld-decode (Advanced - Compilation from Source):
+
+CONDA ENVIRONMENT METHOD (Recommended for advanced users):
+    1. conda activate ddd-capture-toolkit
+    2. git clone https://github.com/happycube/ld-decode
+    3. cd ld-decode
+    4. cmake -D CMAKE_PREFIX_PATH=$CONDA_PREFIX -D CMAKE_INSTALL_PREFIX=$CONDA_PREFIX .
+    5. make -j$(nproc) all
+    6. make install  # Installs to conda environment, no sudo needed
+
+SYSTEM-WIDE METHOD (Legacy, not recommended):
+    1. git clone https://github.com/happycube/ld-decode
+    2. sudo dnf makecache --refresh
+    3. sudo dnf install gcc-c++ libavformat-free-devel qwt-qt5-devel fftw-devel --allowerasing
+    4. conda deactivate  # Must exit conda environment to avoid Qt conflicts
+    5. cd ld-decode
+    6. cmake -D CMAKE_PREFIX_PATH=/usr/lib64/qt5/ -D CMAKE_INSTALL_PREFIX=/usr/ .
+    7. env PATH="/usr/bin:/bin" QT_SELECT=5 make -j8 all
+    8. env PATH="/usr/bin:/bin" sudo make install
+    9. conda activate ddd-capture-toolkit  # Reactivate your project environment
+
+Install VHS-Decode
+Master instructions here: https://github.com/oyvindln/vhs-decode
+To build from source (may get better usage of threads) and will provide the most up-to-date version
+
+sudo dnf install rust cargo gtk3-devel webkit2gtk3-devel gstreamer1-devel gstreamer1-plugins-base-devel
+git clone https://github.com/oyvindln/vhs-decode.git vhs-decode
+conda activate ddd-capture-toolkit
+cd vhs-decode
+rm -Rf target #if exists
+pip install -r requirements.txt
+pip install gooey #This took about 4-5 minutes to build the wheel on my 5800X system, so be patient
+pip install .
+With hifi-decode gui
+pip install .[hifi_gui_qt6]
+With Intel specific cpu optimizations
+pip install .[intel]
+
+Unsure if this should replace the ld-decode above or supplement it.  I believe it’s one or the other so the below is likely not required.
+
+TBC Video Export
+pip install tbc-video-export

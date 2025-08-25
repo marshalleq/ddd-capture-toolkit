@@ -1,0 +1,55 @@
+name: ddd-capture-toolkit
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  
+  # System libraries needed for audio/video processing
+  - ffmpeg
+  - alsa-lib
+  - pulseaudio-client
+  
+  # Video processing libraries (headless to avoid Qt conflicts)
+  - opencv
+  
+  # Image processing
+  - pillow
+  - numpy
+  
+  # Audio processing
+  - sox
+  
+  # Mathematical libraries
+  - fftw
+  
+  # Development tools (if needed for any remaining compilation)
+  - gcc_linux-64
+  - gxx_linux-64
+  - cmake
+  - make
+  - pkg-config
+  
+  # Qt libraries (for tools that need them)
+  - qt6-main
+  - libusb
+  
+  # System utilities
+  - xclip  # For X11 clipboard access
+  - xsel   # Alternative clipboard utility
+  - psutil # For system resource monitoring
+  
+  # Additional pip dependencies
+  - pip
+  
+  # Python packages that work better through conda
+  - setuptools
+  - wheel
+  
+  - pip:
+    # Terminal UI for parallel processing progress display  
+    - rich
+    # Keyboard input handling for interactive interfaces
+    - keyboard
+    # TBC processing tools (install into conda environment, not user local)
+    - tbc-video-export>=0.1.8
