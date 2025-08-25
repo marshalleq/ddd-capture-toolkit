@@ -1,0 +1,12 @@
+[submodule "external/DomesdayDuplicator"]
+	path = external/DomesdayDuplicator
+	url = https://gitea.electropositive.net/Media-Restoration/domesday-duplicator-cmdline.git
+[submodule "external/ld-decode"]
+	path = external/ld-decode
+	url = https://github.com/happycube/ld-decode
+[submodule "external/vhs-decode"]
+	path = external/vhs-decode
+	url = https://github.com/oyvindln/vhs-decode
+[submodule "external/tbc-video-export"]
+	path = external/tbc-video-export
+	url = https://github.com/JuniorIsAJitterbug/tbc-video-export

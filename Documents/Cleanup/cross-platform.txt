@@ -1,0 +1,204 @@
+DDD Capture Toolkit - Cross-Platform Architecture Design
+
+OVERVIEW
+========
+The DDD Capture Toolkit is designed as a fully cross-platform Python application that runs consistently across Linux, macOS, and Windows without requiring users to compile from source or make system-wide installations.
+
+CORE DESIGN PRINCIPLES
+======================
+
+1. ISOLATION FIRST
+   - All dependencies contained within conda environments
+   - No system-wide installations (no sudo make install)
+   - No conflicts with existing system packages
+   - Complete environment reproducibility
+
+2. PLATFORM DETECTION
+   - Automatic OS detection in setup scripts
+   - Platform-specific conda environment files
+   - Graceful fallbacks for unknown platforms
+   - OS-specific setup instructions when needed
+
+3. DEPENDENCY MANAGEMENT
+   - Primary dependencies via conda-forge (pre-compiled, optimised binaries)
+   - Python packages via pip within conda environment
+   - Platform-specific packages handled automatically
+   - No manual compilation required for end users
+
+4. HARDWARE ABSTRACTION
+   - USB device access handled consistently across platforms
+   - Platform-specific permission setup documented
+   - Hardware drivers managed outside the application scope
+
+ARCHITECTURE COMPONENTS
+=======================
+
+1. ENVIRONMENT MANAGEMENT
+   Files:
+   - environment-linux.yml    (Linux-specific dependencies)
+   - environment-macos.yml    (macOS-specific dependencies)
+   - environment-windows.yml  (Windows-specific dependencies)
+   - environment.yml          (Generic fallback for unknown platforms)
+   - setup.sh                 (Cross-platform setup script with OS detection)
+   - start.sh                 (Environment activation wrapper)
+
+2. DEPENDENCY STRATEGY
+   Conda-forge packages (pre-compiled):
+   - ffmpeg (audio/video processing)
+   - opencv (computer vision, headless build to avoid Qt conflicts)
+   - sox (audio processing)
+   - Qt libraries (for GUI tools)
+   - Development tools (gcc, cmake, etc. when needed)
+   - System utilities (platform-appropriate)
+
+   Pip packages (within conda env):
+   - tbc-video-export
+   - scipy, numpy, pillow
+   - VHS-decode and related tools
+
+3. PLATFORM-SPECIFIC HANDLING
+
+   Linux:
+   - Uses gcc_linux-64, gxx_linux-64 compilers
+   - ALSA and PulseAudio support
+   - X11 utilities (xclip, xsel)
+   - DVD authoring tools (dvdauthor, cdrtools)
+   - USB device access via udev rules
+
+   macOS:
+   - Uses clang_osx-64, clangxx_osx-64 compilers
+   - Native audio frameworks
+   - System clipboard integration
+   - USB device permissions via system preferences
+
+   Windows:
+   - Uses vs2019_win-64 compiler (MSVC)
+   - Windows audio APIs
+   - pywin32 for Windows API access
+   - Native clipboard support
+   - USB driver requirements documented
+
+   PLATFORM DEPENDENCY MATRIX:
+   
+   Feature                | Linux              | macOS              | Windows            | Generic
+   -----------------------|--------------------|--------------------|--------------------|---------
+   Compiler               | gcc_linux-64      | clang_osx-64       | vs2019_win-64      | none
+   Audio Libraries        | ALSA, PulseAudio   | Native frameworks  | Native APIs        | ffmpeg only
+   Clipboard Access       | xclip, xsel        | Native             | pywin32            | none
+   DVD Creation Tools     | dvdauthor, cdrtools| cdrtools           | none               | none
+   Development Tools      | make, pkg-config   | make, pkg-config   | cmake only         | cmake only
+   System Integration     | X11 utilities      | Native             | Windows APIs       | basic only
+   
+   All platforms include:
+   - python=3.10, ffmpeg>=7.1, opencv, pillow>=11.3.0, numpy>=2.0.2
+   - sox (audio processing), qt-main>=6.0, libusb>=1.0, cmake, pip
+
+SETUP WORKFLOW
+==============
+
+1. User clones repository
+2. Runs ./setup.sh which:
+   - Detects operating system
+   - Selects appropriate environment file
+   - Creates isolated conda environment
+   - Installs all dependencies automatically
+   - Provides platform-specific setup notes
+
+3. User runs ./start.sh which:
+   - Activates conda environment
+   - Launches main application
+   - Handles environment validation
+
+BENEFITS OF THIS ARCHITECTURE
+=============================
+
+PERFORMANCE:
+- Pre-compiled binaries from conda-forge are optimised
+- Intel MKL and other optimised libraries included
+- Performance difference vs custom compilation: typically 1-5%
+- No meaningful impact on 8-hour processing workflows
+
+MAINTAINABILITY:
+- Single codebase for all platforms
+- Automated dependency management
+- No platform-specific compilation instructions
+- Easy testing across platforms
+
+USER EXPERIENCE:
+- Simple 3-command setup: clone, ./setup.sh, ./start.sh
+- No development tools required on user systems
+- No system modifications or permissions changes
+- Consistent behaviour across platforms
+
+DISTRIBUTION:
+- Git repository contains everything needed
+- Users get identical environments
+- No binaries in repository (downloaded on setup)
+- Easy updates via environment file changes
+
+MIGRATION STRATEGY
+==================
+
+FROM SOURCE COMPILATION:
+For projects currently using 'sudo make install':
+
+1. Identify if conda-forge packages exist
+2. Add to appropriate environment-*.yml file
+3. Test in isolated conda environment
+4. Remove system installation instructions
+
+FOR TOOLS REQUIRING COMPILATION:
+Tools that must be compiled (like DomesdayDuplicator-cmdline):
+
+1. Compile into conda environment prefix:
+   CMAKE_INSTALL_PREFIX=$CONDA_PREFIX
+2. Keep compilation isolated to environment
+3. Include build tools in conda environment
+4. Document as optional advanced setup
+
+TESTING STRATEGY
+================
+
+AUTOMATED:
+- CI/CD testing across Linux, macOS, Windows
+- Environment creation testing
+- Dependency resolution validation
+
+MANUAL:
+- Fresh system testing (virtual machines)
+- Hardware compatibility testing
+- Performance baseline comparisons
+
+TROUBLESHOOTING APPROACH
+========================
+
+COMMON ISSUES:
+- Conda not in PATH: Clear installation instructions
+- Environment conflicts: Fresh environment creation
+- USB permissions: Platform-specific documentation
+- Missing hardware drivers: External setup guides
+
+FALLBACK OPTIONS:
+- Manual environment creation commands provided
+- Alternative setup methods documented
+- Platform-specific community support channels
+
+FUTURE CONSIDERATIONS
+====================
+
+CONTAINERISATION:
+- Docker/Podman support for ultimate isolation
+- Pre-built container images for major platforms
+- Hardware device passthrough considerations
+
+PACKAGING:
+- Conda package creation for the toolkit itself
+- PyPI distribution consideration
+- Platform-specific installers (AppImage, DMG, MSI)
+
+HARDWARE EXPANSION:
+- New hardware support via plugin architecture
+- Driver abstraction layer
+- Auto-detection capabilities
+
+This architecture ensures the DDD Capture Toolkit remains accessible to users regardless of their technical expertise or platform choice, while maintaining the performance and functionality required for professional video capture workflows.

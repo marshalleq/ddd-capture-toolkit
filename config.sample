@@ -1,0 +1,7 @@
+{
+    "capture_directory": "/Volumes/2TB/Captures",
+    "default_capture_name": "my_vhs_capture",
+    "audio_delay": 0.0,
+    "preferred_video_format": "PAL",
+    "last_used_test_pattern": "default"
+}

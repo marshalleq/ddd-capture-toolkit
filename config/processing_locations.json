@@ -1,0 +1,14 @@
+{
+    "processing_locations": [
+        {
+            "name": "Capture Directory",
+            "path": "/path/to/captures",
+            "enabled": true,
+            "priority": 1,
+            "scan_subdirs": false,
+            "last_scanned": null
+        }
+    ],
+    "last_updated": "2025-08-10T16:34:52.238714",
+    "version": "1.0"
+}
