@@ -41,6 +41,12 @@ wheels/
 *.egg
 MANIFEST
 
+# Internal documentation (not for public mirror)
+Documents/
+deleteme.txt
+ArchitecturePrompt.txt
+build.txt
+
 # macOS files
 .DS_Store
 .DS_Store?
