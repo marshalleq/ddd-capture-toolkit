@@ -121,10 +121,11 @@ class VHSTimecodeGenerator(SharedTimecodeRobust):
         """Generate audio timecode for a frame using ROBUST FSK system"""
         # Use the robust FSK audio generation
         mono_audio = self.generate_robust_fsk_audio(frame_number)
-        
-        # For backward compatibility with the chunked processing system,
-        # return the mono audio as both left and right channels
-        # The combining system will handle the mono output correctly
+
+        # NOTE: This returns the same mono array twice for internal API compatibility.
+        # This is NOT creating stereo - the final output is genuine MONO audio.
+        # The sox command at line 264 uses '-c', '1' to produce true mono output.
+        # The dual return values are just to satisfy the expected API pattern.
         return mono_audio, mono_audio
     
     def frame_to_timecode(self, frame_number):
