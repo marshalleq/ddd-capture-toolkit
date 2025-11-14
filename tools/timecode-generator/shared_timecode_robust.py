@@ -332,23 +332,16 @@ class SharedTimecodeRobust:
         elapsed = time.time() - start_time
         print(f"  Exact boundaries: {len(exact_results)} frames decoded in {elapsed:.1f}s")
         sys.stdout.flush()
-        
-        # Check timeout before sliding window (which is expensive)
-        if elapsed > 60:  # 1 minute timeout for exact boundaries
-            print(f"  WARNING: Exact boundary decoding took {elapsed:.1f}s, skipping sliding window")
-            return decoded_frames
-        
+
+        # H1 FIX: Removed 60-second timeout that prevented sliding window analysis on VHS
+        # Sliding window is essential for VHS where exact boundaries fail due to timing drift
+
         # Second try: sliding window with small offsets for capture timing variations
-        # Limit sliding window to reasonable size to prevent hanging
-        max_sliding_duration = 120.0  # Don't slide window on audio longer than 2 minutes
+        # H1 FIX: Removed 120-second audio duration limit for VHS support
+        # VHS captures are often longer than 2 minutes and need full analysis
         audio_duration = len(audio_channel) / self.sample_rate
-        
-        if audio_duration > max_sliding_duration:
-            print(f"  WARNING: Audio too long ({audio_duration:.1f}s), limiting sliding window analysis")
-            # Only analyze first 2 minutes for sliding window
-            limited_audio = audio_channel[:int(max_sliding_duration * self.sample_rate)]
-        else:
-            limited_audio = audio_channel
+        print(f"  Analyzing full audio duration: {audio_duration:.1f}s")
+        limited_audio = audio_channel
         
         slide_step = frame_samples // 8  # 1/8 frame steps for fine adjustment
         sliding_results = self._decode_sliding_windows(limited_audio, slide_step)
@@ -642,16 +635,18 @@ class SharedTimecodeRobust:
         
         # Decision with confidence based on amplitude ratio
         total_amp = amp_0 + amp_1
-        if total_amp < 0.01:  # Too weak signal
+        # H3 FIX: Lowered signal threshold from 0.01 to 0.005 for VHS noise tolerance
+        if total_amp < 0.005:  # Too weak signal
             return None
-        
+
         ratio_0 = amp_0 / total_amp
         ratio_1 = amp_1 / total_amp
-        
-        # Require clear winner (>60% of total amplitude)
-        if ratio_0 > 0.6:
+
+        # H3 FIX: Lowered FFT confidence from 0.6 (60%) to 0.45 (45%) for VHS
+        # VHS ghosting/smearing causes 55/45 splits that are still valid
+        if ratio_0 > 0.45:
             return '0', ratio_0
-        elif ratio_1 > 0.6:
+        elif ratio_1 > 0.45:
             return '1', ratio_1
         else:
             return None  # Ambiguous
@@ -673,17 +668,18 @@ class SharedTimecodeRobust:
         dist_1 = abs(estimated_freq - self.freq_1)
         
         # Classify with confidence based on distance
+        # H3 FIX: Increased tolerance from 200Hz to 300Hz for VHS noise/drift
         if dist_0 < dist_1:
             # Closer to freq_0
-            confidence = max(0.1, 1.0 - (dist_0 / 200))  # Normalize to confidence
+            confidence = max(0.1, 1.0 - (dist_0 / 300))  # Normalize to confidence
             if confidence > 0.5:
                 return '0', confidence
         else:
             # Closer to freq_1
-            confidence = max(0.1, 1.0 - (dist_1 / 200))  # Normalize to confidence
+            confidence = max(0.1, 1.0 - (dist_1 / 300))  # Normalize to confidence
             if confidence > 0.5:
                 return '1', confidence
-        
+
         return None
     
     def _analyze_bit_autocorrelation(self, bit_audio):
@@ -716,11 +712,12 @@ class SharedTimecodeRobust:
         norm_corr_1 = corr_1 / max_corr
         
         # Decision based on stronger correlation
-        if norm_corr_0 > norm_corr_1 and norm_corr_0 > 0.3:
+        # H3 FIX: Lowered autocorrelation threshold from 0.3 to 0.2 for VHS degradation
+        if norm_corr_0 > norm_corr_1 and norm_corr_0 > 0.2:
             return '0', norm_corr_0
-        elif norm_corr_1 > norm_corr_0 and norm_corr_1 > 0.3:
+        elif norm_corr_1 > norm_corr_0 and norm_corr_1 > 0.2:
             return '1', norm_corr_1
-        
+
         return None
     
     def detect_timecode_window_video(self, video_file, strict=True):

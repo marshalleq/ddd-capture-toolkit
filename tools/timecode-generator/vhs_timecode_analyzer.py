@@ -46,6 +46,9 @@ class VHSTimecodeAnalyzer(SharedTimecodeRobust):
         self.video_timecodes = []  # List of (frame_number, detected_frame_id, confidence)
         self.audio_timecodes = []  # List of (sample_offset, decoded_frame_id, confidence)
         self.sync_pulses = []      # List of (sample_offset, confidence)
+
+        # Debug tracking
+        self.video_frame_error_count = 0  # Track video frame detection failures for logging
         
         # Load metadata if available - this may update parent class settings
         if metadata_file and os.path.exists(metadata_file):
@@ -116,7 +119,7 @@ class VHSTimecodeAnalyzer(SharedTimecodeRobust):
                 processed_frame = self._preprocess_vhs_frame(frame)
                 
                 # Try to detect timecode in this frame
-                frame_id, confidence = self._detect_frame_timecode(processed_frame)
+                frame_id, confidence = self._detect_frame_timecode(processed_frame, frame_count)
                 
                 if frame_id is not None:
                     self.video_timecodes.append((frame_count, frame_id, confidence))
@@ -152,28 +155,34 @@ class VHSTimecodeAnalyzer(SharedTimecodeRobust):
         
         return frame
 
-    def _detect_frame_timecode(self, frame):
+    def _detect_frame_timecode(self, frame, frame_count=None):
         """Extract timecode from a single video frame"""
         try:
             # Method 1: Try to read the binary strip at the top
             frame_id = self._read_binary_strip(frame)
             if frame_id is not None:
                 return frame_id, 0.9  # High confidence for binary method
-            
+
             # Method 2: Try OCR on the main timecode display
             frame_id = self._read_visual_timecode(frame)
             if frame_id is not None:
                 return frame_id, 0.7  # Medium confidence for OCR
-            
+
             # Method 3: Try to detect corner patterns
             frame_id = self._read_corner_patterns(frame)
             if frame_id is not None:
                 return frame_id, 0.5  # Lower confidence for pattern matching
-            
+
         except Exception as e:
-            # Don't let individual frame errors stop the analysis
-            pass
-        
+            # Log first 10 frame detection failures for debugging
+            if self.video_frame_error_count < 10:
+                frame_info = f" {frame_count}" if frame_count is not None else ""
+                print(f"  ⚠️  Frame{frame_info} detection failed: {type(e).__name__}: {e}")
+                if self.video_frame_error_count == 0:  # Show traceback for first error only
+                    import traceback
+                    traceback.print_exc()
+            self.video_frame_error_count += 1
+
         return None, 0.0
 
     def _read_binary_strip(self, frame):
@@ -378,8 +387,23 @@ class VHSTimecodeAnalyzer(SharedTimecodeRobust):
             # Use the robust FSK decoder from the shared module (in tolerant VHS mode)
             print("  Decoding FSK timecode using robust tolerant decoder...")
             self.audio_timecodes = self.decode_fsk_audio(audio_data, strict=False)
-            
+
             print(f"  Decoded {len(self.audio_timecodes)} audio timecodes")
+
+            # Enhanced logging for decode failures
+            if len(self.audio_timecodes) == 0:
+                print(f"  ⚠️  WARNING: No audio timecodes decoded")
+                print(f"  Audio duration: {len(audio_data)/self.sample_rate:.1f}s")
+                print(f"  Expected frames: ~{int(len(audio_data)/self.sample_rate * self.fps)}")
+                print(f"  Try: Check audio levels, verify FSK tones present")
+            else:
+                # Show sample of decoded frames for verification
+                sample_size = min(5, len(self.audio_timecodes))
+                print(f"  Sample decoded frames (first {sample_size}):")
+                for i in range(sample_size):
+                    sample_pos, frame_id, conf = self.audio_timecodes[i]
+                    time_sec = sample_pos / self.sample_rate
+                    print(f"    Frame {frame_id} at {time_sec:.2f}s (confidence: {conf:.2f})")
 
         except Exception as e:
             print(f"  Error analyzing audio: {e}")
