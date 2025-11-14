@@ -22,6 +22,7 @@ cd ddd-capture-toolkit
 ```
 
 That's it! The setup script will:
+
 - Detect your operating system (Linux/Mac/Windows)
 - Create an isolated conda environment with all dependencies
 - Install everything you need (no system-wide installations)
@@ -52,6 +53,7 @@ python3 ddd_main_menu.py
 ## Hardware Setup
 
 You'll still need to:
+
 1. Set up your Domesday Duplicator hardware
 2. Configure USB permissions (Linux)
 3. Install USB drivers (Windows)
@@ -69,6 +71,7 @@ See the full build.txt file for hardware-specific instructions.
 ## Troubleshooting
 
 If you have issues:
+
 1. Make sure conda is installed and in your PATH
 2. Try the manual setup steps above
 3. Check the full build.txt for detailed instructions

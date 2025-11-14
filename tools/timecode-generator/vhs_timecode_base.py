@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
 """
-VHS Timecode Base Class - Shared Frame Generation Logic
+VHS Timecode Base Class - LEGACY - DO NOT USE FOR NEW CODE
 
-This module contains the shared frame generation logic used by both
-the standard and efficient VHS timecode generators.
+⚠️  DEPRECATED: This class uses the LEGACY FSK system with narrow frequency separation.
+⚠️  For all new code, use SharedTimecodeRobust instead (shared_timecode_robust.py).
+
+LEGACY PARAMETERS (DO NOT USE):
+- Frequencies: 1000Hz (0) and 1200Hz (1) - only 200Hz separation
+- Stereo audio: Left=timecode, Right=sync pulse
+- No multi-method voting or enhanced error correction
+
+MODERN REPLACEMENT:
+- Use SharedTimecodeRobust class from shared_timecode_robust.py
+- Frequencies: 800Hz (0) and 1600Hz (1) - 800Hz separation (2:1 ratio)
+- Mono audio: Eliminates stereo channel confusion
+- Multi-method voting and enhanced checksums
+
+This legacy class is ONLY kept for backward compatibility with existing test files:
+- tools/precise_frequency_test.py
+- tools/test_frequency_generation.py
+
+All production code (vhs_timecode_generator.py, vhs_pattern_generator.py) now uses
+SharedTimecodeRobust and the robust FSK system.
 """
 
 import cv2
@@ -16,12 +34,22 @@ class VHSTimecodeBase:
     def __init__(self, format_type="PAL", width=720, height=576):
         """
         Initialize VHS timecode base class
-        
+
+        ⚠️  DEPRECATED: Use SharedTimecodeRobust instead!
+
         Args:
             format_type: "PAL" (25fps) or "NTSC" (29.97fps)
             width: Video width (720 for VHS standard)
             height: Video height (576 for PAL, 480 for NTSC)
         """
+        import warnings
+        warnings.warn(
+            "VHSTimecodeBase is DEPRECATED and uses legacy FSK parameters. "
+            "Use SharedTimecodeRobust from shared_timecode_robust.py instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         self.format_type = format_type.upper()
         
         if self.format_type == "PAL":

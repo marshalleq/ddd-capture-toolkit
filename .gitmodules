@@ -1,6 +1,6 @@
 [submodule "external/DomesdayDuplicator"]
 	path = external/DomesdayDuplicator
-	url = https://gitea.electropositive.net/Media-Restoration/domesday-duplicator-cmdline.git
+	url = https://github.com/marshalleq/domesday-duplicator-cmdline.git
 [submodule "external/ld-decode"]
 	path = external/ld-decode
 	url = https://github.com/happycube/ld-decode

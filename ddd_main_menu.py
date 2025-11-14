@@ -4845,7 +4845,7 @@ def create_vhs_timecode_pattern():
     print()
     print("Features:")
     print("   • Frame-accurate timecode encoding in video and audio")
-    print("   • FSK audio encoding (1000Hz='0', 1200Hz='1')")
+    print("   • Robust FSK audio encoding (800Hz='0', 1600Hz='1')")
     print("   • Visual timecode display (HH:MM:SS:FF)")
     print("   • Binary frame strips and sync markers")
     print("   • Optimised for VHS tape recording quality")
@@ -4923,13 +4923,10 @@ def create_vhs_timecode_pattern():
     print()
     
     try:
-        # Check if timecode generator exists - use efficient version for long durations
-        if duration > 600:  # Use efficient version for durations > 10 minutes
-            generator_script = "tools/timecode-generator/vhs_timecode_generator_efficient.py"
-            print(f"Using memory-efficient generator for long duration ({duration} seconds)")
-        else:
-            generator_script = "tools/timecode-generator/vhs_timecode_generator.py"
-        
+        # Check if timecode generator exists
+        # Note: The standard generator uses efficient chunked processing for all durations
+        generator_script = "tools/timecode-generator/vhs_timecode_generator.py"
+
         if not os.path.exists(generator_script):
             print(f"ERROR: Timecode generator not found at {generator_script}")
             print("Please ensure the VHS timecode generator is available.")
