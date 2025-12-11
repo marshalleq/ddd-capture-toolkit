@@ -8,9 +8,19 @@ def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_comma
     - If capture_duration is None, capture runs until user presses Enter.
     - If ddd_command is provided, uses that command; otherwise uses default headless command.
     """
+    # Clean up any stale DomesdayDuplicator stop request file before starting
+    # This prevents the new capture from immediately stopping due to a leftover file
+    stop_request_file = '/tmp/domesday_stop_request'
+    if os.path.exists(stop_request_file):
+        try:
+            os.remove(stop_request_file)
+            print(f"[Cleanup] Removed stale stop request file: {stop_request_file}")
+        except Exception as e:
+            print(f"[Cleanup] Warning: Could not remove stale stop file: {e}")
+
     # Create threading events to signal when to stop
     stop_event = threading.Event()
-    
+
     # Use default DomesdayDuplicator command if none provided
     if ddd_command is None:
         ddd_command = ['DomesdayDuplicator', '--start-capture', '--headless']
@@ -196,34 +206,62 @@ def get_capture_folder():
 #    Platform-specific audio settings are configured below.
 
 def get_sox_command(output_filename):
-    """Get platform-specific SOX command with optimised buffer settings"""
+    """Get platform-specific SOX command with optimised buffer settings.
+
+    Uses auto-detected Clockgen audio device from config.py.
+    Falls back to sensible defaults if device not found.
+    """
+    # Import audio device detection from config
+    try:
+        from config import get_sox_device_args, get_audio_device
+        driver, device = get_sox_device_args()
+        audio_info = get_audio_device()
+
+        if audio_info:
+            sample_rate = str(audio_info.get('sample_rate', 78125))
+            bit_depth = str(audio_info.get('bit_depth', 24))
+            channels = str(audio_info.get('channels', 2))
+            print(f"Using audio device: {audio_info.get('device_name', device)} ({device})")
+        else:
+            sample_rate = '78125'
+            bit_depth = '24'
+            channels = '2'
+            print(f"Warning: Clockgen device not detected, using defaults ({driver}:{device})")
+    except ImportError:
+        # Fallback if config module not available
+        print("Warning: Could not import config module, using legacy device detection")
+        if sys.platform == 'win32':
+            driver = 'waveaudio'
+            device = 'default'
+        elif sys.platform == 'darwin':
+            driver = 'coreaudio'
+            device = 'default'
+        else:
+            driver = 'alsa'
+            device = 'default'
+        sample_rate = '78125'
+        bit_depth = '24'
+        channels = '2'
+
     if sys.platform == 'win32':
         # Windows - use DirectSound or WaveIn
         return [
             'sox',
-            '-t', 'waveaudio',  # Windows audio driver
-            '-r', '78125',
-            '-b', '24',
-            'default',  # Default audio device
+            '-t', driver,
+            '-r', sample_rate,
+            '-b', bit_depth,
+            device,
             output_filename,
             'remix', '1', '2'
         ]
     else:
         # Linux/macOS - use ALSA (Linux) or coreaudio (macOS)
-        audio_driver = 'coreaudio' if sys.platform == 'darwin' else 'alsa'
-        if sys.platform == 'darwin':
-            device = 'default'
-        else:
-            # Linux ALSA - use custom ALSA device with larger buffers (see ~/.asoundrc)
-            # This prevents audio overruns during long captures at 78.125kHz
-            device = 'cxadc_buffered'
-        
         return [
             'sox',
-            '-t', audio_driver,
-            '-r', '78125',          # Input sample rate
-            '-b', '24',             # Input bit depth  
-            '-c', '2',              # Input channels
+            '-t', driver,
+            '-r', sample_rate,
+            '-b', bit_depth,
+            '-c', channels,
             device,
             '--buffer', '8192',     # SOX internal buffer size (bytes)
             output_filename,

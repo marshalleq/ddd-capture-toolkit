@@ -2906,14 +2906,15 @@ def display_av_calibration_menu():
         print("5. Manual Calibration Value Entry")
         print("6. Calculate DdD Startup Delay")
         print("7. Calculate SOX Startup Delay")
-        print("8. Validate Results")
-        print("9. Create Sync Test Videos (MP4)")
-        print("10. Create DVD ISOs from MP4s")
-        print("11. View Testing Setup")
-        print("12. Return to Main Menu")
-        
-        selection = input("\nSelect calibration option (1-12): ").strip().lower()
-        
+        print("8. Calculate Sync Offset from Delays (Simple Method)")
+        print("9. Validate Results")
+        print("10. Create Sync Test Videos (MP4)")
+        print("11. Create DVD ISOs from MP4s")
+        print("12. View Testing Setup")
+        print("13. Return to Main Menu")
+
+        selection = input("\nSelect calibration option (1-13): ").strip().lower()
+
         if selection == '1':
             run_av_alignment()
             break  # Return to main menu after calibration
@@ -2936,21 +2937,24 @@ def display_av_calibration_menu():
             calculate_sox_startup_delay()
             break  # Return to main menu after SOX delay calculation
         elif selection == '8':
+            calculate_sync_offset_from_delays()
+            break  # Return to main menu after sync offset calculation
+        elif selection == '9':
             validate_calibration_results()
             break  # Return to main menu after validation
-        elif selection == '9':
+        elif selection == '10':
             create_sync_test_videos()
             # Don't break here - return to this menu after creating videos
-        elif selection == '10':
+        elif selection == '11':
             create_dvd_isos()
             # Don't break here - return to this menu after creating ISOs
-        elif selection == '11':
+        elif selection == '12':
             show_project_summary()
             # Don't break here - return to this menu after viewing setup
-        elif selection == '12':
+        elif selection == '13':
             break  # Return to main menu
         else:
-            print("Invalid selection. Please enter 1-12.")
+            print("Invalid selection. Please enter 1-13.")
 
 
 def manual_calibration_entry():
@@ -3422,9 +3426,16 @@ def calculate_sox_startup_delay():
         
     except Exception as e:
         print(f"Error getting SOX command: {e}")
-        print("Using fallback configuration...")
+        print("Using fallback configuration with auto-detected device...")
         test_audio_file = os.path.join(temp_dir, "sox_startup_test.flac")
-        sox_command_full = ['sox', '-t', 'alsa', '-r', '78125', '-b', '24', 'hw:2,0', 
+        # Try to auto-detect the Clockgen device
+        try:
+            from config import get_sox_device_args
+            driver, device = get_sox_device_args()
+        except ImportError:
+            driver = 'alsa'
+            device = 'default'
+        sox_command_full = ['sox', '-t', driver, '-r', '78125', '-b', '24', device,
                            test_audio_file, 'remix', '1', '2', 'trim', '0', '3']
     
     # Check for existing test file and clean if needed
@@ -3661,6 +3672,148 @@ echo "Total time: ${{total_time}}s"
         traceback.print_exc()
     
     input("\nPress Enter to return to menu...")
+
+
+def calculate_sync_offset_from_delays():
+    """
+    Calculate and set audio_delay from measured DdD and SOX startup delays.
+
+    This is the simple, reliable method for A/V sync calibration:
+    - DdD startup delay = time from command to video recording start
+    - SOX startup delay = time from command to audio recording start
+    - audio_delay = DdD_delay - SOX_delay (to make them start together)
+    """
+    clear_screen()
+    display_header()
+    print("\nCALCULATE SYNC OFFSET FROM MEASURED DELAYS")
+    print("=" * 50)
+    print()
+    print("This tool calculates the correct audio_delay setting from your")
+    print("measured DdD and SOX startup delays.")
+    print()
+    print("HOW IT WORKS:")
+    print("   • DdD (video) starts recording after its startup delay")
+    print("   • SOX (audio) starts recording after its startup delay")
+    print("   • To sync them, we delay audio start by the difference")
+    print("   • audio_delay = DdD_delay - SOX_delay")
+    print()
+    print("PREREQUISITES:")
+    print("   Run menu options 6 and 7 first to measure your delays:")
+    print("   • Option 6: Calculate DdD Startup Delay")
+    print("   • Option 7: Calculate SOX Startup Delay")
+    print()
+
+    # Load current config
+    sys.path.append('.')
+    from config import load_config, save_config
+
+    config = load_config()
+    current_delay = config.get('audio_delay', 0.000)
+    print(f"Current audio_delay setting: {current_delay:.3f}s ({current_delay*1000:.0f}ms)")
+    print()
+
+    # Get DdD delay from user
+    print("Enter your measured delays (from menu options 6 and 7):")
+    print()
+
+    while True:
+        try:
+            ddd_input = input("DdD startup delay in seconds (e.g., 0.945): ").strip()
+            if not ddd_input:
+                print("Cancelled.")
+                input("\nPress Enter to return to menu...")
+                return
+            ddd_delay = float(ddd_input)
+            if ddd_delay < 0:
+                print("Error: Delay cannot be negative.")
+                continue
+            if ddd_delay > 5.0:
+                print("Warning: DdD delay > 5s is unusually large. Please verify.")
+                confirm = input("Continue anyway? (y/N): ").strip().lower()
+                if confirm not in ['y', 'yes']:
+                    continue
+            break
+        except ValueError:
+            print("Error: Please enter a valid number.")
+
+    while True:
+        try:
+            sox_input = input("SOX startup delay in seconds (e.g., 0.205): ").strip()
+            if not sox_input:
+                print("Cancelled.")
+                input("\nPress Enter to return to menu...")
+                return
+            sox_delay = float(sox_input)
+            if sox_delay < 0:
+                print("Error: Delay cannot be negative.")
+                continue
+            if sox_delay > 2.0:
+                print("Warning: SOX delay > 2s is unusually large. Please verify.")
+                confirm = input("Continue anyway? (y/N): ").strip().lower()
+                if confirm not in ['y', 'yes']:
+                    continue
+            break
+        except ValueError:
+            print("Error: Please enter a valid number.")
+
+    # Calculate the sync offset
+    calculated_delay = ddd_delay - sox_delay
+
+    print()
+    print("=" * 50)
+    print("CALCULATION RESULTS")
+    print("=" * 50)
+    print()
+    print(f"DdD startup delay:  {ddd_delay:.3f}s ({ddd_delay*1000:.0f}ms)")
+    print(f"SOX startup delay:  {sox_delay:.3f}s ({sox_delay*1000:.0f}ms)")
+    print(f"                    ─────────")
+    print(f"Calculated offset:  {calculated_delay:.3f}s ({calculated_delay*1000:.0f}ms)")
+    print()
+
+    if calculated_delay < 0:
+        print("⚠️  NEGATIVE OFFSET DETECTED")
+        print(f"   SOX starts {abs(calculated_delay)*1000:.0f}ms AFTER DdD")
+        print("   This means audio recording starts later than video.")
+        print("   Setting audio_delay to 0 (no additional delay needed).")
+        print()
+        print("   Note: If audio is consistently late, you may need to")
+        print("   investigate your audio hardware configuration.")
+        final_delay = 0.0
+    else:
+        print("✓  POSITIVE OFFSET")
+        print(f"   DdD starts {calculated_delay*1000:.0f}ms AFTER SOX")
+        print(f"   Audio will be delayed by {calculated_delay*1000:.0f}ms to match.")
+        final_delay = calculated_delay
+
+    print()
+    print(f"RECOMMENDED SETTING: audio_delay = {final_delay:.3f}s")
+    print()
+
+    # Offer to apply the setting
+    print("Do you want to apply this setting to your configuration?")
+    print(f"   Current:  audio_delay = {current_delay:.3f}s")
+    print(f"   New:      audio_delay = {final_delay:.3f}s")
+    print()
+
+    apply = input("Apply new audio_delay? (Y/n): ").strip().lower()
+    if apply in ['', 'y', 'yes']:
+        config['audio_delay'] = final_delay
+        if save_config(config):
+            print()
+            print(f"✓ Configuration updated: audio_delay = {final_delay:.3f}s")
+            print()
+            print("Your captures will now use this delay setting.")
+            print("The audio recording will wait {:.0f}ms before starting,".format(final_delay*1000))
+            print("so that audio and video begin recording at the same moment.")
+        else:
+            print("Error: Failed to save configuration.")
+    else:
+        print("Setting not applied. You can manually set it using option 5.")
+
+    print()
+    print("=" * 50)
+    input("\nPress Enter to return to menu...")
+
 
 def precision_timecode_capture():
     """Automated Precision Timecode Capture with VHS Timecode Test Patterns"""

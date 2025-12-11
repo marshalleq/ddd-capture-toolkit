@@ -50,3 +50,8 @@ build.txt
 # macOS files
 .DS_Store
 .DS_Store?
+
+# Job queue and log files (contain user-specific data)
+config/job_queue.json
+logs/
+workflow_debug.log

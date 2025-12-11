@@ -9,7 +9,17 @@ capture directory location and other user preferences.
 import json
 import os
 import sys
+import subprocess
+import re
 from pathlib import Path
+
+# Known Clockgen audio device name patterns across platforms
+CLOCKGEN_DEVICE_PATTERNS = [
+    r'CXADC.*ClockGen',      # Linux ALSA: "CXADC+ADC-ClockGen" or similar
+    r'cxadc.*clockgen',      # Case-insensitive variant
+    r'ADC.*ClockGen',        # Alternate naming
+    r'ClockGen.*Lite',       # Clockgen Lite variant
+]
 
 # Default configuration values
 DEFAULT_CONFIG = {
@@ -18,6 +28,13 @@ DEFAULT_CONFIG = {
     "audio_delay": 0.000,  # Default audio delay for sync
     "preferred_video_format": "PAL",  # PAL or NTSC
     "last_used_test_pattern": "default",  # For custom test patterns
+    "audio_device": {
+        "device_id": None,  # Platform-specific device identifier (auto-detected if None)
+        "device_name": None,  # Human-readable name for display
+        "sample_rate": 78125,  # Clockgen Lite sample rate
+        "bit_depth": 24,
+        "channels": 2
+    },
     "performance_settings": {
         "ffmpeg_threads": 4,  # Limit FFmpeg threads to keep UI responsive
         "ffmpeg_threads_description": "Number of threads FFmpeg uses (0=auto, 1-16=specific). Lower values reduce CPU load during final muxing to keep UI responsive. Recommended: 4-6 threads for most systems."
@@ -228,12 +245,19 @@ def get_config_summary():
     """Get a formatted summary of current configuration"""
     config = load_config()
     capture_dir = get_capture_directory()
-    
+
     # Check disk space
     free_gb, has_space = check_disk_space(capture_dir)
     space_status = f"{free_gb:.1f} GB free" if free_gb > 0 else "Unknown"
     space_warning = "" if has_space else "   (Low space!)"
-    
+
+    # Get audio device info
+    audio_device = get_audio_device()
+    if audio_device:
+        audio_status = f"{audio_device['device_name']} ({audio_device['device_id']})"
+    else:
+        audio_status = "Not detected (will auto-detect on capture)"
+
     summary = [
         "CURRENT CONFIGURATION",
         "=" * 30,
@@ -242,9 +266,264 @@ def get_config_summary():
         f"Default Capture Name: {config.get('default_capture_name', 'my_vhs_capture')}",
         f"Audio Delay: {config.get('audio_delay', 0.000):.3f}s",
         f"Preferred Format: {config.get('preferred_video_format', 'PAL')}",
+        f"Audio Device: {audio_status}",
     ]
-    
+
     return "\n".join(summary)
+
+
+# =============================================================================
+# Audio Device Detection and Management
+# =============================================================================
+
+def detect_audio_devices_linux():
+    """
+    Detect available audio capture devices on Linux using ALSA.
+    Returns list of dicts with 'card', 'device', 'name', 'device_id' keys.
+    """
+    devices = []
+    try:
+        result = subprocess.run(['arecord', '-l'], capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return devices
+
+        # Parse arecord -l output
+        # Format: "card 0: CXADCADCClockGe [CXADC+ADC-ClockGen], device 0: USB Audio [USB Audio]"
+        for line in result.stdout.split('\n'):
+            match = re.match(r'card (\d+): (\w+) \[([^\]]+)\], device (\d+): (.+)', line)
+            if match:
+                card_num = match.group(1)
+                card_id = match.group(2)
+                card_name = match.group(3)
+                device_num = match.group(4)
+                device_desc = match.group(5)
+
+                devices.append({
+                    'card': int(card_num),
+                    'device': int(device_num),
+                    'card_id': card_id,
+                    'name': card_name,
+                    'description': device_desc,
+                    'device_id': f'hw:{card_num},{device_num}'
+                })
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+        print(f"Warning: Could not detect Linux audio devices: {e}")
+
+    return devices
+
+
+def detect_audio_devices_macos():
+    """
+    Detect available audio capture devices on macOS using system_profiler.
+    Returns list of dicts with 'name', 'device_id' keys.
+    """
+    devices = []
+    try:
+        # Use system_profiler to get audio devices
+        result = subprocess.run(
+            ['system_profiler', 'SPAudioDataType', '-json'],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return devices
+
+        import json as json_module
+        data = json_module.loads(result.stdout)
+
+        # Parse the audio devices
+        audio_data = data.get('SPAudioDataType', [])
+        for item in audio_data:
+            items = item.get('_items', [])
+            for device in items:
+                name = device.get('_name', '')
+                if name:
+                    devices.append({
+                        'name': name,
+                        'device_id': name,  # macOS uses device name directly
+                        'description': device.get('coreaudio_device_manufacturer', '')
+                    })
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+        print(f"Warning: Could not detect macOS audio devices: {e}")
+
+    return devices
+
+
+def detect_audio_devices_windows():
+    """
+    Detect available audio capture devices on Windows.
+    Returns list of dicts with 'name', 'device_id' keys.
+    """
+    devices = []
+    try:
+        # Use PowerShell to get audio devices
+        ps_command = "Get-WmiObject Win32_SoundDevice | Select-Object Name, DeviceID | ConvertTo-Json"
+        result = subprocess.run(
+            ['powershell', '-Command', ps_command],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return devices
+
+        import json as json_module
+        data = json_module.loads(result.stdout)
+
+        # Handle single device (returns dict) vs multiple (returns list)
+        if isinstance(data, dict):
+            data = [data]
+
+        for device in data:
+            name = device.get('Name', '')
+            if name:
+                devices.append({
+                    'name': name,
+                    'device_id': 'default',  # Windows SOX typically uses 'default'
+                    'description': device.get('DeviceID', '')
+                })
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+        print(f"Warning: Could not detect Windows audio devices: {e}")
+
+    return devices
+
+
+def detect_audio_devices():
+    """
+    Detect available audio capture devices on the current platform.
+    Returns list of device dicts.
+    """
+    if sys.platform == 'linux':
+        return detect_audio_devices_linux()
+    elif sys.platform == 'darwin':
+        return detect_audio_devices_macos()
+    elif sys.platform == 'win32':
+        return detect_audio_devices_windows()
+    else:
+        print(f"Warning: Unsupported platform for audio detection: {sys.platform}")
+        return []
+
+
+def find_clockgen_device():
+    """
+    Auto-detect the Clockgen audio device by matching known name patterns.
+    Returns device dict if found, None otherwise.
+    """
+    devices = detect_audio_devices()
+
+    for device in devices:
+        device_name = device.get('name', '') + ' ' + device.get('description', '')
+        for pattern in CLOCKGEN_DEVICE_PATTERNS:
+            if re.search(pattern, device_name, re.IGNORECASE):
+                return device
+
+    return None
+
+
+def get_audio_device():
+    """
+    Get the configured audio device, auto-detecting if not set.
+    Returns device dict with 'device_id', 'device_name', etc. or None if not found.
+    """
+    config = load_config()
+    audio_config = config.get('audio_device', {})
+
+    # If device_id is set, verify it still exists
+    if audio_config.get('device_id'):
+        devices = detect_audio_devices()
+        for device in devices:
+            if device['device_id'] == audio_config['device_id']:
+                return {
+                    'device_id': device['device_id'],
+                    'device_name': device.get('name', audio_config.get('device_name', 'Unknown')),
+                    'sample_rate': audio_config.get('sample_rate', 78125),
+                    'bit_depth': audio_config.get('bit_depth', 24),
+                    'channels': audio_config.get('channels', 2)
+                }
+        # Configured device not found, try auto-detection
+        print(f"Warning: Configured audio device '{audio_config.get('device_id')}' not found, auto-detecting...")
+
+    # Auto-detect Clockgen device
+    clockgen = find_clockgen_device()
+    if clockgen:
+        return {
+            'device_id': clockgen['device_id'],
+            'device_name': clockgen.get('name', 'Clockgen'),
+            'sample_rate': audio_config.get('sample_rate', 78125),
+            'bit_depth': audio_config.get('bit_depth', 24),
+            'channels': audio_config.get('channels', 2)
+        }
+
+    return None
+
+
+def set_audio_device(device_id, device_name=None):
+    """
+    Set the audio device for capture.
+    device_id: Platform-specific device identifier (e.g., 'hw:0,0' on Linux)
+    device_name: Human-readable name (optional, for display)
+    Returns True if successful, False otherwise.
+    """
+    try:
+        config = load_config()
+
+        if 'audio_device' not in config:
+            config['audio_device'] = DEFAULT_CONFIG['audio_device'].copy()
+
+        config['audio_device']['device_id'] = device_id
+        if device_name:
+            config['audio_device']['device_name'] = device_name
+
+        if save_config(config):
+            print(f"Audio device set to: {device_name or device_id}")
+            return True
+        return False
+
+    except Exception as e:
+        print(f"Error setting audio device: {e}")
+        return False
+
+
+def get_sox_device_args():
+    """
+    Get SOX command arguments for the configured/detected audio device.
+    Returns tuple of (driver, device_id) for use in SOX commands.
+    """
+    audio_device = get_audio_device()
+
+    if sys.platform == 'win32':
+        driver = 'waveaudio'
+        device = 'default'
+    elif sys.platform == 'darwin':
+        driver = 'coreaudio'
+        device = audio_device['device_id'] if audio_device else 'default'
+    else:  # Linux
+        driver = 'alsa'
+        device = audio_device['device_id'] if audio_device else 'default'
+
+    return driver, device
+
+
+def list_audio_devices():
+    """
+    List all detected audio devices with their details.
+    Returns formatted string for display.
+    """
+    devices = detect_audio_devices()
+
+    if not devices:
+        return "No audio capture devices detected."
+
+    lines = ["DETECTED AUDIO DEVICES", "=" * 50]
+
+    clockgen = find_clockgen_device()
+    clockgen_id = clockgen['device_id'] if clockgen else None
+
+    for i, device in enumerate(devices):
+        marker = " [CLOCKGEN]" if device['device_id'] == clockgen_id else ""
+        lines.append(f"{i+1}. {device.get('name', 'Unknown')}{marker}")
+        lines.append(f"   Device ID: {device['device_id']}")
+        if device.get('description'):
+            lines.append(f"   Description: {device['description']}")
+
+    return "\n".join(lines)
 
 if __name__ == "__main__":
     # Quick test/demo

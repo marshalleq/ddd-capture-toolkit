@@ -462,7 +462,10 @@ class JobQueueManager:
                 text=True,
                 bufsize=1
             )
-            
+
+            # Track the process for termination capability
+            self.job_processes[job.job_id] = process
+
             current_frame = 0
             
             # Parse output for frame progress
@@ -492,7 +495,11 @@ class JobQueueManager:
             
             # Wait for completion
             return_code = process.wait()
-            
+
+            # Clean up process tracking
+            if job.job_id in self.job_processes:
+                del self.job_processes[job.job_id]
+
             # Check if the job actually succeeded by verifying output files exist
             # VHS decode produces both .tbc and .json files
             tbc_file = job.output_file
@@ -945,7 +952,10 @@ class JobQueueManager:
                     text=True,
                     bufsize=1
                 )
-                
+
+                # Track the process for termination capability
+                self.job_processes[job.job_id] = process
+
                 # Monitor the process and log output (but don't print to console)
                 stdout_lines = []
                 stderr_lines = []
@@ -999,7 +1009,11 @@ class JobQueueManager:
                         stderr_lines.extend(remaining_stderr.strip().split('\n'))
                 except subprocess.TimeoutExpired:
                     self.logger.warning("Timeout waiting for remaining process output")
-                
+
+                # Clean up process tracking
+                if job.job_id in self.job_processes:
+                    del self.job_processes[job.job_id]
+
                 # Log the full output for debugging
                 self.logger.info(f"Audio alignment process completed with return code: {return_code}")
                 if stdout_lines:
@@ -1014,66 +1028,15 @@ class JobQueueManager:
                 
                 # Check if alignment completed successfully by verifying output file
                 if return_code == 0 and os.path.exists(aligned_output) and os.path.getsize(aligned_output) > 0:
-                    if isinstance(result, str) and result.endswith('_aligned.wav'):
-                        # The function returned an aligned audio file path
-                        if os.path.exists(result) and os.path.getsize(result) > 0:
-                            # If the result path is different from expected output, move/copy it
-                            if result != aligned_output:
-                                import shutil
-                                shutil.move(result, aligned_output)
-                                self.logger.info(f"Moved aligned audio from {result} to {aligned_output}")
-                            
-                            file_size = os.path.getsize(aligned_output) / (1024*1024)  # MB
-                            self.logger.info(f"Audio alignment completed successfully: {aligned_output} ({file_size:.1f} MB)")
-                            
-                            # Set final progress
-                            with self.lock:
-                                job.progress = 100.0
-                                self.save_queue()
-                            
-                            return True
-                        else:
-                            self.logger.error(f"Aligned audio file not created or empty: {result}")
-                            job.error_message = f"Aligned audio file not created: {result}"
-                            return False
-                    
-                    elif isinstance(result, (int, float)):
-                        # The function returned an offset value
-                        self.logger.info(f"Audio alignment analysis completed with offset: {result:.3f} seconds")
-                        
-                        # For workflow purposes, we need to create an output file
-                        # This could be a metadata file or we could copy the original with metadata
-                        import shutil
-                        shutil.copy2(audio_file, aligned_output)
-                        
-                        # Create a metadata file alongside the aligned audio
-                        metadata_file = aligned_output.replace('.wav', '_align_info.json')
-                        metadata = {
-                            'offset_seconds': result,
-                            'original_audio': audio_file,
-                            'tbc_json': tbc_json_file,
-                            'alignment_timestamp': datetime.now().isoformat()
-                        }
-                        
-                        with open(metadata_file, 'w') as f:
-                            json.dump(metadata, f, indent=2)
-                        
-                        self.logger.info(f"Audio alignment metadata saved: {metadata_file}")
-                        
-                        # Set final progress
-                        with self.lock:
-                            job.progress = 100.0
-                            self.save_queue()
-                        
-                        return True
-                    
-                    else:
-                        self.logger.info(f"Audio alignment completed with result: {result}")
-                        # For other result types, assume success if we got something
-                        with self.lock:
-                            job.progress = 100.0
-                            self.save_queue()
-                        return True
+                    file_size = os.path.getsize(aligned_output) / (1024*1024)  # MB
+                    self.logger.info(f"Audio alignment completed successfully: {aligned_output} ({file_size:.1f} MB)")
+
+                    # Set final progress
+                    with self.lock:
+                        job.progress = 100.0
+                        self.save_queue()
+
+                    return True
                 else:
                     # Alignment failed
                     self.logger.error("Audio alignment failed or could not detect timing patterns")
@@ -1196,7 +1159,10 @@ class JobQueueManager:
                 text=True,
                 bufsize=1
             )
-            
+
+            # Track the process for termination capability
+            self.job_processes[job.job_id] = process
+
             self.logger.info(f"Started FFmpeg process with PID: {process.pid}")
             
             # Monitor FFmpeg output for progress
@@ -1239,7 +1205,11 @@ class JobQueueManager:
                     stderr_lines.extend(remaining_stderr.strip().split('\n'))
             except subprocess.TimeoutExpired:
                 self.logger.warning("Timeout waiting for remaining FFmpeg output")
-            
+
+            # Clean up process tracking
+            if job.job_id in self.job_processes:
+                del self.job_processes[job.job_id]
+
             # Update progress
             with self.lock:
                 job.progress = 95.0
