@@ -1363,11 +1363,13 @@ class JobQueueManager:
             self.logger.info(f"Started ld-compress process with PID: {process.pid}")
 
             # Monitor process for progress
-            # ld-compress doesn't provide detailed progress, so we estimate based on
-            # output file size growth compared to expected compression ratio (~50%)
+            # ld-compress doesn't provide detailed progress, so we use time-based estimation.
+            # RF data typically compresses to ~70% with FLAC level 11.
+            # Estimate ~60 seconds per GB for FLAC compression at high compression level.
             last_progress_update = time.time()
             start_time = time.time()
-            expected_output_size = input_size * 0.5  # Expect ~50% compression ratio
+            estimated_duration = max(60.0, (input_size / (1024**3)) * 60.0)
+            self.logger.info(f"Estimated compression duration: {estimated_duration:.0f} seconds ({input_size_gb:.1f} GB input)")
 
             import select
 
@@ -1387,39 +1389,21 @@ class JobQueueManager:
                 except Exception as e:
                     self.logger.debug(f"Error reading ld-compress output: {e}")
 
-                # Update progress based on output file size if it exists
+                # Update progress based on elapsed time
                 current_time = time.time()
                 if current_time - last_progress_update > 2.0:
                     try:
-                        # Check both possible output locations
-                        # ld-compress writes to cwd with basename
-                        input_basename = os.path.basename(job.input_file)
-                        alt_output = os.path.join(output_dir, input_basename.replace('.lds', '.ldf'))
+                        elapsed = current_time - start_time
+                        # Use time-based progress (5% to 90%)
+                        time_progress = 5.0 + (elapsed / estimated_duration) * 85.0
 
-                        output_path = None
-                        if os.path.exists(job.output_file):
-                            output_path = job.output_file
-                        elif os.path.exists(alt_output):
-                            output_path = alt_output
+                        with self.lock:
+                            job.progress = min(max(5.0, time_progress), 90.0)
+                            self._save_queue_async()
 
-                        if output_path:
-                            current_output_size = os.path.getsize(output_path)
-                            # Calculate progress based on file size vs expected
-                            size_progress = (current_output_size / expected_output_size) * 85.0
-                            with self.lock:
-                                job.progress = min(max(5.0, size_progress), 85.0)
-                                self._save_queue_async()
-                            self.logger.debug(f"Compress progress: {job.progress:.1f}% (output size: {current_output_size})")
-                        else:
-                            # No output file yet, use time-based progress slowly
-                            elapsed = current_time - start_time
-                            # Assume compression takes roughly 1 minute per GB
-                            estimated_duration = (input_size / (1024**3)) * 60
-                            if estimated_duration > 0:
-                                time_progress = (elapsed / estimated_duration) * 80.0
-                                with self.lock:
-                                    job.progress = min(max(5.0, time_progress), 40.0)
-                                    self._save_queue_async()
+                        # Log progress every ~10 seconds
+                        if int(elapsed) % 10 == 0:
+                            self.logger.debug(f"Compress progress: {job.progress:.1f}% (elapsed: {elapsed:.0f}s)")
                     except Exception as e:
                         self.logger.debug(f"Error updating progress: {e}")
                     last_progress_update = current_time

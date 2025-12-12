@@ -508,35 +508,24 @@ case "$OS" in
             PKG_MGR="none"
         fi
 
-        # Install DVD creation tools
+        # Install required system packages: DVD creation tools and pv (for ld-compress progress)
         if [[ "$PKG_MGR" == "dnf" ]] || [[ "$PKG_MGR" == "yum" ]]; then
             echo "Installing system packages with $PKG_MGR..."
-            if ! rpm -q genisoimage dvdauthor &> /dev/null; then
-                echo "Installing genisoimage and dvdauthor..."
-                sudo $PKG_MGR install -y genisoimage dvdauthor || echo "Warning: Could not install DVD creation tools. Install manually: sudo $PKG_MGR install genisoimage dvdauthor"
-            fi
+            sudo $PKG_MGR install -y genisoimage dvdauthor pv || echo "Warning: Could not install system packages. Install manually: sudo $PKG_MGR install genisoimage dvdauthor pv"
         elif [[ "$PKG_MGR" == "apt" ]]; then
             echo "Installing system packages with apt..."
-            if ! dpkg -l | grep -q "genisoimage\|dvdauthor"; then
-                echo "Installing genisoimage and dvdauthor..."
-                sudo apt update && sudo apt install -y genisoimage dvdauthor || echo "Warning: Could not install DVD creation tools. Install manually: sudo apt install genisoimage dvdauthor"
-            fi
+            sudo apt update && sudo apt install -y genisoimage dvdauthor pv || echo "Warning: Could not install system packages. Install manually: sudo apt install genisoimage dvdauthor pv"
         elif [[ "$PKG_MGR" == "pacman" ]]; then
             echo "Installing system packages with pacman..."
-            if ! pacman -Q cdrtools dvdauthor &> /dev/null; then
-                echo "Installing cdrtools and dvdauthor..."
-                sudo pacman -S --needed --noconfirm cdrtools dvdauthor || echo "Warning: Could not install DVD creation tools. Install manually: sudo pacman -S cdrtools dvdauthor"
-            fi
+            sudo pacman -S --needed --noconfirm cdrtools dvdauthor pv || echo "Warning: Could not install system packages. Install manually: sudo pacman -S cdrtools dvdauthor pv"
         elif [[ "$PKG_MGR" == "zypper" ]]; then
             echo "Installing system packages with zypper..."
-            if ! rpm -q cdrtools dvdauthor &> /dev/null; then
-                echo "Installing cdrtools and dvdauthor..."
-                sudo zypper install -y cdrtools dvdauthor || echo "Warning: Could not install DVD creation tools. Install manually: sudo zypper install cdrtools dvdauthor"
-            fi
+            sudo zypper install -y cdrtools dvdauthor pv || echo "Warning: Could not install system packages. Install manually: sudo zypper install cdrtools dvdauthor pv"
         else
             echo "Warning: Unknown package manager. Please install these packages manually:"
             echo "  - cdrtools (or genisoimage on Ubuntu/Debian)"
             echo "  - dvdauthor"
+            echo "  - pv (pipe viewer, required for ld-compress progress)"
         fi
 
         echo ""
