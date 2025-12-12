@@ -23,14 +23,16 @@ This toolkit provides a complete workflow for digitising VHS tapes using the Dom
 
 ### Installation
 
-1. **Clone the repository:**
+1. **Clone the repository with submodules:**
    ```bash
-   git clone <repository-url>
+   git clone --recurse-submodules <repository-url>
    cd ddd-capture-toolkit
    ```
 
-2. **Initialize submodules:**
+   Alternatively, if you've already cloned without submodules:
    ```bash
+   git clone <repository-url>
+   cd ddd-capture-toolkit
    git submodule update --init --recursive
    ```
 

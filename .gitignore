@@ -56,6 +56,5 @@ config/job_queue.json
 logs/
 workflow_debug.log
 
-# External submodules (tracked via .gitmodules, not directly)
-external/
+# PyTorch3D build artifacts
 pytorch3d
