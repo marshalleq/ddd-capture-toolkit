@@ -673,12 +673,12 @@ class WorkflowControlCentre:
             else:
                 return f"Job J{job_num} (empty)"
         else:
-            return "None - Use 1D, 2C, etc. for direct actions"
+            return "None - Use 1D, 2M, etc. for direct actions"
     
     def handle_command(self, cmd):
         """Handle user command input"""
-        # Coordinate system commands (1D, 2C, etc.)
-        if len(cmd) == 2 and cmd[0].isdigit() and cmd[1] in "dcaef":
+        # Coordinate system commands (1D, 2M, etc.)
+        if len(cmd) == 2 and cmd[0].isdigit() and cmd[1] in "dmaef":
             project_num = int(cmd[0])
             step_letter = cmd[1]
             self.handle_coordinate_command(project_num, step_letter)
@@ -708,7 +708,7 @@ class WorkflowControlCentre:
         # Force command (force 1e, force 2d, etc.)
         elif cmd.startswith('force ') and len(cmd) >= 8:
             force_cmd = cmd[6:].strip()
-            if len(force_cmd) == 2 and force_cmd[0].isdigit() and force_cmd[1] in "dcaef":
+            if len(force_cmd) == 2 and force_cmd[0].isdigit() and force_cmd[1] in "dmaef":
                 project_num = int(force_cmd[0])
                 step_letter = force_cmd[1]
                 self.handle_force_command(project_num, step_letter)
@@ -718,7 +718,7 @@ class WorkflowControlCentre:
         # Clean command to reset stuck progress displays
         elif cmd.startswith('clean ') and len(cmd) >= 8:
             clean_cmd = cmd[6:].strip()
-            if len(clean_cmd) == 2 and clean_cmd[0].isdigit() and clean_cmd[1] in "dcaef":
+            if len(clean_cmd) == 2 and clean_cmd[0].isdigit() and clean_cmd[1] in "dmaef":
                 project_num = int(clean_cmd[0])
                 step_letter = clean_cmd[1]
                 self.handle_clean_command(project_num, step_letter)
@@ -728,7 +728,7 @@ class WorkflowControlCentre:
         # Stop command (stop 1e, stop 2d, etc.)
         elif cmd.startswith('stop ') and len(cmd) >= 7:
             stop_cmd = cmd[5:].strip()
-            if len(stop_cmd) == 2 and stop_cmd[0].isdigit() and stop_cmd[1] in "dcaef":
+            if len(stop_cmd) == 2 and stop_cmd[0].isdigit() and stop_cmd[1] in "dmaef":
                 project_num = int(stop_cmd[0])
                 step_letter = stop_cmd[1]
                 self.handle_stop_command(project_num, step_letter)
@@ -754,7 +754,7 @@ class WorkflowControlCentre:
             self.message = f"Unknown command: {cmd}"
     
     def handle_coordinate_command(self, project_num, step_letter):
-        """Handle coordinate-based commands like 1D, 2C, etc."""
+        """Handle coordinate-based commands like 1D, 2M, etc."""
         project_idx = project_num - 1
         
         # Check if project exists
@@ -767,7 +767,7 @@ class WorkflowControlCentre:
         # Map step letters to workflow steps
         step_map = {
             'd': WorkflowStep.DECODE,
-            'c': WorkflowStep.COMPRESS, 
+            'm': WorkflowStep.COMPRESS,
             'e': WorkflowStep.EXPORT,
             'a': WorkflowStep.ALIGN,
             'f': WorkflowStep.FINAL
@@ -1303,9 +1303,49 @@ class WorkflowControlCentre:
                     result_queue.put((False, f"Job manager failed to create final muxing job"))
                     
             elif workflow_step == WorkflowStep.COMPRESS:
-                # This step will be implemented in future phases
-                self.message = f"{workflow_step.name} workflow step not yet implemented"
-                return False
+                # Submit LDS compression job to convert .lds to .ldf
+                lds_file = None
+
+                # Try to find LDS file from project capture files
+                if hasattr(project, 'capture_files') and 'video' in project.capture_files:
+                    lds_file = project.capture_files['video']
+                elif hasattr(project, 'rf_file'):
+                    lds_file = project.rf_file
+
+                if not lds_file or not os.path.exists(lds_file):
+                    self.message = f"LDS file not found for {project.name} (tried: {lds_file})"
+                    result_queue.put((False, self.message))
+                    return
+
+                # Only compress .lds files (not already compressed .ldf files)
+                if not lds_file.endswith('.lds'):
+                    self.message = f"File is not an .lds file (already compressed?): {lds_file}"
+                    result_queue.put((False, self.message))
+                    return
+
+                # Generate output filename (.lds -> .ldf)
+                ldf_file = lds_file.replace('.lds', '.ldf')
+
+                parameters = {
+                    'compression_level': 11,  # Default high compression
+                    'show_progress': True,
+                    'overwrite': force_overwrite
+                }
+
+                job_id = job_manager.add_job_nonblocking(
+                    job_type="lds-compress",
+                    input_file=lds_file,
+                    output_file=ldf_file,
+                    parameters=parameters,
+                    priority=5,  # Medium priority
+                    timeout=0.5,  # 0.5 second timeout
+                    project_name=project.name
+                )
+
+                if job_id:
+                    result_queue.put((True, None))
+                else:
+                    result_queue.put((False, f"Job manager failed to create compression job"))
                 
             else:
                 self.message = f"Unknown workflow step: {workflow_step}"
@@ -1331,7 +1371,7 @@ class WorkflowControlCentre:
         # Map step letters to workflow steps
         step_map = {
             'd': WorkflowStep.DECODE,
-            'c': WorkflowStep.COMPRESS, 
+            'm': WorkflowStep.COMPRESS,
             'e': WorkflowStep.EXPORT,
             'a': WorkflowStep.ALIGN,
             'f': WorkflowStep.FINAL
@@ -1371,7 +1411,7 @@ class WorkflowControlCentre:
         # Map step letters to job types
         step_to_job_type = {
             'd': 'vhs-decode',
-            'c': 'compress',  # Future implementation
+            'm': 'lds-compress',
             'e': 'tbc-export',
             'a': 'audio-align',
             'f': 'final-mux'
@@ -1458,7 +1498,7 @@ class WorkflowControlCentre:
         # Map step letters to job types
         step_to_job_type = {
             'd': 'vhs-decode',
-            'c': 'compress',  # Future implementation
+            'm': 'lds-compress',
             'e': 'tbc-export',
             'a': 'audio-align',
             'f': 'final-mux'
@@ -1750,7 +1790,7 @@ class WorkflowControlCentre:
         
         print("\nCoordinate System (Direct Actions):")
         print("  1D - Start Decode for Project 1")
-        print("  2C - Start Compress for Project 2")
+        print("  2M - Start Compress for Project 2")
         print("  3E - Start Export for Project 3")
         print("  1A - Start Align for Project 1")
         print("  2F - Start Final for Project 2")
@@ -1773,11 +1813,11 @@ class WorkflowControlCentre:
         print("  Q - Quit the Workflow Control Centre")
         
         print("\nStep Letters:")
-        print("  D = (D)ecode, C = (C)ompress, E = (E)xport")
+        print("  D = (D)ecode, M = Co(M)press, E = (E)xport")
         print("  A = (A)lign, F = (F)inal")
         
         print("\nTips:")
-        print("  • Use coordinate system for direct actions: 1D, 2C, etc.")
+        print("  • Use coordinate system for direct actions: 1D, 2M, etc.")
         print("  • Select projects (1-7) or jobs (J1-J9) for multi-step operations")
         print("  • 'Auto' will queue all ready steps across all projects")
         print("  • Coordinate commands work on any step status (Ready/Failed/etc.)")

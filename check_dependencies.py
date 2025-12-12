@@ -155,9 +155,9 @@ def check_system_commands():
     
     # Add tbc-video-export check (critical for TBC to video conversion)
     try:
-        result = subprocess.run(['tbc-video-export', '--version'], 
-                              capture_output=True, 
-                              text=True, 
+        result = subprocess.run(['tbc-video-export', '--version'],
+                              capture_output=True,
+                              text=True,
                               timeout=10)
         if result.returncode == 0:
             version_line = result.stdout.split('\n')[0] if result.stdout else 'version info unavailable'
@@ -169,6 +169,74 @@ def check_system_commands():
         print(f"      Install with: pip install tbc-video-export")
     except Exception as e:
         print(f"    tbc-video-export (TBC to video converter) - error: {e}")
+
+    # Add ld-compress dependencies check (for LDS to LDF compression)
+    print(f"\n    LDS Compression dependencies (ld-compress):")
+
+    # Check for ld-lds-converter (required for ld-compress)
+    try:
+        result = subprocess.run(['ld-lds-converter', '--help'],
+                              capture_output=True,
+                              text=True,
+                              timeout=5)
+        # ld-lds-converter may return non-zero for --help, check if we get output
+        if result.stdout or result.stderr:
+            print(f"      ld-lds-converter (LDS format converter) - OK")
+        else:
+            print(f"      ld-lds-converter (LDS format converter) - command failed")
+    except FileNotFoundError:
+        print(f"      ld-lds-converter (LDS format converter) - not found")
+        print(f"        Required for ld-compress. Install with ld-decode tools.")
+    except subprocess.TimeoutExpired:
+        print(f"      ld-lds-converter (LDS format converter) - timeout")
+    except Exception as e:
+        print(f"      ld-lds-converter (LDS format converter) - error: {e}")
+
+    # Check for ld-compress script
+    ld_compress_paths = [
+        str(Path(__file__).parent / 'external' / 'vhs-decode' / 'scripts' / 'ld-compress'),
+        str(Path(__file__).parent / 'external' / 'ld-decode' / 'scripts' / 'ld-compress'),
+    ]
+    ld_compress_found = False
+    for path in ld_compress_paths:
+        if os.path.exists(path):
+            print(f"      ld-compress script - found at {path}")
+            ld_compress_found = True
+            break
+
+    # Also check if ld-compress is in PATH
+    if not ld_compress_found:
+        try:
+            result = subprocess.run(['which', 'ld-compress'],
+                                  capture_output=True,
+                                  text=True,
+                                  timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                print(f"      ld-compress script - found in PATH at {result.stdout.strip()}")
+                ld_compress_found = True
+        except:
+            pass
+
+    if not ld_compress_found:
+        print(f"      ld-compress script - not found")
+        print(f"        Should be in external/vhs-decode/scripts/ or PATH")
+
+    # Check for pv (pipeviewer - optional, for progress display)
+    try:
+        result = subprocess.run(['pv', '--version'],
+                              capture_output=True,
+                              text=True,
+                              timeout=5)
+        if result.returncode == 0:
+            version_line = result.stdout.split('\n')[0] if result.stdout else 'unknown'
+            print(f"      pv (pipeviewer for progress) - {version_line} OK")
+        else:
+            print(f"      pv (pipeviewer for progress) - command failed (optional)")
+    except FileNotFoundError:
+        print(f"      pv (pipeviewer for progress) - not found (optional)")
+        print(f"        Install with: sudo apt install pv (for compression progress bars)")
+    except Exception:
+        print(f"      pv (pipeviewer for progress) - not available (optional)")
     
     all_good = True
     

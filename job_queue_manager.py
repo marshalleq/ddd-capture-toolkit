@@ -384,6 +384,8 @@ class JobQueueManager:
                 success = self._execute_audio_align_job(job)
             elif job.job_type == "final-mux":
                 success = self._execute_final_mux_job(job)
+            elif job.job_type == "lds-compress":
+                success = self._execute_lds_compress_job(job)
             else:
                 self.logger.error(f"Unknown job type: {job.job_type}")
                 success = False
@@ -1271,7 +1273,228 @@ class JobQueueManager:
             self.logger.error(f"Final muxing job error: {e}")
             job.error_message = str(e)
             return False
-    
+
+    def _execute_lds_compress_job(self, job: QueuedJob) -> bool:
+        """Execute an LDS compression job using ld-compress to convert .lds to .ldf"""
+        try:
+            self.logger.info(f"Starting LDS compression: {job.input_file} -> {job.output_file}")
+
+            # Validate input file exists
+            if not os.path.exists(job.input_file):
+                self.logger.error(f"Input LDS file not found: {job.input_file}")
+                job.error_message = f"Input file not found: {job.input_file}"
+                return False
+
+            # Get compression level from parameters (default 11)
+            compression_level = job.parameters.get('compression_level', 11)
+            show_progress = job.parameters.get('show_progress', True)
+            overwrite = job.parameters.get('overwrite', False)
+
+            # Check if output already exists
+            if os.path.exists(job.output_file) and not overwrite:
+                self.logger.error(f"Output file already exists: {job.output_file}")
+                job.error_message = f"Output file already exists: {job.output_file}"
+                return False
+
+            # Get input file size for progress estimation
+            input_size = os.path.getsize(job.input_file)
+            input_size_gb = input_size / (1024 ** 3)
+            self.logger.info(f"Input file size: {input_size_gb:.2f} GB")
+
+            # Find the ld-compress script
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            ld_compress_paths = [
+                os.path.join(script_dir, 'external', 'vhs-decode', 'scripts', 'ld-compress'),
+                os.path.join(script_dir, 'external', 'ld-decode', 'scripts', 'ld-compress'),
+                'ld-compress'  # Try PATH as fallback
+            ]
+
+            ld_compress_cmd = None
+            for path in ld_compress_paths:
+                if os.path.exists(path):
+                    ld_compress_cmd = path
+                    break
+                elif path == 'ld-compress':
+                    # Check if it's in PATH
+                    import shutil
+                    if shutil.which('ld-compress'):
+                        ld_compress_cmd = 'ld-compress'
+                        break
+
+            if not ld_compress_cmd:
+                self.logger.error("ld-compress script not found")
+                job.error_message = "ld-compress script not found in external/vhs-decode/scripts/ or PATH"
+                return False
+
+            # Build the ld-compress command
+            cmd = [ld_compress_cmd, '-c', '-l', str(compression_level)]
+
+            if show_progress:
+                cmd.append('-p')
+
+            cmd.append(job.input_file)
+
+            self.logger.info(f"Running ld-compress: {' '.join(cmd)}")
+
+            # Update progress
+            with self.lock:
+                job.progress = 5.0
+                self.save_queue()
+
+            # Change to output directory since ld-compress writes to current directory
+            output_dir = os.path.dirname(job.output_file)
+            if not output_dir:
+                output_dir = os.getcwd()
+
+            # Run ld-compress
+            import subprocess
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=output_dir
+            )
+
+            # Track the process for termination capability
+            self.job_processes[job.job_id] = process
+
+            self.logger.info(f"Started ld-compress process with PID: {process.pid}")
+
+            # Monitor process for progress
+            # ld-compress doesn't provide detailed progress, so we estimate based on
+            # output file size growth compared to expected compression ratio (~50%)
+            last_progress_update = time.time()
+            start_time = time.time()
+            expected_output_size = input_size * 0.5  # Expect ~50% compression ratio
+
+            import select
+
+            while True:
+                return_code = process.poll()
+
+                # Non-blocking read of output using select
+                try:
+                    if process.stdout:
+                        # Check if there's data to read (with 0.5s timeout)
+                        readable, _, _ = select.select([process.stdout], [], [], 0.5)
+                        if readable:
+                            line = process.stdout.readline()
+                            if line:
+                                line = line.strip()
+                                self.logger.debug(f"ld-compress: {line}")
+                except Exception as e:
+                    self.logger.debug(f"Error reading ld-compress output: {e}")
+
+                # Update progress based on output file size if it exists
+                current_time = time.time()
+                if current_time - last_progress_update > 2.0:
+                    try:
+                        # Check both possible output locations
+                        # ld-compress writes to cwd with basename
+                        input_basename = os.path.basename(job.input_file)
+                        alt_output = os.path.join(output_dir, input_basename.replace('.lds', '.ldf'))
+
+                        output_path = None
+                        if os.path.exists(job.output_file):
+                            output_path = job.output_file
+                        elif os.path.exists(alt_output):
+                            output_path = alt_output
+
+                        if output_path:
+                            current_output_size = os.path.getsize(output_path)
+                            # Calculate progress based on file size vs expected
+                            size_progress = (current_output_size / expected_output_size) * 85.0
+                            with self.lock:
+                                job.progress = min(max(5.0, size_progress), 85.0)
+                                self._save_queue_async()
+                            self.logger.debug(f"Compress progress: {job.progress:.1f}% (output size: {current_output_size})")
+                        else:
+                            # No output file yet, use time-based progress slowly
+                            elapsed = current_time - start_time
+                            # Assume compression takes roughly 1 minute per GB
+                            estimated_duration = (input_size / (1024**3)) * 60
+                            if estimated_duration > 0:
+                                time_progress = (elapsed / estimated_duration) * 80.0
+                                with self.lock:
+                                    job.progress = min(max(5.0, time_progress), 40.0)
+                                    self._save_queue_async()
+                    except Exception as e:
+                        self.logger.debug(f"Error updating progress: {e}")
+                    last_progress_update = current_time
+
+                if return_code is not None:
+                    break
+
+                time.sleep(0.5)
+
+            # Read remaining output
+            try:
+                remaining_output, _ = process.communicate(timeout=10)
+                if remaining_output:
+                    self.logger.debug(f"ld-compress remaining output: {remaining_output}")
+            except subprocess.TimeoutExpired:
+                self.logger.warning("Timeout waiting for remaining ld-compress output")
+
+            # Clean up process tracking
+            if job.job_id in self.job_processes:
+                del self.job_processes[job.job_id]
+
+            # Check if output file was created
+            # ld-compress creates the .ldf file in the current working directory
+            expected_output = job.output_file
+
+            # Also check for the file based on input filename pattern
+            input_basename = os.path.basename(job.input_file)
+            if input_basename.endswith('.lds'):
+                alt_output = os.path.join(output_dir, input_basename.replace('.lds', '.ldf'))
+            else:
+                alt_output = None
+
+            output_exists = os.path.exists(expected_output)
+            if not output_exists and alt_output and os.path.exists(alt_output):
+                # Move to expected output location if needed
+                if alt_output != expected_output:
+                    import shutil
+                    shutil.move(alt_output, expected_output)
+                output_exists = True
+
+            self.logger.info(f"ld-compress completed with return code: {return_code}")
+
+            if return_code == 0 and output_exists and os.path.getsize(expected_output) > 0:
+                output_size = os.path.getsize(expected_output) / (1024 ** 3)
+                compression_ratio = (1 - (os.path.getsize(expected_output) / input_size)) * 100
+                self.logger.info(f"LDS compression completed: {expected_output}")
+                self.logger.info(f"Output size: {output_size:.2f} GB (compression ratio: {compression_ratio:.1f}%)")
+
+                with self.lock:
+                    job.progress = 100.0
+
+                return True
+            else:
+                error_msg = "ld-compress failed"
+                if return_code != 0:
+                    error_msg = f"ld-compress failed with return code {return_code}"
+                elif not output_exists:
+                    error_msg = f"Output file not created: {expected_output}"
+                elif os.path.getsize(expected_output) == 0:
+                    error_msg = f"Output file is empty: {expected_output}"
+
+                self.logger.error(error_msg)
+                job.error_message = error_msg
+                return False
+
+        except FileNotFoundError as e:
+            error_msg = f"Required tool not found: {e}"
+            self.logger.error(error_msg)
+            job.error_message = error_msg
+            return False
+        except Exception as e:
+            self.logger.error(f"LDS compression job error: {e}")
+            job.error_message = str(e)
+            return False
+
     def save_queue(self):
         """Save queue to persistent storage"""
         try:

@@ -250,8 +250,14 @@ class WorkflowAnalyzer:
             # Requires video capture to be complete
             return self._is_capture_complete(project)
         elif step == WorkflowStep.COMPRESS:
-            # Requires decode to be complete
-            return self._is_decode_complete(project)
+            # Requires capture to be complete AND file must be .lds (not already .ldf)
+            if not self._is_capture_complete(project):
+                return False
+            # Only show as ready if capture file is .lds (uncompressed)
+            if 'video' in project.capture_files:
+                video_file = project.capture_files['video']
+                return video_file.endswith('.lds')
+            return False
         elif step == WorkflowStep.EXPORT:
             # Requires decode to be complete
             return self._is_decode_complete(project)
@@ -298,17 +304,26 @@ class WorkflowAnalyzer:
         return tbc_size > 1024 * 1024  # Should be at least 1MB
     
     def _is_compress_complete(self, project: Project) -> bool:
-        """Check if compress step is complete (placeholder for future)"""
-        if 'compress' not in project.output_files:
-            return False
-            
-        compress_file = project.output_files['compress']
-        if not os.path.exists(compress_file):
-            return False
-            
-        # Check file size is reasonable
-        compress_size = os.path.getsize(compress_file)
-        return compress_size > 1024 * 1024  # Should be at least 1MB
+        """Check if compress step is complete (LDS -> LDF compression)"""
+        # First check if project discovery found a compress output file
+        if 'compress' in project.output_files:
+            compress_file = project.output_files['compress']
+            if os.path.exists(compress_file):
+                compress_size = os.path.getsize(compress_file)
+                if compress_size > 1024 * 1024:  # Should be at least 1MB
+                    return True
+
+        # Also check directly for .ldf file based on capture file
+        if 'video' in project.capture_files:
+            video_file = project.capture_files['video']
+            if video_file.endswith('.lds'):
+                ldf_file = video_file.replace('.lds', '.ldf')
+                if os.path.exists(ldf_file):
+                    ldf_size = os.path.getsize(ldf_file)
+                    if ldf_size > 1024 * 1024:  # Should be at least 1MB
+                        return True
+
+        return False
     
     def _is_export_complete(self, project: Project) -> bool:
         """Check if export step is complete"""
@@ -383,6 +398,7 @@ class WorkflowAnalyzer:
         """Get job type string for workflow step"""
         job_type_mapping = {
             WorkflowStep.DECODE: "vhs-decode",
+            WorkflowStep.COMPRESS: "lds-compress",
             WorkflowStep.EXPORT: "tbc-export",
             WorkflowStep.ALIGN: "audio-align",
             WorkflowStep.FINAL: "final-mux",
