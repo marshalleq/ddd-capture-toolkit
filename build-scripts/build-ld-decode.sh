@@ -50,7 +50,19 @@ build_ld_decode() {
     
     cd "$ld_decode_dir"
     log_info "Building in: $(pwd)"
-    
+
+    # Initialize nested submodules (ezpwd for efm-decoder)
+    if [[ ! -f "tools/efm-decoder/libs/ezpwd/rs_base" ]]; then
+        log_info "Initializing nested submodules..."
+        git submodule update --init --recursive
+    fi
+
+    # Patch CMakeLists.txt to make ld-analyse optional (avoids OpenGL linking issues)
+    if ! grep -q "BUILD_ANALYSE" CMakeLists.txt; then
+        log_info "Patching CMakeLists.txt to make ld-analyse optional..."
+        sed -i 's/add_subdirectory(tools\/ld-analyse)/option(BUILD_ANALYSE "Build ld-analyse GUI tool" OFF)\nif(BUILD_ANALYSE)\n    add_subdirectory(tools\/ld-analyse)\nendif()/' CMakeLists.txt
+    fi
+
     # Create and enter build directory
     local build_dir="build"
     if [[ "$clean_build" == "true" ]] && [[ -d "$build_dir" ]]; then
