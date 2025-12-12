@@ -451,7 +451,17 @@ class WorkflowControlCentre:
         status_content.append(f"Projects: {len(self.current_projects)}", style="cyan")
         status_content.append(" | ", style="dim")
         status_content.append(f"Locations: {len(self.directories)}", style="cyan")
-        
+
+        # Show default video format
+        try:
+            from config import get_preferred_video_format
+            default_format = get_preferred_video_format().upper()
+        except ImportError:
+            default_format = "PAL"
+        status_content.append("\n")
+        status_content.append(f"Default: {default_format}", style="yellow")
+        status_content.append(" (1dp=PAL, 1dn=NTSC)", style="dim")
+
         return Panel(status_content, title="System Status", border_style="blue")
     
     def create_system_resource_panel(self):
@@ -514,8 +524,12 @@ class WorkflowControlCentre:
         controls.append("\n")
         controls.append("1-7", style="bold cyan")
         controls.append(" - Select Project\n", style="white")
-        controls.append("1d, 2e", style="bold yellow")
-        controls.append(" - Start Jobs\n", style="white")
+        controls.append("1d", style="bold yellow")
+        controls.append(" - Decode (default)\n", style="white")
+        controls.append("1dp/1dn", style="bold yellow")
+        controls.append(" - Decode PAL/NTSC\n", style="white")
+        controls.append("1m,1e,1a,1f", style="bold yellow")
+        controls.append(" - Other steps\n", style="white")
         controls.append("stop 1d", style="bold red")
         controls.append(" - Stop Jobs\n", style="white")
         controls.append("force 1e", style="bold magenta")
@@ -678,10 +692,16 @@ class WorkflowControlCentre:
     def handle_command(self, cmd):
         """Handle user command input"""
         # Coordinate system commands (1D, 2M, etc.)
+        # Also supports format modifiers for decode: 1dp (PAL), 1dn (NTSC)
         if len(cmd) == 2 and cmd[0].isdigit() and cmd[1] in "dmaef":
             project_num = int(cmd[0])
             step_letter = cmd[1]
             self.handle_coordinate_command(project_num, step_letter)
+        elif len(cmd) == 3 and cmd[0].isdigit() and cmd[1] == 'd' and cmd[2] in "pn":
+            # Decode with format specifier: 1dp = PAL, 1dn = NTSC
+            project_num = int(cmd[0])
+            format_override = 'pal' if cmd[2] == 'p' else 'ntsc'
+            self.handle_coordinate_command(project_num, 'd', video_format=format_override)
         
         # Project selection (1-7)
         elif cmd in "1234567":
@@ -753,8 +773,8 @@ class WorkflowControlCentre:
         else:
             self.message = f"Unknown command: {cmd}"
     
-    def handle_coordinate_command(self, project_num, step_letter):
-        """Handle coordinate-based commands like 1D, 2M, etc."""
+    def handle_coordinate_command(self, project_num, step_letter, video_format=None):
+        """Handle coordinate-based commands like 1D, 2M, 1DP (PAL), 1DN (NTSC), etc."""
         project_idx = project_num - 1
         
         # Check if project exists
@@ -788,9 +808,10 @@ class WorkflowControlCentre:
                 # Start the job
                 if self.job_manager:
                     try:
-                        success = self._submit_workflow_job(project, workflow_step)
+                        success = self._submit_workflow_job(project, workflow_step, video_format=video_format)
                         if success:
-                            self.message = f"Started {step_name} for Project {project_num} ({project.name})"
+                            format_info = f" ({video_format.upper()})" if video_format and workflow_step == WorkflowStep.DECODE else ""
+                            self.message = f"Started {step_name}{format_info} for Project {project_num} ({project.name})"
                         else:
                             self.message = f"Failed to start {step_name} for Project {project_num}"
                     except Exception as e:
@@ -801,9 +822,10 @@ class WorkflowControlCentre:
                 # Retry the failed job
                 if self.job_manager:
                     try:
-                        success = self._submit_workflow_job(project, workflow_step)
+                        success = self._submit_workflow_job(project, workflow_step, video_format=video_format)
                         if success:
-                            self.message = f"Retrying {step_name} for Project {project_num} ({project.name})"
+                            format_info = f" ({video_format.upper()})" if video_format and workflow_step == WorkflowStep.DECODE else ""
+                            self.message = f"Retrying {step_name}{format_info} for Project {project_num} ({project.name})"
                         else:
                             self.message = f"Failed to retry {step_name} for Project {project_num}"
                     except Exception as e:
@@ -990,27 +1012,28 @@ class WorkflowControlCentre:
         else:
             self.message = "No ready workflow steps found to queue"
     
-    def _submit_workflow_job(self, project, workflow_step, force_overwrite=False):
+    def _submit_workflow_job(self, project, workflow_step, force_overwrite=False, video_format=None):
         """Submit a job for a specific workflow step
-        
+
         Args:
             project: Project object
             workflow_step: WorkflowStep enum value
             force_overwrite: bool: Whether to force overwrite existing output files
-            
+            video_format: str: Optional video format override ('pal' or 'ntsc') for decode jobs
+
         Returns:
             bool: True if job was successfully submitted
         """
         # Use a background thread to avoid blocking UI on slow filesystem operations
         import threading
         import queue as thread_queue
-        
+
         result_queue = thread_queue.Queue()
-        
+
         def background_job_submission():
             """Background thread function to handle filesystem operations and job submission"""
             try:
-                self._submit_workflow_job_background(project, workflow_step, force_overwrite, result_queue)
+                self._submit_workflow_job_background(project, workflow_step, force_overwrite, result_queue, video_format)
             except Exception as e:
                 result_queue.put((False, str(e)))
         
@@ -1028,7 +1051,7 @@ class WorkflowControlCentre:
             self.message = f"Warning: Job submission taking too long - continuing in background"
             return True  # Assume success to avoid blocking UI
     
-    def _submit_workflow_job_background(self, project, workflow_step, force_overwrite, result_queue):
+    def _submit_workflow_job_background(self, project, workflow_step, force_overwrite, result_queue, video_format=None):
         """Background thread implementation of job submission with filesystem operations"""
         try:
             # Import necessary functions
@@ -1057,8 +1080,18 @@ class WorkflowControlCentre:
                 else:
                     tbc_file = rf_file + '.tbc'
                 
+                # Determine video format: use override if provided, else config default
+                if video_format:
+                    selected_format = video_format
+                else:
+                    try:
+                        from config import get_preferred_video_format
+                        selected_format = getattr(project, 'video_standard', get_preferred_video_format())
+                    except ImportError:
+                        selected_format = getattr(project, 'video_standard', 'pal')
+
                 parameters = {
-                    'video_standard': getattr(project, 'video_standard', 'pal'),
+                    'video_standard': selected_format,
                     'tape_speed': getattr(project, 'tape_speed', 'SP'),
                     'additional_params': getattr(project, 'additional_params', '')
                 }
@@ -1789,7 +1822,9 @@ class WorkflowControlCentre:
         print("=" * 40)
         
         print("\nCoordinate System (Direct Actions):")
-        print("  1D - Start Decode for Project 1")
+        print("  1D - Start Decode for Project 1 (uses config default format)")
+        print("  1DP - Start Decode for Project 1 (force PAL)")
+        print("  1DN - Start Decode for Project 1 (force NTSC)")
         print("  2M - Start Compress for Project 2")
         print("  3E - Start Export for Project 3")
         print("  1A - Start Align for Project 1")

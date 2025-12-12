@@ -172,6 +172,38 @@ def check_disk_space(directory, required_gb=10):
         print(f"Warning: Could not check disk space: {e}")
         return 0, False
 
+def get_preferred_video_format():
+    """
+    Get the preferred video format (PAL or NTSC) for VHS decoding.
+    Returns 'pal' or 'ntsc' (lowercase for use with vhs-decode).
+    """
+    config = load_config()
+    format_pref = config.get('preferred_video_format', 'PAL')
+
+    # Normalize to lowercase for vhs-decode compatibility
+    if isinstance(format_pref, str) and format_pref.upper() in ['PAL', 'NTSC']:
+        return format_pref.lower()
+    else:
+        return 'pal'  # Default to PAL
+
+def set_preferred_video_format(format_type):
+    """
+    Set the preferred video format (PAL or NTSC).
+
+    Args:
+        format_type: 'PAL' or 'NTSC' (case-insensitive)
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    if not isinstance(format_type, str) or format_type.upper() not in ['PAL', 'NTSC']:
+        print(f"Error: Invalid video format '{format_type}'. Must be 'PAL' or 'NTSC'.")
+        return False
+
+    config = load_config()
+    config['preferred_video_format'] = format_type.upper()
+    return save_config(config)
+
 def get_ffmpeg_threads():
     """
     Get the configured FFmpeg thread count for performance control.
