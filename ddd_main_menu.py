@@ -14,6 +14,23 @@ from datetime import datetime
 # Import project workflow management
 from project_workflow import show_project_workflow_status
 
+# Import helper for clean environment (avoids conda Qt conflicts with system tools)
+try:
+    from ddd_clockgen_sync import get_clean_env_for_system_tools
+except ImportError:
+    # Fallback if import fails
+    def get_clean_env_for_system_tools():
+        clean_env = os.environ.copy()
+        for var in ['LD_LIBRARY_PATH', 'LIBRARY_PATH']:
+            if var in clean_env:
+                paths = clean_env[var].split(':')
+                clean_paths = [p for p in paths if 'conda' not in p.lower() and 'anaconda' not in p.lower()]
+                if clean_paths:
+                    clean_env[var] = ':'.join(clean_paths)
+                else:
+                    del clean_env[var]
+        return clean_env
+
 # Import process management utilities
 try:
     from process_killer import run_interactive_process_killer
@@ -3360,7 +3377,8 @@ fi
         print("\nTest cancelled by user")
         # Try to stop DomesdayDuplicator if it's running and clean up files
         try:
-            subprocess.run(['DomesdayDuplicator', '--stop-capture'], timeout=5)
+            subprocess.run(['DomesdayDuplicator', '--stop-capture'], timeout=5,
+                         env=get_clean_env_for_system_tools())
             script_path = os.path.join(temp_dir, "ddd_timing_test.sh")
             if os.path.exists(script_path):
                 os.remove(script_path)
@@ -3899,8 +3917,9 @@ def precision_timecode_capture():
         try:
             # 1. Start video capture using command line (headless mode for minimal latency)
             print("Starting DomesdayDuplicator capture (headless mode for minimal latency)...")
-            ddd_process = subprocess.Popen(['DomesdayDuplicator', '--start-capture', '--headless'], 
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            ddd_process = subprocess.Popen(['DomesdayDuplicator', '--start-capture', '--headless'],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                      env=get_clean_env_for_system_tools())
             time.sleep(2)  # Wait for startup
             
             # Check if process started successfully
@@ -3940,9 +3959,10 @@ def precision_timecode_capture():
 
                 # 3. Stop video capture using command line
                 print("\nStopping DomesdayDuplicator capture...")
-                stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'], 
-                                           capture_output=True, text=True, timeout=10)
-                
+                stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+                                           capture_output=True, text=True, timeout=10,
+                                           env=get_clean_env_for_system_tools())
+
                 if stop_result.returncode == 0:
                     print("DomesdayDuplicator capture stopped successfully")
                 else:
@@ -6124,11 +6144,12 @@ def stop_current_capture():
         
         # Now try to stop Domesday Duplicator using command line
         print("\nStopping Domesday Duplicator capture...")
-        
+
         try:
-            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'], 
-                                       capture_output=True, text=True, timeout=10)
-            
+            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+                                       capture_output=True, text=True, timeout=10,
+                                       env=get_clean_env_for_system_tools())
+
             if stop_result.returncode == 0:
                 print("DomesdayDuplicator capture stopped successfully via command line")
                 print("\nCapture stopped successfully!")

@@ -1,4 +1,24 @@
 
+def get_clean_env_for_system_tools():
+    """Get a clean environment without conda library paths.
+
+    This is needed for system tools like DomesdayDuplicator that are linked
+    against system Qt libraries, which conflict with conda's Qt version.
+    """
+    clean_env = os.environ.copy()
+    # Remove conda library paths that could conflict with system Qt
+    for var in ['LD_LIBRARY_PATH', 'LIBRARY_PATH']:
+        if var in clean_env:
+            # Keep only non-conda paths
+            paths = clean_env[var].split(':')
+            clean_paths = [p for p in paths if 'conda' not in p.lower() and 'anaconda' not in p.lower()]
+            if clean_paths:
+                clean_env[var] = ':'.join(clean_paths)
+            else:
+                del clean_env[var]
+    return clean_env
+
+
 def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_command=None):
     """
     A shared function to start video and audio capture in parallel threads.
@@ -31,17 +51,7 @@ def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_comma
         try:
             # Start DomesdayDuplicator with real-time output monitoring
             # Use clean environment to avoid conda Qt library conflicts with system DomesdayDuplicator
-            clean_env = os.environ.copy()
-            # Remove conda library paths that could conflict with system Qt
-            for var in ['LD_LIBRARY_PATH', 'LIBRARY_PATH']:
-                if var in clean_env:
-                    # Keep only non-conda paths
-                    paths = clean_env[var].split(':')
-                    clean_paths = [p for p in paths if 'conda' not in p.lower() and 'anaconda' not in p.lower()]
-                    if clean_paths:
-                        clean_env[var] = ':'.join(clean_paths)
-                    else:
-                        del clean_env[var]
+            clean_env = get_clean_env_for_system_tools()
 
             ddd_process = subprocess.Popen(ddd_command,
                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -77,10 +87,12 @@ def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_comma
                     # Short sleep to prevent excessive CPU usage
                     time.sleep(0.1)
             print("[Video Thread] Stopping DomesdayDuplicator capture using file-based method...")
-            
+
             # Send the stop command - this creates the stop file that DomesdayDuplicator watches for
-            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'], 
-                                       capture_output=True, text=True, timeout=10)
+            # Use clean environment to avoid conda Qt library conflicts
+            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+                                       capture_output=True, text=True, timeout=10,
+                                       env=clean_env)
             
             if stop_result.returncode == 0:
                 print("[Video Thread] Stop command sent successfully. Waiting for DomesdayDuplicator to complete shutdown...")
@@ -469,10 +481,11 @@ def perform_av_alignment():
 
                 # 3. Stop video capture using command line with fallback
                 print("\nStopping DomesdayDuplicator capture...")
-                
-                # First try the command line stop
-                stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'], 
-                                           capture_output=True, text=True, timeout=10)
+
+                # First try the command line stop (use clean env to avoid Qt conflicts)
+                stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+                                           capture_output=True, text=True, timeout=10,
+                                           env=get_clean_env_for_system_tools())
                 
                 if stop_result.returncode == 0:
                     print("DomesdayDuplicator capture stopped successfully")
@@ -1823,9 +1836,10 @@ def validate_calibration_with_configured_delay():
 
                 # 3. Stop video capture using command line
                 print("\nStopping DomesdayDuplicator capture...")
-                stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'], 
-                                           capture_output=True, text=True)
-                
+                stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+                                           capture_output=True, text=True,
+                                           env=get_clean_env_for_system_tools())
+
                 if stop_result.returncode == 0:
                     print("DomesdayDuplicator capture stopped successfully")
                     debug_log.append(f"Video capture stopped at: {time.strftime('%H:%M:%S')} using command line")
@@ -2334,16 +2348,17 @@ def stop_domesday_duplicator_capture():
     Returns True if successful, False otherwise
     """
     try:
-        # Use command line to stop capture
-        stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture', '--headless'], 
-                                   capture_output=True, text=True, timeout=10)
-        
+        # Use command line to stop capture (clean env to avoid Qt conflicts)
+        stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture', '--headless'],
+                                   capture_output=True, text=True, timeout=10,
+                                   env=get_clean_env_for_system_tools())
+
         if stop_result.returncode == 0:
             return True
         else:
             print(f"DomesdayDuplicator stop returned code {stop_result.returncode}")
             return False
-            
+
     except subprocess.TimeoutExpired:
         print("DomesdayDuplicator stop command timed out")
         return False
@@ -2493,10 +2508,11 @@ def stop_current_capture():
         except subprocess.CalledProcessError:
             print("No SOX processes found to stop.")
         
-        # Stop DomesdayDuplicator using command line
+        # Stop DomesdayDuplicator using command line (clean env to avoid Qt conflicts)
         try:
-            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture', '--headless'], 
-                                       capture_output=True, text=True, timeout=10)
+            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture', '--headless'],
+                                       capture_output=True, text=True, timeout=10,
+                                       env=get_clean_env_for_system_tools())
             if stop_result.returncode == 0:
                 print("DomesdayDuplicator capture stopped via command line.")
             else:
