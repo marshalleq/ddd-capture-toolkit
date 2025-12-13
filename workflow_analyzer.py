@@ -407,12 +407,32 @@ class WorkflowAnalyzer:
     
     def _is_job_for_project(self, job: QueuedJob, project: Project) -> bool:
         """Check if a job belongs to a specific project"""
-        # Simple check: see if project name is in input/output file paths
+        # Extract base names without extensions for exact matching
+        # This prevents "Esslemont-Clow" from matching "Esslemont-Clow2"
         project_base = project.name.lower()
-        input_file = os.path.basename(job.input_file).lower()
-        output_file = os.path.basename(job.output_file).lower()
-        
-        return project_base in input_file or project_base in output_file
+
+        # Get input file base name (strip all extensions like .lds, .tbc, .tbc.json, etc.)
+        input_basename = os.path.basename(job.input_file).lower()
+        # Remove common extensions progressively
+        for ext in ['.tbc.json', '.tbc.lz4', '.lds', '.ldf', '.tbc', '.flac', '.wav', '.mkv', '.json']:
+            if input_basename.endswith(ext):
+                input_basename = input_basename[:-len(ext)]
+                break
+
+        # Get output file base name (strip all extensions)
+        output_basename = os.path.basename(job.output_file).lower()
+        for ext in ['.tbc.json', '.tbc.lz4', '.lds', '.ldf', '.tbc', '.flac', '.wav', '.mkv', '.json']:
+            if output_basename.endswith(ext):
+                output_basename = output_basename[:-len(ext)]
+                break
+        # Also strip suffixes like _ffv1, _aligned, _final from output names
+        for suffix in ['_ffv1', '_aligned', '_final']:
+            if output_basename.endswith(suffix):
+                output_basename = output_basename[:-len(suffix)]
+                break
+
+        # Use exact match instead of substring match
+        return project_base == input_basename or project_base == output_basename
     
     def _get_expected_output_file(self, step: WorkflowStep, project: Project) -> Optional[str]:
         """Get expected output file path for a workflow step"""
