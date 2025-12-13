@@ -55,6 +55,17 @@ build.txt
 config/job_queue.json
 logs/
 workflow_debug.log
+*.log
+
+# Debug output files
+debug_*.txt
+test_*.txt
+whatidid.txt
 
 # PyTorch3D build artifacts
 pytorch3d
+
+# Personal/development notes (may contain paths)
+CRITICAL_UPDATES_COMPLETE.md
+pendingchanges.txt
+SESSION_*.md
