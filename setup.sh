@@ -508,24 +508,28 @@ case "$OS" in
             PKG_MGR="none"
         fi
 
-        # Install required system packages: DVD creation tools and pv (for ld-compress progress)
+        # Install required system packages:
+        # - DVD creation tools (genisoimage/cdrtools, dvdauthor)
+        # - pv (pipe viewer, for ld-compress progress)
+        # - sox (with ALSA support for audio capture - conda sox lacks ALSA driver)
         if [[ "$PKG_MGR" == "dnf" ]] || [[ "$PKG_MGR" == "yum" ]]; then
             echo "Installing system packages with $PKG_MGR..."
-            sudo $PKG_MGR install -y genisoimage dvdauthor pv || echo "Warning: Could not install system packages. Install manually: sudo $PKG_MGR install genisoimage dvdauthor pv"
+            sudo $PKG_MGR install -y genisoimage dvdauthor pv sox || echo "Warning: Could not install system packages. Install manually: sudo $PKG_MGR install genisoimage dvdauthor pv sox"
         elif [[ "$PKG_MGR" == "apt" ]]; then
             echo "Installing system packages with apt..."
-            sudo apt update && sudo apt install -y genisoimage dvdauthor pv || echo "Warning: Could not install system packages. Install manually: sudo apt install genisoimage dvdauthor pv"
+            sudo apt update && sudo apt install -y genisoimage dvdauthor pv sox || echo "Warning: Could not install system packages. Install manually: sudo apt install genisoimage dvdauthor pv sox"
         elif [[ "$PKG_MGR" == "pacman" ]]; then
             echo "Installing system packages with pacman..."
-            sudo pacman -S --needed --noconfirm cdrtools dvdauthor pv || echo "Warning: Could not install system packages. Install manually: sudo pacman -S cdrtools dvdauthor pv"
+            sudo pacman -S --needed --noconfirm cdrtools dvdauthor pv sox || echo "Warning: Could not install system packages. Install manually: sudo pacman -S cdrtools dvdauthor pv sox"
         elif [[ "$PKG_MGR" == "zypper" ]]; then
             echo "Installing system packages with zypper..."
-            sudo zypper install -y cdrtools dvdauthor pv || echo "Warning: Could not install system packages. Install manually: sudo zypper install cdrtools dvdauthor pv"
+            sudo zypper install -y cdrtools dvdauthor pv sox || echo "Warning: Could not install system packages. Install manually: sudo zypper install cdrtools dvdauthor pv sox"
         else
             echo "Warning: Unknown package manager. Please install these packages manually:"
             echo "  - cdrtools (or genisoimage on Ubuntu/Debian)"
             echo "  - dvdauthor"
             echo "  - pv (pipe viewer, required for ld-compress progress)"
+            echo "  - sox (with ALSA support, required for audio capture)"
         fi
 
         echo ""

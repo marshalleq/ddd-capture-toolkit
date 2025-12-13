@@ -30,9 +30,23 @@ def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_comma
         print(f"[Video Thread] Command: {' '.join(ddd_command)}")
         try:
             # Start DomesdayDuplicator with real-time output monitoring
-            ddd_process = subprocess.Popen(ddd_command, 
-                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-                                         text=True, bufsize=1, universal_newlines=True)
+            # Use clean environment to avoid conda Qt library conflicts with system DomesdayDuplicator
+            clean_env = os.environ.copy()
+            # Remove conda library paths that could conflict with system Qt
+            for var in ['LD_LIBRARY_PATH', 'LIBRARY_PATH']:
+                if var in clean_env:
+                    # Keep only non-conda paths
+                    paths = clean_env[var].split(':')
+                    clean_paths = [p for p in paths if 'conda' not in p.lower() and 'anaconda' not in p.lower()]
+                    if clean_paths:
+                        clean_env[var] = ':'.join(clean_paths)
+                    else:
+                        del clean_env[var]
+
+            ddd_process = subprocess.Popen(ddd_command,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         text=True, bufsize=1, universal_newlines=True,
+                                         env=clean_env)
             print("[Video Thread] DomesdayDuplicator process started.")
             
             # Give the process a moment to start 
@@ -243,10 +257,24 @@ def get_sox_command(output_filename):
         bit_depth = '24'
         channels = '2'
 
+    # Find sox with ALSA support on Linux
+    # Conda's sox doesn't include ALSA driver, so we prefer system sox if available
+    sox_cmd = 'sox'
+    if sys.platform == 'linux' and driver == 'alsa':
+        # Check if system sox exists and has ALSA support
+        system_sox = '/usr/bin/sox'
+        if os.path.exists(system_sox):
+            try:
+                result = subprocess.run([system_sox, '--help'], capture_output=True, text=True)
+                if 'alsa' in result.stdout.lower():
+                    sox_cmd = system_sox
+            except:
+                pass
+
     if sys.platform == 'win32':
         # Windows - use DirectSound or WaveIn
         return [
-            'sox',
+            sox_cmd,
             '-t', driver,
             '-r', sample_rate,
             '-b', bit_depth,
@@ -257,7 +285,7 @@ def get_sox_command(output_filename):
     else:
         # Linux/macOS - use ALSA (Linux) or coreaudio (macOS)
         return [
-            'sox',
+            sox_cmd,
             '-t', driver,
             '-r', sample_rate,
             '-b', bit_depth,
