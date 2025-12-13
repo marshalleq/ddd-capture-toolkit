@@ -371,6 +371,22 @@ if command -v conda &> /dev/null; then
         echo "Warning: Could not install requirements automatically."
         echo "After activating the environment, run: pip install -r requirements.txt"
     }
+
+    # Install vhs-decode and tbc-video-export from PyPI (pre-built packages)
+    # In easy mode, we use pre-built wheels from PyPI - no compilation needed
+    # In performance mode, the build script compiles from source with CPU optimizations
+    if [[ "$INSTALL_MODE" == "easy" ]]; then
+        echo "Installing vhs-decode from PyPI (pre-built package)..."
+        conda run -n ddd-capture-toolkit pip install vhs-decode 2>/dev/null || {
+            log_warning "Could not install vhs-decode from PyPI."
+            echo "After activating the environment, run: pip install vhs-decode"
+        }
+        echo "Installing tbc-video-export from PyPI (pre-built package)..."
+        conda run -n ddd-capture-toolkit pip install tbc-video-export 2>/dev/null || {
+            log_warning "Could not install tbc-video-export from PyPI."
+            echo "After activating the environment, run: pip install tbc-video-export"
+        }
+    fi
 else
     echo "Warning: Could not install requirements automatically."
     echo "After activating the environment, run: pip install -r requirements.txt"
@@ -461,9 +477,19 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
             log_warning "LD-Decode build script not found, using conda package"
         fi
         
-        # Add more build scripts here as they're created
-        # TODO: Add VHS-Decode, TBC-Video-Export, etc.
-        
+        # Build VHS-Decode from source
+        if [[ -x "build-scripts/build-vhs-decode.sh" ]]; then
+            log_info "Building VHS-Decode..."
+            if ! build-scripts/build-vhs-decode.sh $build_args; then
+                log_error "VHS-Decode build failed"
+                log_warning "Continuing with remaining tools"
+            else
+                log_success "VHS-Decode built successfully"
+            fi
+        else
+            log_warning "VHS-Decode build script not found"
+        fi
+
         log_success "Source compilation completed"
     fi
 fi

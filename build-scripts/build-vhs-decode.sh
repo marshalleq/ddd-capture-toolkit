@@ -26,15 +26,15 @@ build_vhs_decode() {
     local safe_mode="$1"
     local build_jobs="$2"
     local clean_build="$3"
-    
+
     log_info "Building VHS-Decode from source..."
-    
+
     # Check if we need to build
     if ! needs_build "VHS-Decode" "vhs-decode"; then
         log_success "VHS-Decode already installed, skipping build"
         return 0
     fi
-    
+
     # Navigate to source directory
     local vhs_decode_dir="${PROJECT_ROOT}/external/vhs-decode"
     if [[ ! -d "$vhs_decode_dir" ]]; then
@@ -42,31 +42,59 @@ build_vhs_decode() {
         log_error "Make sure git submodules are properly initialized"
         return 1
     fi
-    
+
     cd "$vhs_decode_dir"
     log_info "Building in: $(pwd)"
-    
-    # VHS-Decode uses Rust and pip for installation
-    log_info "Installing VHS-Decode with pip..."
-    
-    # Install Rust if not available (VHS-Decode requires it)
-    if ! command -v cargo >/dev/null 2>&1; then
-        log_warning "Rust/Cargo not found. VHS-Decode requires Rust."
-        log_warning "Install Rust from: https://rustup.rs/"
-        log_warning "Or use conda: conda install rust"
-        return 1
+
+    # Set optimization flags for Cython compilation
+    if [[ "$safe_mode" == "true" ]]; then
+        log_info "Using safe optimization flags (portable build)"
+        export CFLAGS="-O3 ${CFLAGS:-}"
+        export CXXFLAGS="-O3 ${CXXFLAGS:-}"
+    else
+        log_info "Using native optimization flags (CPU-specific build)"
+        export CFLAGS="-O3 -march=native -mtune=native ${CFLAGS:-}"
+        export CXXFLAGS="-O3 -march=native -mtune=native ${CXXFLAGS:-}"
     fi
-    
-    # Install VHS-Decode using pip (which will compile from source)
+    log_info "CFLAGS: $CFLAGS"
+    log_info "CXXFLAGS: $CXXFLAGS"
+
+    # Configure Numba for optimal performance
+    export NUMBA_CPU_NAME="native"
+    log_info "NUMBA_CPU_NAME: $NUMBA_CPU_NAME"
+
+    # VHS-Decode requires Rust for the performance-critical vhsd_rust extension
+    if ! command -v cargo >/dev/null 2>&1; then
+        log_error "Rust/Cargo not found. VHS-Decode requires Rust for the vhsd_rust extension."
+        log_error "Install Rust from: https://rustup.rs/"
+        return 1
+    else
+        # Set Rust optimization flags for native CPU
+        if [[ "$safe_mode" == "true" ]]; then
+            export RUSTFLAGS="-C opt-level=3 ${RUSTFLAGS:-}"
+        else
+            export RUSTFLAGS="-C target-cpu=native -C opt-level=3 ${RUSTFLAGS:-}"
+        fi
+        log_info "RUSTFLAGS: $RUSTFLAGS"
+    fi
+
+    # Install setuptools-rust (required to build the Rust extension)
+    log_info "Installing build dependencies..."
+    pip install setuptools-rust || {
+        log_error "Failed to install setuptools-rust"
+        return 1
+    }
+
+    # Install VHS-Decode using pip (which will compile from source with our flags)
     log_info "Installing VHS-Decode requirements..."
     pip install -r requirements.txt || {
         log_error "Failed to install Python requirements"
         return 1
     }
-    
-    # Install VHS-Decode itself
-    log_info "Installing VHS-Decode (this may take several minutes)..."
-    pip install . || {
+
+    # Force reinstall to ensure recompilation with our flags
+    log_info "Installing VHS-Decode with optimizations (this may take several minutes)..."
+    pip install --no-build-isolation --force-reinstall . || {
         log_error "VHS-Decode installation failed"
         return 1
     }

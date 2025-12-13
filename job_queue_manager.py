@@ -419,20 +419,39 @@ class JobQueueManager:
             if PARALLEL_DECODE_AVAILABLE:
                 decoder_helper = ParallelVHSDecoder()
                 total_frames = decoder_helper.get_frame_count_from_json(
-                    job.input_file, 
+                    job.input_file,
                     job.parameters.get('video_standard', 'pal')
                 )
             else:
                 total_frames = 0
-            
-            # Build vhs-decode command directly (simpler approach)
+
+            # Find vhs-decode command - check PATH first (installed version), then submodule
+            import shutil
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+
+            vhs_decode_cmd = None
+            # First check if installed in PATH (via pip install)
+            if shutil.which('vhs-decode'):
+                vhs_decode_cmd = 'vhs-decode'
+            else:
+                # Fall back to submodule script
+                submodule_path = os.path.join(script_dir, 'external', 'vhs-decode', 'vhs-decode')
+                if os.path.exists(submodule_path):
+                    vhs_decode_cmd = submodule_path
+
+            if not vhs_decode_cmd:
+                self.logger.error("vhs-decode not found in PATH or external/vhs-decode/")
+                job.error_message = "vhs-decode not found. Run setup.sh to install it."
+                return False
+
+            # Build vhs-decode command
             cmd = [
-                'vhs-decode',
+                vhs_decode_cmd,
                 '--tf', 'vhs',
                 '-t', '3',
                 '--ts', job.parameters.get('tape_speed', 'SP'),
                 '--no_resample',
-                '--recheck_phase', 
+                '--recheck_phase',
                 '--ire0_adjust'
             ]
             
