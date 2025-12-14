@@ -69,3 +69,9 @@ pytorch3d
 CRITICAL_UPDATES_COMPLETE.md
 pendingchanges.txt
 SESSION_*.md
+
+# Downloaded AppImages (easy mode binaries)
+tools/*.AppImage
+
+# Build artifacts (performance mode compilation)
+build/

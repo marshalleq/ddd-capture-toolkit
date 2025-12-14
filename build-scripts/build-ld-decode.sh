@@ -1,6 +1,10 @@
 #!/bin/bash
-# build-ld-decode.sh - LD-Decode compilation script
+# build-ld-decode.sh - LD-Tools compilation script (from vhs-decode)
 # Part of DDD Capture Toolkit build system
+#
+# NOTE: This builds ld-tools from the vhs-decode repository (oyvindln/vhs-decode)
+# which has the --input-json option required by tbc-video-export.
+# The mainline ld-decode (happycube/ld-decode) uses --input-metadata instead.
 
 set -e
 
@@ -13,7 +17,7 @@ source "${SCRIPT_DIR}/common/conda-setup.sh"
 show_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Build LD-Decode from source with optimizations"
+    echo "Build LD-Tools from vhs-decode source with optimizations"
     echo ""
     echo "OPTIONS:"
     echo "  --safe      Use safe optimizations (no -march=native)"
@@ -31,23 +35,29 @@ build_ld_decode() {
     local safe_mode="$1"
     local build_jobs="$2"
     local clean_build="$3"
-    
-    log_info "Building LD-Decode from source..."
-    
-    # Check if we need to build (using ld-decode-ntsc as it's a core non-GUI tool)
-    if ! needs_build "LD-Decode" "ld-decode-ntsc"; then
-        log_success "LD-Decode already installed, skipping build"
-        return 0
+
+    log_info "Building LD-Tools from vhs-decode source..."
+
+    # Check if we need to build (using ld-chroma-decoder as it's required for tbc-video-export)
+    # We check for --input-json support to ensure we have the correct version
+    if command -v ld-chroma-decoder >/dev/null 2>&1; then
+        if ld-chroma-decoder --help 2>&1 | grep -q "input-json"; then
+            log_success "LD-Tools with --input-json support already installed, skipping build"
+            return 0
+        else
+            log_warning "Found ld-chroma-decoder but it lacks --input-json support (wrong version)"
+            log_info "Will rebuild from vhs-decode source..."
+        fi
     fi
-    
-    # Navigate to source directory
-    local ld_decode_dir="${PROJECT_ROOT}/external/ld-decode"
+
+    # Navigate to source directory - use vhs-decode which has --input-json
+    local ld_decode_dir="${PROJECT_ROOT}/external/vhs-decode"
     if [[ ! -d "$ld_decode_dir" ]]; then
-        log_error "LD-Decode source directory not found: $ld_decode_dir"
+        log_error "vhs-decode source directory not found: $ld_decode_dir"
         log_error "Make sure git submodules are properly initialized"
         return 1
     fi
-    
+
     cd "$ld_decode_dir"
     log_info "Building in: $(pwd)"
 
@@ -57,22 +67,16 @@ build_ld_decode() {
         git submodule update --init --recursive
     fi
 
-    # Patch CMakeLists.txt to make ld-analyse optional (avoids OpenGL linking issues)
-    if ! grep -q "BUILD_ANALYSE" CMakeLists.txt; then
-        log_info "Patching CMakeLists.txt to make ld-analyse optional..."
-        sed -i 's/add_subdirectory(tools\/ld-analyse)/option(BUILD_ANALYSE "Build ld-analyse GUI tool" OFF)\nif(BUILD_ANALYSE)\n    add_subdirectory(tools\/ld-analyse)\nendif()/' CMakeLists.txt
-    fi
-
-    # Create and enter build directory
-    local build_dir="build"
+    # Create and enter build directory (use separate dir to avoid conflict with vhs-decode's Python build)
+    local build_dir="build-ld-tools"
     if [[ "$clean_build" == "true" ]] && [[ -d "$build_dir" ]]; then
         log_info "Cleaning existing build directory..."
         rm -rf "$build_dir"
     fi
-    
+
     mkdir -p "$build_dir"
     cd "$build_dir"
-    
+
     # Generate optimization flags
     local opt_flags
     if [[ "$safe_mode" == "true" ]]; then
@@ -80,11 +84,11 @@ build_ld_decode() {
     else
         opt_flags=$("${SCRIPT_DIR}/common/optimize-flags.sh" --cflags)
     fi
-    
+
     log_info "Using optimization flags: $opt_flags"
-    
+
     # Configure with CMake
-    log_info "Configuring LD-Decode with CMake..."
+    log_info "Configuring LD-Tools with CMake..."
     
     # Force library search to prioritize conda environment
     export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
@@ -117,36 +121,38 @@ build_ld_decode() {
     }
     
     # Build
-    log_info "Building LD-Decode (using $build_jobs parallel jobs)..."
+    log_info "Building LD-Tools (using $build_jobs parallel jobs)..."
     make -j"$build_jobs" all || {
         log_error "Build failed"
         return 1
     }
-    
+
     # Install to conda environment
-    log_info "Installing LD-Decode to conda environment..."
+    log_info "Installing LD-Tools to conda environment..."
     make install || {
         log_error "Installation failed"
         return 1
     }
-    
-    # Verify installation (check for ld-chroma-decoder which doesn't depend on qwt)
+
+    # Verify installation - check for ld-chroma-decoder with --input-json support
     if [[ -x "${CONDA_PREFIX}/bin/ld-chroma-decoder" ]]; then
-        log_success "LD-Decode successfully installed to ${CONDA_PREFIX}/bin/"
-        
-        # Test the installation
-        log_info "Testing LD-Decode installation..."
-        if "${CONDA_PREFIX}/bin/ld-chroma-decoder" --help >/dev/null 2>&1; then
-            log_success "LD-Decode installation verified"
+        log_success "LD-Tools successfully installed to ${CONDA_PREFIX}/bin/"
+
+        # Test the installation and verify --input-json support
+        log_info "Verifying LD-Tools installation..."
+        if "${CONDA_PREFIX}/bin/ld-chroma-decoder" --help 2>&1 | grep -q "input-json"; then
+            log_success "LD-Tools installation verified (--input-json support confirmed)"
         else
-            log_warning "LD-Decode installed but --help failed (may be normal)"
+            log_error "ld-chroma-decoder installed but lacks --input-json support"
+            log_error "This indicates the wrong version was built - check source directory"
+            return 1
         fi
     else
-        log_error "LD-Decode installation verification failed"
+        log_error "LD-Tools installation verification failed"
         log_error "Expected tool ld-chroma-decoder not found in ${CONDA_PREFIX}/bin/"
         return 1
     fi
-    
+
     return 0
 }
 
@@ -190,9 +196,9 @@ if [[ -z "$BUILD_JOBS" ]]; then
     BUILD_JOBS=$(get_build_jobs)
 fi
 
-log_info "=== LD-Decode Build Script ==="
+log_info "=== LD-Tools Build Script (from vhs-decode) ==="
 log_info "Safe mode: $SAFE_MODE"
-log_info "Build jobs: $BUILD_JOBS" 
+log_info "Build jobs: $BUILD_JOBS"
 log_info "Clean build: $CLEAN_BUILD"
 echo ""
 
@@ -200,12 +206,12 @@ echo ""
 setup_build_environment || exit 1
 
 echo ""
-log_info "Starting LD-Decode build process..."
+log_info "Starting LD-Tools build process..."
 
-# Build LD-Decode
+# Build LD-Tools
 build_ld_decode "$SAFE_MODE" "$BUILD_JOBS" "$CLEAN_BUILD" || {
-    log_error "LD-Decode build failed"
+    log_error "LD-Tools build failed"
     exit 1
 }
 
-log_success "LD-Decode build completed successfully!"
+log_success "LD-Tools build completed successfully!"

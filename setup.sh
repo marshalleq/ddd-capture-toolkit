@@ -335,26 +335,52 @@ fi
 # Use conda env list to check environments managed by current conda installation
 if conda env list | grep -q "^ddd-capture-toolkit[[:space:]]"; then
     echo "Environment 'ddd-capture-toolkit' already exists."
-    
+
+    # Check if the environment is currently active and deactivate if needed
+    if [[ "$CONDA_DEFAULT_ENV" == "ddd-capture-toolkit" ]]; then
+        log_info "Deactivating current environment before removal..."
+        conda deactivate
+    fi
+
     if [[ "$INSTALL_MODE" == "performance" ]]; then
         log_info "Performance mode: Clean environment required for optimal builds."
         log_info "Automatically removing existing environment for clean rebuild..."
-        
-        # Check if the environment is currently active and deactivate if needed
-        if [[ "$CONDA_DEFAULT_ENV" == "ddd-capture-toolkit" ]]; then
-            log_info "Deactivating current environment before removal..."
-            conda deactivate
-        fi
-        
+
         conda remove -n ddd-capture-toolkit --all -y
         log_info "Creating new conda environment from $ENV_FILE..."
         conda env create -f "$ENV_FILE"
     else
-        # Easy mode - just offer to update
-        read -p "Do you want to update it? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            conda env update -f "$ENV_FILE"
+        # Easy mode - check for compiled tools from previous performance install
+        CONDA_ENV_PATH=$(conda env list | awk '/^ddd-capture-toolkit[[:space:]]/ {print $2}' | head -n1)
+        has_compiled_tools=false
+
+        if [[ -n "$CONDA_ENV_PATH" ]]; then
+            # Check for signs of performance mode (compiled ffmpeg with march=native)
+            if [[ -x "$CONDA_ENV_PATH/bin/ffmpeg" ]]; then
+                if "$CONDA_ENV_PATH/bin/ffmpeg" -buildconf 2>&1 | grep -q "march=native"; then
+                    has_compiled_tools=true
+                fi
+            fi
+            # Also check for compiled ld-chroma-decoder
+            if [[ -x "$CONDA_ENV_PATH/bin/ld-chroma-decoder" ]]; then
+                has_compiled_tools=true
+            fi
+        fi
+
+        if [[ "$has_compiled_tools" == "true" ]]; then
+            log_info "Detected compiled tools from previous performance mode installation."
+            log_info "Easy mode requires a clean environment. Removing and recreating..."
+
+            conda remove -n ddd-capture-toolkit --all -y
+            log_info "Creating new conda environment from $ENV_FILE..."
+            conda env create -f "$ENV_FILE"
+        else
+            # No compiled tools - just offer to update
+            read -p "Do you want to update it? (y/N): " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                conda env update -f "$ENV_FILE"
+            fi
         fi
     fi
 else
@@ -372,8 +398,8 @@ if command -v conda &> /dev/null; then
         echo "After activating the environment, run: pip install -r requirements.txt"
     }
 
-    # Install vhs-decode and tbc-video-export from PyPI (pre-built packages)
-    # In easy mode, we use pre-built wheels from PyPI - no compilation needed
+    # Install vhs-decode and tbc-video-export
+    # In easy mode, we use pre-built wheels/AppImages - no compilation needed
     # In performance mode, the build script compiles from source with CPU optimizations
     if [[ "$INSTALL_MODE" == "easy" ]]; then
         echo "Installing vhs-decode from PyPI (pre-built package)..."
@@ -381,11 +407,38 @@ if command -v conda &> /dev/null; then
             log_warning "Could not install vhs-decode from PyPI."
             echo "After activating the environment, run: pip install vhs-decode"
         }
-        echo "Installing tbc-video-export from PyPI (pre-built package)..."
-        conda run -n ddd-capture-toolkit pip install tbc-video-export 2>/dev/null || {
-            log_warning "Could not install tbc-video-export from PyPI."
-            echo "After activating the environment, run: pip install tbc-video-export"
-        }
+
+        # Download tbc-video-export AppImage (bundles ld-tools with correct --input-json support)
+        echo "Downloading tbc-video-export AppImage..."
+        mkdir -p tools
+        APPIMAGE_URL="https://github.com/JuniorIsAJitterbug/tbc-video-export/releases/download/v0.1.8/tbc-video-export.AppImage"
+        APPIMAGE_PATH="tools/tbc-video-export.AppImage"
+
+        if [[ -f "$APPIMAGE_PATH" ]]; then
+            log_info "tbc-video-export AppImage already exists, skipping download"
+        else
+            if command -v curl &> /dev/null; then
+                curl -L -o "$APPIMAGE_PATH" "$APPIMAGE_URL" && chmod +x "$APPIMAGE_PATH" || {
+                    log_warning "Could not download tbc-video-export AppImage."
+                    log_warning "Download manually from: $APPIMAGE_URL"
+                    log_warning "Save to: $APPIMAGE_PATH"
+                }
+            elif command -v wget &> /dev/null; then
+                wget -O "$APPIMAGE_PATH" "$APPIMAGE_URL" && chmod +x "$APPIMAGE_PATH" || {
+                    log_warning "Could not download tbc-video-export AppImage."
+                    log_warning "Download manually from: $APPIMAGE_URL"
+                    log_warning "Save to: $APPIMAGE_PATH"
+                }
+            else
+                log_warning "Neither curl nor wget found. Please download manually:"
+                log_warning "  URL: $APPIMAGE_URL"
+                log_warning "  Save to: $APPIMAGE_PATH"
+            fi
+        fi
+
+        if [[ -x "$APPIMAGE_PATH" ]]; then
+            log_success "tbc-video-export AppImage ready at $APPIMAGE_PATH"
+        fi
     fi
 else
     echo "Warning: Could not install requirements automatically."
@@ -396,7 +449,14 @@ fi
 if [[ "$INSTALL_MODE" == "performance" ]]; then
     echo ""
     log_info "=== Performance Mode: Building from Source ==="
-    
+
+    # Remove AppImage if it exists (performance mode uses compiled tools instead)
+    APPIMAGE_PATH="tools/tbc-video-export.AppImage"
+    if [[ -f "$APPIMAGE_PATH" ]]; then
+        log_info "Removing tbc-video-export AppImage (performance mode uses compiled tools)"
+        rm -f "$APPIMAGE_PATH"
+    fi
+
     # Check if build scripts are available
     if [[ ! -d "build-scripts" ]]; then
         log_error "Build scripts not found. Performance mode requires build-scripts directory."
@@ -488,6 +548,19 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
             fi
         else
             log_warning "VHS-Decode build script not found"
+        fi
+
+        # Build FFmpeg from source with native optimizations
+        if [[ -x "build-scripts/build-ffmpeg.sh" ]]; then
+            log_info "Building FFmpeg with native optimizations..."
+            if ! build-scripts/build-ffmpeg.sh $build_args; then
+                log_error "FFmpeg build failed"
+                log_warning "Using conda FFmpeg package instead"
+            else
+                log_success "FFmpeg built successfully with native optimizations"
+            fi
+        else
+            log_warning "FFmpeg build script not found, using conda package"
         fi
 
         log_success "Source compilation completed"

@@ -140,7 +140,18 @@ setup_build_vars() {
     export CMAKE_INSTALL_PREFIX="${CONDA_PREFIX}"
     export PKG_CONFIG_PATH="${CONDA_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-    
+
+    # Set TMPDIR to avoid /tmp quota issues during compilation
+    # GCC uses /tmp for temporary files which can hit quota limits
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(cd "${script_dir}/../.." && pwd)"
+    local build_tmp="${project_root}/build/tmp"
+    mkdir -p "$build_tmp"
+    export TMPDIR="$build_tmp"
+    export TEMP="$build_tmp"
+    export TMP="$build_tmp"
+    log_info "Using build temp directory: $TMPDIR"
+
     # Set up conda compilers explicitly
     setup_conda_compilers
     

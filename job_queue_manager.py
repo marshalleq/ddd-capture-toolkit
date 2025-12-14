@@ -582,25 +582,45 @@ class JobQueueManager:
         """Execute a TBC export job"""
         try:
             self.logger.info(f"Starting TBC export: {job.input_file} -> {job.output_file}")
-            
-            # Find tbc-video-export command - try conda environment first, then PATH
-            tbc_export_cmd = 'tbc-video-export'  # Default to PATH lookup
-            
-            # Check if we're in a conda environment
-            conda_prefix = os.environ.get('CONDA_PREFIX')
-            if conda_prefix:
-                conda_tbc_path = os.path.join(conda_prefix, 'bin', 'tbc-video-export')
-                if os.path.exists(conda_tbc_path):
-                    tbc_export_cmd = conda_tbc_path
-                    self.logger.info(f"Using conda tbc-video-export: {conda_tbc_path}")
-            
+
+            # Find tbc-video-export command
+            # Priority: 1) AppImage (easy mode), 2) conda env (performance mode), 3) PATH
+            tbc_export_cmd = None
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+
+            # First check for AppImage (easy mode installation)
+            appimage_path = os.path.join(script_dir, 'tools', 'tbc-video-export.AppImage')
+            if os.path.exists(appimage_path) and os.access(appimage_path, os.X_OK):
+                tbc_export_cmd = appimage_path
+                self.logger.info(f"Using tbc-video-export AppImage: {appimage_path}")
+
+            # If no AppImage, check conda environment (performance mode)
+            if not tbc_export_cmd:
+                conda_prefix = os.environ.get('CONDA_PREFIX')
+                if conda_prefix:
+                    conda_tbc_path = os.path.join(conda_prefix, 'bin', 'tbc-video-export')
+                    if os.path.exists(conda_tbc_path):
+                        tbc_export_cmd = conda_tbc_path
+                        self.logger.info(f"Using conda tbc-video-export: {conda_tbc_path}")
+
             # If not found in conda, try common user paths
-            if tbc_export_cmd == 'tbc-video-export':
-                # Try ~/.local/bin (pip install --user)
+            if not tbc_export_cmd:
                 user_local_path = os.path.expanduser('~/.local/bin/tbc-video-export')
                 if os.path.exists(user_local_path):
                     tbc_export_cmd = user_local_path
                     self.logger.info(f"Using user-local tbc-video-export: {user_local_path}")
+
+            # Fall back to PATH lookup
+            if not tbc_export_cmd:
+                import shutil
+                if shutil.which('tbc-video-export'):
+                    tbc_export_cmd = 'tbc-video-export'
+                    self.logger.info("Using tbc-video-export from PATH")
+
+            if not tbc_export_cmd:
+                self.logger.error("tbc-video-export not found. Run setup.sh to install it.")
+                job.error_message = "tbc-video-export not found. Run setup.sh to install it."
+                return False
             
             # Build tbc-video-export command
             cmd = [
