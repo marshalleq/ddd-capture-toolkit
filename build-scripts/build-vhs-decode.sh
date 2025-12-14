@@ -19,21 +19,127 @@ show_usage() {
     echo "  --safe      Use safe optimizations (no -march=native)"
     echo "  --jobs N    Number of parallel build jobs (default: auto-detect)"
     echo "  --clean     Clean build directory before building"
+    echo "  --version V Specify vhs-decode version to build (default: latest release tag)"
+    echo "              Use 'latest' for bleeding edge (latest commit)"
+    echo "              Use a specific tag like 'v0.3.8' or 'tools_prerelease'"
     echo "  --help      Show this help message"
+}
+
+# Fetch the latest release tag from the vhs-decode repository
+get_latest_release_tag() {
+    local vhs_decode_dir="$1"
+    cd "$vhs_decode_dir"
+
+    # Fetch all tags from remote
+    git fetch --tags origin 2>/dev/null || {
+        log_warning "Could not fetch tags from remote"
+        return 1
+    }
+
+    # vhs-decode uses various tag formats: 0.3.8.1, v0.3.5, etc.
+    # Get tags sorted by creation date and filter for version-like patterns
+    local latest_tag
+    # First try tags that look like version numbers (with or without 'v' prefix)
+    # Exclude tags like 'rust_merge' that aren't versions
+    latest_tag=$(git tag -l --sort=-creatordate 2>/dev/null | grep -E '^v?[0-9]+\.[0-9]+' | head -n1)
+
+    if [[ -z "$latest_tag" ]]; then
+        # Fallback: try any tag sorted by date
+        latest_tag=$(git tag -l --sort=-creatordate 2>/dev/null | head -n1)
+    fi
+
+    if [[ -z "$latest_tag" ]]; then
+        log_warning "No release tags found"
+        return 1
+    fi
+
+    echo "$latest_tag"
+}
+
+# Get information about available versions
+show_version_info() {
+    local vhs_decode_dir="$1"
+    cd "$vhs_decode_dir"
+
+    log_info "Fetching version information from vhs-decode repository..."
+    git fetch --tags origin 2>/dev/null || true
+    git fetch origin 2>/dev/null || true
+
+    echo ""
+    log_info "Available vhs-decode versions:"
+
+    # Show latest release tags (version-like tags sorted by date)
+    local latest_tags
+    latest_tags=$(git tag -l --sort=-creatordate 2>/dev/null | grep -E '^v?[0-9]+\.[0-9]+' | head -n5)
+    if [[ -n "$latest_tags" ]]; then
+        echo "  Recent release tags:"
+        echo "$latest_tags" | while read -r tag; do
+            local tag_date
+            tag_date=$(git log -1 --format="%ci" "$tag" 2>/dev/null | cut -d' ' -f1)
+            echo "    $tag ($tag_date)"
+        done
+    fi
+
+    # Show latest commit on main branch
+    local main_branch="vhs_decode"
+    local latest_commit
+    latest_commit=$(git log -1 origin/$main_branch --format="%h %ci %s" 2>/dev/null | head -c80)
+    if [[ -n "$latest_commit" ]]; then
+        echo "  Latest commit (bleeding edge):"
+        echo "    $latest_commit"
+    fi
+
+    echo ""
+}
+
+# Checkout the specified version
+checkout_version() {
+    local vhs_decode_dir="$1"
+    local version="$2"
+
+    cd "$vhs_decode_dir"
+
+    # Fetch latest from remote
+    log_info "Fetching latest code from vhs-decode repository..."
+    git fetch --tags origin 2>/dev/null || log_warning "Could not fetch from remote"
+    git fetch origin 2>/dev/null || true
+
+    if [[ "$version" == "latest" ]]; then
+        # Checkout latest commit on main branch (bleeding edge)
+        local main_branch="vhs_decode"
+        log_info "Checking out latest commit (bleeding edge) from $main_branch branch..."
+        git checkout "origin/$main_branch" 2>/dev/null || {
+            log_error "Could not checkout origin/$main_branch"
+            return 1
+        }
+    else
+        # Checkout specific tag/version
+        log_info "Checking out version: $version"
+        git checkout "$version" 2>/dev/null || {
+            log_error "Could not checkout version: $version"
+            log_error "Available tags:"
+            git tag -l | head -n10
+            return 1
+        }
+    fi
+
+    # Show what we checked out
+    local current_ref
+    current_ref=$(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD)
+    local commit_date
+    commit_date=$(git log -1 --format="%ci" | cut -d' ' -f1)
+    log_success "Checked out: $current_ref ($commit_date)"
+
+    return 0
 }
 
 build_vhs_decode() {
     local safe_mode="$1"
     local build_jobs="$2"
     local clean_build="$3"
+    local target_version="$4"
 
     log_info "Building VHS-Decode from source..."
-
-    # Check if we need to build
-    if ! needs_build "VHS-Decode" "vhs-decode"; then
-        log_success "VHS-Decode already installed, skipping build"
-        return 0
-    fi
 
     # Navigate to source directory
     local vhs_decode_dir="${PROJECT_ROOT}/external/vhs-decode"
@@ -45,6 +151,34 @@ build_vhs_decode() {
 
     cd "$vhs_decode_dir"
     log_info "Building in: $(pwd)"
+
+    # Determine which version to build
+    if [[ -z "$target_version" ]]; then
+        # Auto-detect latest release tag
+        log_info "No version specified, detecting latest release tag..."
+        target_version=$(get_latest_release_tag "$vhs_decode_dir")
+        if [[ -z "$target_version" ]]; then
+            log_warning "Could not determine latest release tag, using current submodule state"
+            target_version=""
+        else
+            log_info "Latest release tag: $target_version"
+        fi
+    fi
+
+    # Checkout the target version if specified
+    if [[ -n "$target_version" ]]; then
+        checkout_version "$vhs_decode_dir" "$target_version" || {
+            log_error "Failed to checkout version: $target_version"
+            return 1
+        }
+    else
+        # Just show current state
+        local current_ref
+        current_ref=$(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD)
+        log_info "Using current submodule state: $current_ref"
+    fi
+
+    echo ""
 
     # Set optimization flags for Cython compilation
     if [[ "$safe_mode" == "true" ]]; then
@@ -122,6 +256,7 @@ build_vhs_decode() {
 SAFE_MODE=false
 BUILD_JOBS=""
 CLEAN_BUILD=false
+TARGET_VERSION=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -140,6 +275,14 @@ while [[ $# -gt 0 ]]; do
         --clean)
             CLEAN_BUILD=true
             shift
+            ;;
+        --version)
+            if [[ -z "$2" ]] || [[ "$2" =~ ^- ]]; then
+                log_error "--version requires a value (e.g., 'latest', 'v0.3.8')"
+                exit 1
+            fi
+            TARGET_VERSION="$2"
+            shift 2
             ;;
         --help|-h)
             show_usage
@@ -162,6 +305,11 @@ log_info "=== VHS-Decode Build Script ==="
 log_info "Safe mode: $SAFE_MODE (Note: VHS-Decode uses Rust, optimization flags may not apply)"
 log_info "Build jobs: $BUILD_JOBS"
 log_info "Clean build: $CLEAN_BUILD"
+if [[ -n "$TARGET_VERSION" ]]; then
+    log_info "Target version: $TARGET_VERSION"
+else
+    log_info "Target version: auto-detect (latest release tag)"
+fi
 echo ""
 
 # Set up build environment
@@ -171,7 +319,7 @@ echo ""
 log_info "Starting VHS-Decode build process..."
 
 # Build VHS-Decode
-build_vhs_decode "$SAFE_MODE" "$BUILD_JOBS" "$CLEAN_BUILD" || {
+build_vhs_decode "$SAFE_MODE" "$BUILD_JOBS" "$CLEAN_BUILD" "$TARGET_VERSION" || {
     log_error "VHS-Decode build failed"
     exit 1
 }

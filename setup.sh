@@ -39,6 +39,9 @@ show_usage() {
     echo "  --jobs N        Number of parallel build jobs for --performance mode"
     echo "  --safe          Use safe optimizations only (no -march=native)"
     echo "  --force         Skip confirmation prompts (for scripting)"
+    echo "  --vhs-decode-version VERSION"
+    echo "                  Specify vhs-decode version (default: latest release tag)"
+    echo "                  Use 'latest' for bleeding edge, or a specific tag like 'v0.3.8'"
     echo "  --help          Show this help message"
     echo ""
     echo "EXAMPLES:"
@@ -78,6 +81,7 @@ OVERRIDE_PLATFORM=""
 BUILD_JOBS=""
 SAFE_MODE=false
 FORCE_MODE=false
+VHS_DECODE_VERSION=""  # empty means auto-detect latest release tag
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -116,6 +120,14 @@ while [[ $# -gt 0 ]]; do
         --force)
             FORCE_MODE=true
             shift
+            ;;
+        --vhs-decode-version)
+            if [[ -z "$2" ]] || [[ "$2" =~ ^- ]]; then
+                log_error "--vhs-decode-version requires a value (e.g., 'latest', 'v0.3.8')"
+                exit 1
+            fi
+            VHS_DECODE_VERSION="$2"
+            shift 2
             ;;
         --help|-h)
             show_usage
@@ -402,11 +414,24 @@ if command -v conda &> /dev/null; then
     # In easy mode, we use pre-built wheels/AppImages - no compilation needed
     # In performance mode, the build script compiles from source with CPU optimizations
     if [[ "$INSTALL_MODE" == "easy" ]]; then
+        # Check what version is available on PyPI
+        log_info "Checking vhs-decode versions on PyPI..."
+        PYPI_VERSION=$(conda run -n ddd-capture-toolkit pip index versions vhs-decode 2>/dev/null | grep -oP 'vhs-decode \(\K[^)]+' | head -n1)
+        if [[ -n "$PYPI_VERSION" ]]; then
+            log_info "Latest vhs-decode on PyPI: $PYPI_VERSION"
+        fi
+
         echo "Installing vhs-decode from PyPI (pre-built package)..."
-        conda run -n ddd-capture-toolkit pip install vhs-decode 2>/dev/null || {
+        conda run -n ddd-capture-toolkit pip install --upgrade vhs-decode 2>/dev/null || {
             log_warning "Could not install vhs-decode from PyPI."
             echo "After activating the environment, run: pip install vhs-decode"
         }
+
+        # Show installed version
+        INSTALLED_VERSION=$(conda run -n ddd-capture-toolkit pip show vhs-decode 2>/dev/null | grep -i "^Version:" | cut -d' ' -f2)
+        if [[ -n "$INSTALLED_VERSION" ]]; then
+            log_success "vhs-decode $INSTALLED_VERSION installed from PyPI"
+        fi
 
         # Download tbc-video-export AppImage (bundles ld-tools with correct --input-json support)
         echo "Downloading tbc-video-export AppImage..."
@@ -540,7 +565,11 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
         # Build VHS-Decode from source
         if [[ -x "build-scripts/build-vhs-decode.sh" ]]; then
             log_info "Building VHS-Decode..."
-            if ! build-scripts/build-vhs-decode.sh $build_args; then
+            vhs_build_args="$build_args"
+            if [[ -n "$VHS_DECODE_VERSION" ]]; then
+                vhs_build_args="$vhs_build_args --version $VHS_DECODE_VERSION"
+            fi
+            if ! build-scripts/build-vhs-decode.sh $vhs_build_args; then
                 log_error "VHS-Decode build failed"
                 log_warning "Continuing with remaining tools"
             else
@@ -652,3 +681,86 @@ case "$OS" in
         echo "  - DVD creation tools may need to be installed separately"
         ;;
 esac
+
+# Print installed versions summary
+echo ""
+echo "=============================================="
+log_success "Installed Tool Versions"
+echo "=============================================="
+
+# Get conda environment path
+CONDA_ENV_PATH=$(conda env list | awk '/^ddd-capture-toolkit[[:space:]]/ {print $2}' | head -n1)
+
+# vhs-decode version
+if [[ "$INSTALL_MODE" == "performance" ]] && [[ -d "external/vhs-decode" ]]; then
+    # Performance mode: get version from git
+    VHS_DECODE_VER=$(cd external/vhs-decode && git describe --tags --always 2>/dev/null)
+    VHS_DECODE_DATE=$(cd external/vhs-decode && git log -1 --format="%ci" 2>/dev/null | cut -d' ' -f1)
+    if [[ -n "$VHS_DECODE_VER" ]]; then
+        echo "  vhs-decode:        $VHS_DECODE_VER ($VHS_DECODE_DATE, built from source)"
+    else
+        echo "  vhs-decode:        unknown (built from source)"
+    fi
+else
+    # Easy mode: get version from pip
+    VHS_DECODE_VER=$(conda run -n ddd-capture-toolkit pip show vhs-decode 2>/dev/null | grep -i "^Version:" | cut -d' ' -f2)
+    if [[ -n "$VHS_DECODE_VER" ]]; then
+        echo "  vhs-decode:        $VHS_DECODE_VER (from PyPI)"
+    else
+        echo "  vhs-decode:        not installed"
+    fi
+fi
+
+# Show other available vhs-decode versions
+if [[ -d "external/vhs-decode" ]]; then
+    cd external/vhs-decode
+    git fetch --tags origin 2>/dev/null || true
+    OTHER_VERSIONS=$(git tag -l --sort=-creatordate 2>/dev/null | grep -E '^v?[0-9]+\.[0-9]+' | head -n5 | tr '\n' ', ' | sed 's/, $//')
+    cd - >/dev/null
+    if [[ -n "$OTHER_VERSIONS" ]]; then
+        echo ""
+        echo "  Other available vhs-decode versions: $OTHER_VERSIONS"
+        echo "  To use a different version, reinstall with:"
+        echo "    ./setup.sh --performance --vhs-decode-version <version>"
+        echo "  For bleeding edge (latest commit): --vhs-decode-version latest"
+    fi
+fi
+
+# FFmpeg version
+FFMPEG_VER=$(conda run -n ddd-capture-toolkit ffmpeg -version 2>/dev/null | head -n1 | sed 's/ffmpeg version //' | cut -d' ' -f1 || echo "not found")
+echo "  ffmpeg:            $FFMPEG_VER"
+
+# Check if FFmpeg was built with native optimizations
+if [[ "$INSTALL_MODE" == "performance" ]]; then
+    if conda run -n ddd-capture-toolkit ffmpeg -buildconf 2>&1 | grep -q "march=native"; then
+        echo "                     (compiled with native CPU optimizations)"
+    fi
+fi
+
+# ld-decode tools (ld-chroma-decoder)
+if [[ -x "$CONDA_ENV_PATH/bin/ld-chroma-decoder" ]]; then
+    LD_DECODE_VER=$(conda run -n ddd-capture-toolkit ld-chroma-decoder --version 2>/dev/null | head -n1 || echo "installed")
+    echo "  ld-decode tools:   $LD_DECODE_VER"
+else
+    echo "  ld-decode tools:   not installed"
+fi
+
+# tbc-video-export
+if [[ -x "tools/tbc-video-export.AppImage" ]]; then
+    TBC_EXPORT_VER=$(./tools/tbc-video-export.AppImage --version 2>/dev/null | head -n1 || echo "AppImage installed")
+    echo "  tbc-video-export:  $TBC_EXPORT_VER"
+elif conda run -n ddd-capture-toolkit which tbc-video-export >/dev/null 2>&1; then
+    TBC_EXPORT_VER=$(conda run -n ddd-capture-toolkit tbc-video-export --version 2>/dev/null | head -n1 || echo "installed")
+    echo "  tbc-video-export:  $TBC_EXPORT_VER"
+else
+    echo "  tbc-video-export:  not installed"
+fi
+
+# Python version
+PYTHON_VER=$(conda run -n ddd-capture-toolkit python3 --version 2>/dev/null | cut -d' ' -f2 || echo "not found")
+echo "  python:            $PYTHON_VER"
+
+echo "=============================================="
+echo ""
+log_info "To check vhs-decode version later: cd external/vhs-decode && git describe --tags"
+echo ""

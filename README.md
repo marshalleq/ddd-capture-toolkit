@@ -40,16 +40,58 @@ This toolkit provides a complete workflow for digitising VHS tapes using the Dom
    ```bash
    ./setup.sh
    ```
-   
+
    This will:
-   - Install conda if not present
-   - Create the `ddd-capture-toolkit` environment
+   - Create the `ddd-capture-toolkit` conda environment
    - Install all required dependencies including:
      - FFmpeg, OpenCV, NumPy, Pillow
      - Rich (for terminal UI)
      - Audio processing tools (Sox)
      - Video processing libraries
      - Platform-specific build tools
+   - Display installed versions at the end
+
+### Installation Modes
+
+The setup script supports two installation modes:
+
+**Easy Mode (default):**
+```bash
+./setup.sh
+```
+- Uses pre-compiled packages from PyPI and conda
+- ~5 minute setup time
+- Good performance for most users
+
+**Performance Mode:**
+```bash
+./setup.sh --performance
+```
+- Compiles tools from source with CPU-specific optimizations
+- 30-60 minute setup time
+- 10-30% performance improvement typical
+- Recommended for production use
+
+### Specifying vhs-decode Version
+
+By default, performance mode automatically fetches and builds the latest release tag of vhs-decode. You can specify a different version:
+
+```bash
+# Build a specific release version
+./setup.sh --performance --vhs-decode-version 0.3.8.1
+
+# Build bleeding edge (latest commit, may be unstable)
+./setup.sh --performance --vhs-decode-version latest
+```
+
+At the end of installation, the script shows installed versions and lists other available vhs-decode versions you can use.
+
+### Uninstalling
+
+To completely remove the toolkit:
+```bash
+./setup.sh --uninstall
+```
 
 4. **Activate the environment:**
    ```bash
