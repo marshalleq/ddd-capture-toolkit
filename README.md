@@ -10,10 +10,14 @@ This toolkit provides a complete workflow for digitising VHS tapes using the Dom
 
 - **Cross-platform support** - Works on Linux, macOS, and Windows
 - **Automated workflow management** - Complete pipeline from capture to final output
-- **Audio/video synchronisation** - Automated alignment of audio to video
+- **DdD audio/video synchronisation** - Automated alignment of audio to video when using DomesDay Duplicator (Best quality capture device)
+- **Sample level audio syncronisation / alignment** - Automatic adjustment of audio wow and flutter from tbc data
 - **Interactive control interface** - Rich terminal-based UI for monitoring and control
+- **Easy or performance installation mode** - Easy mode using precompiled binaries / Performance compiles to your specific systems hardware
 - **Job queue system** - Parallel processing and batch operations
+- **Parallel Batch Processing Capability**
 - **Quality assurance** - Built-in validation and error detection
+- **Automatic installation script** - Auto installs / compiles everything you need
 
 ## Quick Start
 
@@ -26,22 +30,26 @@ This toolkit provides a complete workflow for digitising VHS tapes using the Dom
 ### Installation
 
 1. **Clone the repository:**
+   
    ```bash
    git clone <repository-url>
    cd ddd-capture-toolkit
    ```
 
 2. **Initialize submodules:**
+   
    ```bash
    git submodule update --init --recursive
    ```
 
 3. **Run the setup script:**
+   
    ```bash
    ./setup.sh
    ```
    
    This will:
+   
    - Install conda if not present
    - Create the `ddd-capture-toolkit` environment
    - Install all required dependencies including:
@@ -52,11 +60,13 @@ This toolkit provides a complete workflow for digitising VHS tapes using the Dom
      - Platform-specific build tools
 
 4. **Activate the environment:**
+   
    ```bash
    conda activate ddd-capture-toolkit
    ```
 
 5. **Launch the main menu:**
+   
    ```bash
    python3 ddd_main_menu.py
    ```
@@ -66,10 +76,12 @@ This toolkit provides a complete workflow for digitising VHS tapes using the Dom
 ### First Time Setup
 
 1. **Configure processing locations** (Menu → Configuration → Manage Processing Locations)
+   
    - Set your capture directory
    - Add any additional processing locations
 
 2. **Check dependencies** (Menu → System → Check Dependencies)
+   
    - Verify all tools are properly installed
    - Ensure hardware connectivity
 
@@ -94,6 +106,7 @@ The Workflow Control Centre (menu option 2.1) provides:
 - **System monitoring** - Resource usage and performance metrics
 
 **Commands:**
+
 - `h` - Show help
 - `d` - Show detailed information
 - `q` - Quit
@@ -103,16 +116,19 @@ The Workflow Control Centre (menu option 2.1) provides:
 ## Platform-Specific Notes
 
 ### macOS
+
 - Requires Xcode command line tools
 - Uses conda-forge for most dependencies
 - Hardware drivers may require additional setup
 
 ### Linux
+
 - Most comprehensive platform support
 - All dependencies available through conda/system packages
 - Recommended for production use
 
 ### Windows
+
 - Requires Windows Subsystem for Linux (WSL) or native Windows tools
 - Some external tools may need manual installation
 - Environment setup may require additional steps
@@ -122,15 +138,18 @@ The Workflow Control Centre (menu option 2.1) provides:
 ### Common Issues
 
 **"name 'Layout' is not defined" error:**
+
 - Ensure you've run `./setup.sh`
 - Activate the conda environment: `conda activate ddd-capture-toolkit`
 - Verify rich library: `python3 -c "from rich.layout import Layout; print('OK')"`
 
 **Missing dependencies:**
+
 - Run the dependency checker from the main menu
 - Reinstall environment: `./clean-setup.sh && ./setup.sh`
 
 **Environment activation fails:**
+
 - Ensure conda is in your PATH
 - Try: `source ~/.bashrc` or `source ~/.zshrc`
 - Manual activation: `conda activate ddd-capture-toolkit`
