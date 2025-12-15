@@ -2,6 +2,8 @@
 
 A VHS archival workflow system using the Domesday Duplicator, Raspberry Pi Pico and Aliexpress Audio capture board for automated audio/video synchronisation.
 
+![DDD Capture Toolkit](media/Images/DdDCaptureToolkit2.png)
+
 ## Overview
 
 This toolkit provides a complete workflow for digitising VHS tapes using the Domesday Duplicator hardware, featuring:
