@@ -399,14 +399,17 @@ class JobQueueManager:
                 success = False
             
             with self.lock:
-                if success:
+                # Don't overwrite CANCELLED status - respect user cancellation
+                if job.status == JobStatus.CANCELLED:
+                    self.logger.info(f"Job {job.job_id} was cancelled by user")
+                elif success:
                     job.status = JobStatus.COMPLETED
                     job.progress = 100.0
                     self.logger.info(f"Job {job.job_id} completed successfully")
                 else:
                     job.status = JobStatus.FAILED
                     self.logger.error(f"Job {job.job_id} failed")
-                
+
                 job.completed_at = datetime.now()
                 # Use async save to avoid blocking job completion
                 self._save_queue_async()
@@ -657,6 +660,7 @@ class JobQueueManager:
                 tbc_export_cmd,
                 '--threads', '0',  # Use all available threads
                 '--profile', 'ffv1',  # Use FFV1 lossless codec
+                '--show-process-output',  # Disable TUI and show raw FFmpeg output for progress parsing
             ]
             
             # Add overwrite flag if requested
@@ -786,17 +790,80 @@ class JobQueueManager:
             current_fps = 0
             import re
             import threading
-            
-            # Read stdout (usually empty for tbc-video-export)
+            start_time = time.time()
+
+            # Helper function to parse frame progress from a line
+            def parse_frame_progress(line: str, source: str):
+                nonlocal current_frame, current_fps, total_frames
+
+                # Clean ANSI escape codes
+                clean_line = re.sub(r'\x1b\[[0-9;]*[mGKH]', '', line)
+
+                # Parse total frames if not yet known
+                if 'Total Frames:' in clean_line and total_frames == 0:
+                    match = re.search(r'Total Frames:\s*(\d+)', clean_line)
+                    if match:
+                        total_frames = int(match.group(1))
+                        self.logger.info(f"TBC export total frames: {total_frames}")
+                        with self.lock:
+                            job.total_frames = total_frames
+
+                new_frame = None
+                new_fps = None
+
+                # Parse tbc-video-export progress format: "Info: 9856 frames processed - 119.726 FPS"
+                tbc_progress_match = re.search(r'(\d+)\s+frames processed\s*-\s*([0-9.]+)\s*FPS', clean_line)
+                if tbc_progress_match:
+                    new_frame = int(tbc_progress_match.group(1))
+                    new_fps = float(tbc_progress_match.group(2))
+
+                # Alternative format: "Info: Processed and written frame 10300"
+                if new_frame is None:
+                    written_frame_match = re.search(r'Processed and written frame\s+(\d+)', clean_line)
+                    if written_frame_match:
+                        new_frame = int(written_frame_match.group(1))
+
+                # Fallback: FFmpeg format "frame=  123 fps= 45 ..."
+                if new_frame is None:
+                    frame_match = re.search(r'frame=\s*(\d+)', clean_line)
+                    if frame_match:
+                        new_frame = int(frame_match.group(1))
+                        fps_match = re.search(r'fps=\s*([0-9.]+)', clean_line)
+                        if fps_match:
+                            new_fps = float(fps_match.group(1))
+
+                # Only update if we have a new frame count AND it's higher than before (never go backwards)
+                if new_frame is not None and new_frame > current_frame:
+                    current_frame = new_frame
+
+                    # Update FPS if we got it from the output, otherwise calculate it
+                    if new_fps is not None:
+                        current_fps = new_fps
+                    else:
+                        elapsed_time = time.time() - start_time
+                        current_fps = current_frame / elapsed_time if elapsed_time > 0 else 0
+
+                    # Update job progress
+                    if total_frames > 0:
+                        progress = (current_frame / total_frames) * 100
+                        with self.lock:
+                            job.progress = min(progress, 99.9)
+                            job.current_frame = current_frame
+                            job.current_fps = current_fps
+
+                        self.logger.debug(f"TBC export progress ({source}): {progress:.1f}% (frame {current_frame}/{total_frames}, {current_fps:.1f} fps)")
+
+            # Read stdout - with --show-process-output, FFmpeg output goes here
             def read_stdout():
                 try:
                     for line in iter(process.stdout.readline, ''):
                         if not line:
                             break
-                        
+
                         line = line.strip()
                         if line:
                             self.logger.debug(f"TBC export stdout: {line}")
+                            parse_frame_progress(line, "stdout")
                 except Exception as e:
                     self.logger.debug(f"Error reading stdout: {e}")
             
@@ -804,102 +871,23 @@ class JobQueueManager:
             stdout_thread = threading.Thread(target=read_stdout, daemon=True)
             stdout_thread.start()
             
-            # Simple approach: Parse tbc-video-export stderr for total frames, then estimate progress from output file size
+            # Parse tbc-video-export stderr for total frames and FFmpeg frame progress
             def monitor_progress():
                 nonlocal current_frame, total_frames, current_fps
-                start_time = time.time()  # Track start time for FPS calculation
-                
-                # Read tbc-video-export stderr for total frames and any other useful info
+
+                # Read tbc-video-export stderr for total frames and FFmpeg progress
                 try:
                     for line in iter(process.stderr.readline, ''):
                         if not line:
                             break
-                        
+
                         line = line.strip()
                         if line:
                             self.logger.debug(f"TBC export stderr: {line}")
-                            
-                            # Parse total frames with more flexible regex
-                            # Handle format: "Total Fields:  284578 Total Frames: 142289"
-                            if 'Total Frames:' in line and total_frames == 0:
-                                try:
-                                    # Clean ANSI escape codes from the line first
-                                    import re
-                                    clean_line = re.sub(r'\x1b\[[0-9;]*[mGKH]', '', line)
-                                    self.logger.debug(f"Original line: {repr(line)}")
-                                    self.logger.debug(f"Cleaned line: {repr(clean_line)}")
-                                    
-                                    # Use regex to extract number directly after "Total Frames:"
-                                    match = re.search(r'Total Frames:\s*(\d+)', clean_line)
-                                    if match:
-                                        total_frames = int(match.group(1))
-                                        self.logger.info(f"TBC export total frames: {total_frames}")
-                                        with self.lock:
-                                            job.total_frames = total_frames
-                                            self.save_queue()
-                                    else:
-                                        self.logger.debug(f"Could not parse total frames from cleaned line: {clean_line}")
-                                except Exception as e:
-                                    self.logger.debug(f"Error parsing total frames: {e}")
-                            
-                            # If this line indicates FFmpeg has started, break to start monitoring output file
-                            if 'Step 1' in line or 'ld-dropout-correct' in line or 'ld-chroma-decoder' in line:
-                                self.logger.info("FFmpeg processing started, monitoring output file size")
-                                break
-                                
+                            parse_frame_progress(line, "stderr")
+
                 except Exception as e:
                     self.logger.debug(f"Error reading tbc-video-export stderr: {e}")
-                
-                # If we got total frames, monitor output file size for progress estimation
-                if total_frames > 0:
-                    # Estimate final file size based on similar files or rough calculation
-                    # For now, just monitor the file and show basic progress
-                    output_file_path = job.output_file
-                    last_size = 0
-                    stall_count = 0
-                    
-                    while process.poll() is None:
-                        try:
-                            if os.path.exists(output_file_path):
-                                current_size = os.path.getsize(output_file_path)
-                                if current_size > last_size:
-                                    # File is growing, estimate progress
-                                    # Very rough estimate: assume ~60MB per minute of video
-                                    estimated_total_size = total_frames * 40000  # Very rough bytes per frame
-                                    if estimated_total_size > 0:
-                                        progress = min((current_size / estimated_total_size) * 100, 95.0)
-                                        
-                                        # Calculate FPS based on frames processed over time
-                                        elapsed_time = time.time() - start_time
-                                        if elapsed_time > 0:
-                                            current_frames = int((current_size / estimated_total_size) * total_frames)
-                                            calculated_fps = current_frames / elapsed_time if elapsed_time > 0 else 0
-                                        else:
-                                            current_frames = 0
-                                            calculated_fps = 0
-                                        
-                                        with self.lock:
-                                            job.progress = progress
-                                            job.current_frame = current_frames
-                                            job.current_fps = calculated_fps
-                                            self.save_queue()
-                                        
-                                        self.logger.info(f"TBC export progress: ~{progress:.1f}% (file size: {current_size // 1024 // 1024}MB)")
-                                    
-                                    last_size = current_size
-                                    stall_count = 0
-                                else:
-                                    stall_count += 1
-                                    if stall_count > 10:  # File hasn't grown in 10 seconds
-                                        break
-                            
-                            time.sleep(1)  # Check every second
-                            
-                        except Exception as e:
-                            self.logger.debug(f"Error monitoring file size: {e}")
-                            time.sleep(1)
-                else:
-                    self.logger.warning("Could not determine total frames for progress monitoring")
             
             # Start progress monitoring thread
             monitor_thread = threading.Thread(target=monitor_progress, daemon=True)

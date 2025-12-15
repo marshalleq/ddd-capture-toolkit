@@ -16,7 +16,7 @@ The progress reporting system is distributed across multiple files:
 | Job Type | Total Frames Source | Progress Method | FPS Calculation | ETA Method |
 |----------|---------------------|-----------------|-----------------|------------|
 | vhs-decode | Capture `.json` (duration × fps) | Frame regex from stdout | frames / runtime | remaining_frames / fps |
-| tbc-export | `.tbc.json` (fields / 2) | File size estimation | estimated_frames / time | remaining_frames / fps |
+| tbc-export | `.tbc.json` (fields / 2) | FFmpeg `frame=` from stderr | FFmpeg `fps=` from stderr | remaining_frames / fps |
 | lds-compress | N/A | Time-based estimation | N/A | N/A |
 | audio-align | N/A | Stage-based (fixed %) | N/A | N/A |
 | final-mux | N/A | Incremental (2% steps) | N/A | N/A |
@@ -115,7 +115,7 @@ if runtime_seconds > 30 and progress_percentage > 0:
 
 #### Total Frames Calculation
 
-**Source:** `job_queue_manager.py` lines 573-595 (`_get_total_frames_from_tbc_json`)
+**Source:** `job_queue_manager.py` (`_get_total_frames_from_tbc_json`)
 
 **Input File Required:** `{basename}.tbc.json` (produced by vhs-decode, NOT capture metadata)
 
@@ -131,53 +131,46 @@ if 'fields' in data:
 
 **Critical Note:** The `.tbc.json` file contains a `videoParameters` section required by `tbc-video-export`. This is NOT the same as the capture metadata `.json` file.
 
-#### Progress Parsing
+#### Progress Parsing (from FFmpeg output)
 
-**Source:** `job_queue_manager.py` lines 794-837 (monitor_progress function)
+**Source:** `job_queue_manager.py` (monitor_progress function)
 
-**From stderr output:**
+**Total frames from tbc-video-export stderr:**
 ```python
 # Parse "Total Fields:  284578 Total Frames: 142289"
-clean_line = re.sub(r'\x1b\[[0-9;]*[mGKH]', '', line)  # Remove ANSI codes
 match = re.search(r'Total Frames:\s*(\d+)', clean_line)
-if match:
-    total_frames = int(match.group(1))
 ```
 
-#### Progress Estimation (file size based)
-
-**Source:** `job_queue_manager.py` lines 839-886
-
-**Method:** Monitor output file size growth:
+**Frame progress from FFmpeg stderr:**
 ```python
-estimated_total_size = total_frames * 40000  # Rough bytes per frame estimate
-if estimated_total_size > 0:
-    progress = min((current_size / estimated_total_size) * 100, 95.0)
+# Parse "frame=  123 fps= 45 q=28.0 size=    1234kB time=00:00:05.12"
+frame_match = re.search(r'frame=\s*(\d+)', clean_line)
+if frame_match:
+    current_frame = int(frame_match.group(1))
+```
+
+**Progress calculation:**
+```python
+progress = (current_frame / total_frames) * 100
+job.progress = min(progress, 99.9)  # Cap at 99.9% until completion
 ```
 
 #### FPS Calculation
 
-**Source:** `job_queue_manager.py` lines 858-865
-
-**Method:** Calculated from estimated frames processed over elapsed time:
+**Method:** Parsed directly from FFmpeg's reported FPS, with fallback to calculated FPS:
 ```python
-elapsed_time = time.time() - start_time
-if elapsed_time > 0:
-    current_frames = int((current_size / estimated_total_size) * total_frames)
-    calculated_fps = current_frames / elapsed_time if elapsed_time > 0 else 0
-```
-
-**Real-time from job object:** `shared/progress_display_utils.py` lines 249-258
-```python
-if step_type == "tbc-export":
-    fps = getattr(job, 'current_fps', 0)
-    total_frames = getattr(job, 'total_frames', 0)
-    current_frame = getattr(job, 'current_frame', 0)
+# Try to parse FFmpeg's reported FPS
+fps_match = re.search(r'fps=\s*([0-9.]+)', clean_line)
+if fps_match:
+    current_fps = float(fps_match.group(1))
+else:
+    # Fallback: calculate from elapsed time
+    current_fps = current_frame / elapsed_time
 ```
 
 #### ETA Calculation
 
-**Source:** `shared/progress_display_utils.py` lines 249-258
+**Source:** `shared/progress_display_utils.py`
 
 ```python
 if fps > 0 and total_frames > 0 and current_frame > 0:
@@ -451,3 +444,6 @@ produces:
 
 ### 2025-12-15
 - **Fixed:** vhs-decode jobs now properly set `job.total_frames`, `job.current_frame`, and `job.current_fps` on the job object, enabling FPS and ETA display in the workflow control centre
+- **Fixed:** tbc-export jobs now use frame-based progress tracking by parsing FFmpeg's `frame=` output instead of file size estimation
+- **Fixed:** tbc-export FPS is now parsed directly from FFmpeg's `fps=` output for accurate real-time display
+- **Fixed:** Cancelled jobs now correctly show as CANCELLED instead of being overwritten to COMPLETED or FAILED
