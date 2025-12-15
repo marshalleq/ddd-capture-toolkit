@@ -30,6 +30,14 @@ except ImportError:
     ParallelVHSDecoder = None
     PARALLEL_DECODE_AVAILABLE = False
 
+# Import project flags manager for export flags
+try:
+    from project_flags import ProjectFlagsManager
+    PROJECT_FLAGS_AVAILABLE = True
+except ImportError:
+    ProjectFlagsManager = None
+    PROJECT_FLAGS_AVAILABLE = False
+
 class JobStatus(Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -460,13 +468,21 @@ class JobQueueManager:
                 cmd.append('--pal')
             else:
                 cmd.append('--ntsc')
-            
+
+            # Add per-project decode flags (e.g., --skip_chroma for B&W sources)
+            if PROJECT_FLAGS_AVAILABLE and job.project_name:
+                flags_manager = ProjectFlagsManager()
+                cli_flags = flags_manager.get_cli_flags(job.project_name, 'decode')
+                if cli_flags:
+                    cmd.extend(cli_flags)
+                    self.logger.info(f"Added project decode flags: {' '.join(cli_flags)}")
+
             # Add input and output
             cmd.extend([
                 job.input_file,
                 job.output_file.replace('.tbc', '')
             ])
-            
+
             # Add additional parameters if specified
             additional_params = job.parameters.get('additional_params', '')
             if additional_params:
@@ -632,7 +648,15 @@ class JobQueueManager:
             # Add overwrite flag if requested
             if job.parameters.get('overwrite', False):
                 cmd.append('--overwrite')
-            
+
+            # Add per-project export flags (e.g., --luma-only for B&W sources)
+            if PROJECT_FLAGS_AVAILABLE and job.project_name:
+                flags_manager = ProjectFlagsManager()
+                cli_flags = flags_manager.get_cli_flags(job.project_name)
+                if cli_flags:
+                    cmd.extend(cli_flags)
+                    self.logger.info(f"Added project export flags: {' '.join(cli_flags)}")
+
             # Find the exact corresponding .tbc.json file based on project base name
             # The project naming convention: base name (e.g. "Metallica1") stays consistent
             # throughout pipeline, only extensions change to indicate processing stage

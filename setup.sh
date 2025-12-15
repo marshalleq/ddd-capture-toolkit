@@ -711,15 +711,16 @@ else
     fi
 fi
 
-# Show other available vhs-decode versions
-if [[ -d "external/vhs-decode" ]]; then
+# Show other available vhs-decode versions (performance mode only)
+if [[ "$INSTALL_MODE" == "performance" ]] && [[ -d "external/vhs-decode" ]]; then
     cd external/vhs-decode
     git fetch --tags origin 2>/dev/null || true
     OTHER_VERSIONS=$(git tag -l --sort=-creatordate 2>/dev/null | grep -E '^v?[0-9]+\.[0-9]+' | head -n5 | tr '\n' ', ' | sed 's/, $//')
     cd - >/dev/null
     if [[ -n "$OTHER_VERSIONS" ]]; then
         echo ""
-        echo "  Other available vhs-decode versions: $OTHER_VERSIONS"
+        echo "  vhs-decode defaults to latest release tag (recommended)"
+        echo "  Other available versions: $OTHER_VERSIONS"
         echo "  To use a different version, reinstall with:"
         echo "    ./setup.sh --performance --vhs-decode-version <version>"
         echo "  For bleeding edge (latest commit): --vhs-decode-version latest"

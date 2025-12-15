@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "projects": {
+    "Ultrasound": {
+      "luma_only": true,
+      "decode": {
+        "skip_chroma": true
+      }
+    }
+  }
+}

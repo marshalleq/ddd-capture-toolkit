@@ -30,6 +30,7 @@ from project_discovery import Project, ProjectDiscovery
 from workflow_analyzer import WorkflowAnalyzer, WorkflowStep, StepStatus, WorkflowStatus
 from job_queue_manager import JobQueueManager
 from shared.progress_display_utils import ProgressDisplayUtils
+from project_flags import ProjectFlagsManager
 
 @dataclass
 class DisplayConfig:
@@ -92,11 +93,12 @@ class ProjectStatusDisplay:
         # Add columns
         table.add_column("Project", width=self.config.project_column_width, style="cyan", no_wrap=True)
         table.add_column("Capture", width=self.config.step_column_width, justify="center")
-        table.add_column("Decode", width=self.config.step_column_width, justify="center") 
+        table.add_column("Decode", width=self.config.step_column_width, justify="center")
         table.add_column("Compress", width=self.config.step_column_width, justify="center")
         table.add_column("Export", width=self.config.step_column_width, justify="center")
         table.add_column("Align", width=self.config.step_column_width, justify="center")
         table.add_column("Final", width=self.config.step_column_width, justify="center")
+        table.add_column("Flags", width=7, justify="center")
         
         # Add project rows
         for idx, project in enumerate(projects):
@@ -128,11 +130,20 @@ class ProjectStatusDisplay:
                     row_data.append(colored_text)
                 else:
                     row_data.append(display_text)
-            
+
+            # Add flags column
+            flags_manager = ProjectFlagsManager()
+            has_flags = flags_manager.has_any_flags(project.name)
+            if has_flags:
+                flags_display = Text("Yes", style="yellow") if self.config.color_enabled else "Yes"
+            else:
+                flags_display = Text("--", style="bright_black") if self.config.color_enabled else "--"
+            row_data.append(flags_display)
+
             table.add_row(*row_data)
-        
+
         return table
-    
+
     def create_enhanced_status_cell(self, project: Project, step: WorkflowStep, step_status: StepStatus) -> Text:
         """
         Create enhanced status cell with progress bars for running jobs
@@ -271,11 +282,12 @@ class ProjectStatusDisplay:
         # Add columns with proper sizing for multi-line content
         table.add_column("Project", width=self.config.project_column_width, style="cyan", no_wrap=True)
         table.add_column("(C)apture", width=13, justify="center", no_wrap=False)  # Enable multi-line for progress bars
-        table.add_column("(D)ecode", width=13, justify="center", no_wrap=False) 
+        table.add_column("(D)ecode", width=13, justify="center", no_wrap=False)
         table.add_column("Co(m)press", width=13, justify="center", no_wrap=False)
         table.add_column("(E)xport", width=13, justify="center", no_wrap=False)
         table.add_column("(A)lign", width=13, justify="center", no_wrap=False)
         table.add_column("(F)inal", width=13, justify="center", no_wrap=False)
+        table.add_column("(X) Flags", width=9, justify="center", no_wrap=True)
         
         # Add project rows with enhanced status cells
         for idx, project in enumerate(projects):
@@ -298,15 +310,24 @@ class ProjectStatusDisplay:
             
             for step in steps:
                 step_status = workflow_status.steps.get(step, StepStatus.MISSING)
-                
+
                 # Use enhanced status cell for better progress display
                 enhanced_cell = self.create_enhanced_status_cell(project, step, step_status)
                 row_data.append(enhanced_cell)
-            
+
+            # Add flags column
+            flags_manager = ProjectFlagsManager()
+            has_flags = flags_manager.has_any_flags(project.name)
+            if has_flags:
+                flags_display = Text("Yes", style="yellow")
+            else:
+                flags_display = Text("--", style="bright_black")
+            row_data.append(flags_display)
+
             table.add_row(*row_data)
-        
+
         return table
-    
+
     def create_status_legend(self) -> Table:
         """
         Create status legend with colors and descriptions
@@ -498,13 +519,14 @@ class ProjectStatusDisplay:
         projects = self.discovery.discover_projects(directories)
         
         # Table header
-        print(f"{'Project':<20} {'Capture':<11} {'Decode':<11} {'Compress':<11} {'Export':<11} {'Align':<11} {'Final':<11}")
-        print("-" * 95)
-        
+        print(f"{'Project':<20} {'Capture':<11} {'Decode':<11} {'Compress':<11} {'Export':<11} {'Align':<11} {'Final':<11} {'Flags':<7}")
+        print("-" * 103)
+
         # Project rows
+        flags_manager = ProjectFlagsManager()
         for idx, project in enumerate(projects):
             workflow_status = self.analyzer.analyze_project_workflow(project)
-            
+
             steps = [
                 WorkflowStep.CAPTURE,
                 WorkflowStep.DECODE,
@@ -513,18 +535,22 @@ class ProjectStatusDisplay:
                 WorkflowStep.ALIGN,
                 WorkflowStep.FINAL
             ]
-            
+
             # Add project number and name (1-indexed)
             project_num = idx + 1
             project_name = f"{project_num}. {project.name}"
             row = [project_name[:19]]  # Truncate long names
-            
+
             for step in steps:
                 step_status = workflow_status.steps.get(step, StepStatus.MISSING)
                 display_text = self.analyzer.get_step_display_status(step_status, project, step)
                 row.append(display_text[:10])  # Truncate if needed
-            
-            print(f"{row[0]:<20} {row[1]:<11} {row[2]:<11} {row[3]:<11} {row[4]:<11} {row[5]:<11} {row[6]:<11}")
+
+            # Add flags status
+            has_flags = flags_manager.has_any_flags(project.name)
+            row.append("Yes" if has_flags else "--")
+
+            print(f"{row[0]:<20} {row[1]:<11} {row[2]:<11} {row[3]:<11} {row[4]:<11} {row[5]:<11} {row[6]:<11} {row[7]:<7}")
         
         # Summary
         print()

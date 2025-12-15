@@ -40,6 +40,7 @@ try:
     from directory_manager import DirectoryManager
     from job_queue_manager import get_job_queue_manager
     from project_status_display import ProjectStatusDisplay, DisplayConfig
+    from project_flags import ProjectFlagsManager, DECODE_FLAGS, EXPORT_FLAGS, get_flag_definitions
     COMPONENTS_AVAILABLE = True
 except ImportError:
     COMPONENTS_AVAILABLE = False
@@ -259,6 +260,13 @@ class WorkflowControlCentre:
                                     live.stop()
                                     termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
                                     self.show_details()
+                                    tty.setcbreak(sys.stdin.fileno())
+                                    live.start()
+                                elif len(cmd) == 2 and cmd[0].isdigit() and cmd[1] == 'x':
+                                    # Show flags dialog - temporarily stop live display
+                                    live.stop()
+                                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                                    self.show_flags_dialog(int(cmd[0]))
                                     tty.setcbreak(sys.stdin.fileno())
                                     live.start()
                                 else:
@@ -693,10 +701,14 @@ class WorkflowControlCentre:
         """Handle user command input"""
         # Coordinate system commands (1D, 2M, etc.)
         # Also supports format modifiers for decode: 1dp (PAL), 1dn (NTSC)
-        if len(cmd) == 2 and cmd[0].isdigit() and cmd[1] in "dmaef":
+        # Also supports flags: 1x (flags for project 1)
+        if len(cmd) == 2 and cmd[0].isdigit() and cmd[1] in "dmaefx":
             project_num = int(cmd[0])
             step_letter = cmd[1]
-            self.handle_coordinate_command(project_num, step_letter)
+            if step_letter == 'x':
+                self.show_flags_dialog(project_num)
+            else:
+                self.handle_coordinate_command(project_num, step_letter)
         elif len(cmd) == 3 and cmd[0].isdigit() and cmd[1] == 'd' and cmd[2] in "pn":
             # Decode with format specifier: 1dp = PAL, 1dn = NTSC
             project_num = int(cmd[0])
@@ -932,7 +944,271 @@ class WorkflowControlCentre:
             self._show_project_details(project)
         else:
             self.message = "No job or project selected. Use A-G or 1-9 to select."
-    
+
+    def show_flags_dialog(self, project_num):
+        """Show flags dialog with Decode and Export pages using Rich formatting"""
+        import termios
+        import tty
+        import fcntl
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich.text import Text
+        from rich.console import Console
+        from rich.box import ROUNDED, HEAVY
+
+        console = Console()
+        project_idx = project_num - 1
+
+        # Check if project exists
+        if project_idx >= len(self.current_projects):
+            self.message = f"No project at position {project_num}"
+            return
+
+        project = self.current_projects[project_idx]
+
+        # Initialize flags manager
+        flags_manager = ProjectFlagsManager()
+
+        # Page definitions
+        pages = [
+            {'type': 'decode', 'title': 'DECODE FLAGS', 'subtitle': 'vhs-decode options'},
+            {'type': 'export', 'title': 'EXPORT FLAGS', 'subtitle': 'tbc-video-export options'},
+        ]
+        current_page = 0
+
+        # Load flags for both types
+        decode_flags = flags_manager.get_project_flags(project.name, 'decode')
+        export_flags = flags_manager.get_project_flags(project.name, 'export')
+        current_flags = {'decode': decode_flags, 'export': export_flags}
+
+        # Selection state per page
+        selected_idx = 0
+
+        def get_current_flag_defs():
+            return get_flag_definitions(pages[current_page]['type'])
+
+        def get_current_flags():
+            return current_flags[pages[current_page]['type']]
+
+        def render_flags_screen():
+            """Render the flags dialog screen with Rich components"""
+            nonlocal selected_idx
+            console.clear()
+
+            page = pages[current_page]
+            flag_defs = get_current_flag_defs()
+            page_flags = get_current_flags()
+            flag_keys = list(flag_defs.keys())
+
+            # Ensure selected_idx is valid for current page
+            if selected_idx >= len(flag_keys):
+                selected_idx = 0
+
+            # Title panel with page indicator
+            title = Text()
+            title.append(page['title'], style="bold cyan")
+            title.append(f"  -  {project.name}", style="bold white")
+            title.append("    ", style="white")
+            title.append(f"[Page {current_page + 1}/{len(pages)}: {page['subtitle']}]", style="dim")
+            console.print(Panel(title, box=HEAVY, style="cyan"))
+
+            # Instructions panel
+            instructions = Text()
+            instructions.append("↑↓", style="bold yellow")
+            instructions.append(" Navigate", style="white")
+            instructions.append("  |  ", style="dim")
+            instructions.append("←→", style="bold magenta")
+            instructions.append(" Page", style="white")
+            instructions.append("  |  ", style="dim")
+            instructions.append("Space", style="bold yellow")
+            instructions.append(" Toggle", style="white")
+            instructions.append("  |  ", style="dim")
+            instructions.append("Enter", style="bold green")
+            instructions.append(" Save All", style="white")
+            instructions.append("  |  ", style="dim")
+            instructions.append("Esc", style="bold red")
+            instructions.append(" Cancel", style="white")
+            console.print(Panel(instructions, box=ROUNDED, style="dim"))
+            console.print()
+
+            # Create flags table
+            table = Table(
+                title=f"{page['title']} ({page['subtitle']})",
+                box=HEAVY,
+                show_header=True,
+                header_style="bold cyan",
+                title_style="bold white"
+            )
+
+            table.add_column(" ", width=2, justify="center")  # Selection indicator
+            table.add_column("Status", width=8, justify="center")
+            table.add_column("Flag", width=25)
+            table.add_column("CLI Option", width=20, style="dim")
+            table.add_column("Description", width=45)
+
+            for idx, flag_key in enumerate(flag_keys):
+                flag_def = flag_defs[flag_key]
+                is_enabled = page_flags.get(flag_key, False)
+                is_selected = (idx == selected_idx)
+
+                # Selection indicator
+                if is_selected:
+                    indicator = Text("▶", style="bold yellow")
+                else:
+                    indicator = Text(" ")
+
+                # Checkbox with color
+                if is_enabled:
+                    checkbox = Text("[X]", style="bold green")
+                else:
+                    checkbox = Text("[ ]", style="dim")
+
+                # Flag name - highlight if selected
+                if is_selected:
+                    flag_name = Text(flag_def['label'], style="bold white on blue")
+                else:
+                    flag_name = Text(flag_def['label'], style="white")
+
+                # CLI option
+                cli_opt = flag_def['cli_flag']
+
+                # Description
+                desc = flag_def['description']
+
+                table.add_row(indicator, checkbox, flag_name, cli_opt, desc)
+
+            console.print(table)
+            console.print()
+
+            # Summary for current page
+            enabled_labels = [flag_defs[k]['label'] for k in flag_keys if page_flags.get(k, False)]
+            if enabled_labels:
+                summary = Text()
+                summary.append("Enabled: ", style="bold white")
+                summary.append(", ".join(enabled_labels), style="bold green")
+            else:
+                summary = Text("No flags enabled on this page", style="dim")
+
+            console.print(Panel(summary, title=f"{page['type'].title()} Summary", box=ROUNDED))
+
+            # Overall summary
+            all_decode = [DECODE_FLAGS[k]['label'] for k in current_flags['decode'] if current_flags['decode'].get(k)]
+            all_export = [EXPORT_FLAGS[k]['label'] for k in current_flags['export'] if current_flags['export'].get(k)]
+
+            if all_decode or all_export:
+                overall = Text()
+                if all_decode:
+                    overall.append("Decode: ", style="bold cyan")
+                    overall.append(", ".join(all_decode), style="green")
+                if all_decode and all_export:
+                    overall.append("  |  ", style="dim")
+                if all_export:
+                    overall.append("Export: ", style="bold cyan")
+                    overall.append(", ".join(all_export), style="green")
+                console.print(Panel(overall, title="All Flags", box=ROUNDED, style="dim"))
+
+        # Setup terminal for single keypress reading
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+
+        def read_key():
+            """Read a single keypress, handling escape sequences for arrow keys"""
+            key = sys.stdin.read(1)
+
+            if key == '\x1b':  # Escape character - could be arrow key or actual Esc
+                # Set non-blocking temporarily to check for more chars
+                old_fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+                fcntl.fcntl(fd, fcntl.F_SETFL, old_fl | os.O_NONBLOCK)
+
+                try:
+                    next_char = sys.stdin.read(1)
+                    if next_char == '[':
+                        arrow = sys.stdin.read(1)
+                        if arrow == 'A':
+                            return 'UP'
+                        elif arrow == 'B':
+                            return 'DOWN'
+                        elif arrow == 'C':
+                            return 'RIGHT'
+                        elif arrow == 'D':
+                            return 'LEFT'
+                    # If we got here, it wasn't an arrow key sequence
+                    return 'ESC'
+                except (IOError, TypeError):
+                    # No more chars available - it was just Esc
+                    return 'ESC'
+                finally:
+                    fcntl.fcntl(fd, fcntl.F_SETFL, old_fl)
+
+            return key
+
+        try:
+            tty.setcbreak(fd)
+
+            while True:
+                render_flags_screen()
+
+                flag_defs = get_current_flag_defs()
+                flag_keys = list(flag_defs.keys())
+
+                # Read single keypress
+                key = read_key()
+
+                if key == 'UP':
+                    selected_idx = (selected_idx - 1) % len(flag_keys)
+
+                elif key == 'DOWN':
+                    selected_idx = (selected_idx + 1) % len(flag_keys)
+
+                elif key == 'LEFT':
+                    current_page = (current_page - 1) % len(pages)
+                    selected_idx = 0  # Reset selection on page change
+
+                elif key == 'RIGHT':
+                    current_page = (current_page + 1) % len(pages)
+                    selected_idx = 0  # Reset selection on page change
+
+                elif key == '\t':  # Tab - move down
+                    selected_idx = (selected_idx + 1) % len(flag_keys)
+
+                elif key == ' ':  # Space - toggle
+                    flag_key = flag_keys[selected_idx]
+                    page_type = pages[current_page]['type']
+                    current_flags[page_type][flag_key] = not current_flags[page_type].get(flag_key, False)
+
+                elif key in ('\r', '\n'):  # Enter - save all
+                    # Save both decode and export flags
+                    flags_manager.set_project_flags(project.name, current_flags['decode'], 'decode')
+                    flags_manager.set_project_flags(project.name, current_flags['export'], 'export')
+
+                    # Build summary message
+                    decode_labels = flags_manager.get_enabled_flag_labels(project.name, 'decode')
+                    export_labels = flags_manager.get_enabled_flag_labels(project.name, 'export')
+
+                    parts = []
+                    if decode_labels:
+                        parts.append(f"Decode: {', '.join(decode_labels)}")
+                    if export_labels:
+                        parts.append(f"Export: {', '.join(export_labels)}")
+
+                    if parts:
+                        self.message = f"Flags saved for {project.name} - {'; '.join(parts)}"
+                    else:
+                        self.message = f"All flags cleared for {project.name}"
+                    return
+
+                elif key == 'ESC' or key.lower() == 'q':  # Esc or Q - cancel
+                    self.message = "Flags edit cancelled"
+                    return
+
+                elif key == '\x03':  # Ctrl+C
+                    self.message = "Flags edit cancelled"
+                    return
+
+        finally:
+            # Restore terminal settings
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
     def _show_job_details(self, job):
         """Display detailed information about a job"""
         clear_screen()
@@ -1829,6 +2105,7 @@ class WorkflowControlCentre:
         print("  3E - Start Export for Project 3")
         print("  1A - Start Align for Project 1")
         print("  2F - Start Final for Project 2")
+        print("  1X - Configure export flags for Project 1 (e.g., --luma-only for B&W)")
         
         print("\nProject Selection:")
         print("  1-7 - Select a project from the workflow matrix")
@@ -1849,7 +2126,7 @@ class WorkflowControlCentre:
         
         print("\nStep Letters:")
         print("  D = (D)ecode, M = Co(M)press, E = (E)xport")
-        print("  A = (A)lign, F = (F)inal")
+        print("  A = (A)lign, F = (F)inal, X = Flags (e(X)port options)")
         
         print("\nTips:")
         print("  • Use coordinate system for direct actions: 1D, 2M, etc.")
