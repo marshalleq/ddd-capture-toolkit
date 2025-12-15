@@ -73,9 +73,9 @@ The capture script (`ddd_clockgen_sync.py`) uses the new command-line interface 
 
 Even with synchronised clocks, the two capture processes start at slightly different times. The toolkit calculates this initial offset through:
 
-- Automated 1kHz test tone analysis for calibration captures
-- Precision timing measurement between audio and video start points
+- Precision timing measurement between audio and video start points unique to your hardware
 - Automatic application of the calculated offset during final muxing
+- Automated 1kHz test tone analysis for calibration captures (in alpha state - not needed, use timing measurement option)
 
 #### 3. VhsDecodeAutoAudioAlign (Speed Compensation)
 
