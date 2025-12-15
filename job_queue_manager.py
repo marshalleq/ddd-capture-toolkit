@@ -433,6 +433,11 @@ class JobQueueManager:
             else:
                 total_frames = 0
 
+            # Store total_frames on job object for progress display
+            with self.lock:
+                job.total_frames = total_frames
+                self.logger.info(f"VHS decode total frames from capture JSON: {total_frames}")
+
             # Find vhs-decode command - check PATH first (installed version), then submodule
             import shutil
             script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -504,31 +509,40 @@ class JobQueueManager:
             self.job_processes[job.job_id] = process
 
             current_frame = 0
-            
+            start_time = time.time()  # Track start time for FPS calculation
+
             # Parse output for frame progress
             for line in iter(process.stdout.readline, ''):
                 if not line:
                     break
-                
+
                 line = line.strip()
-                
+
                 # Parse frame progress: "File Frame 1000: VHS"
                 import re
                 frame_match = re.search(r'File Frame (\d+):', line)
                 if frame_match:
                     current_frame = int(frame_match.group(1))
+
+                    # Calculate FPS based on elapsed time
+                    elapsed_time = time.time() - start_time
+                    current_fps = current_frame / elapsed_time if elapsed_time > 0 else 0
+
                     if total_frames > 0:
                         progress = (current_frame / total_frames) * 100
                         # Update job progress with thread safety
                         with self.lock:
                             job.progress = min(progress, 99.9)  # Cap at 99.9% until completion
-                            # Skip saving progress updates to avoid blocking during job execution
+                            job.current_frame = current_frame
+                            job.current_fps = current_fps
+                            # Skip saving to disk to avoid blocking during job execution
                             # Final progress will be saved when job completes
                     else:
                         # No frame count available, show frame number as basic progress
                         with self.lock:
                             job.progress = min(current_frame / 1000.0, 50.0)  # Very rough estimate
-                            # Skip saving progress updates to avoid blocking during job execution
+                            job.current_frame = current_frame
+                            job.current_fps = current_fps
             
             # Wait for completion
             return_code = process.wait()
