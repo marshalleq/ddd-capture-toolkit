@@ -79,7 +79,7 @@ Even with synchronised clocks, the two capture processes start at slightly diffe
 
 #### 3. VhsDecodeAutoAudioAlign (Speed Compensation)
 
-Your VCR doesn't play at exactly 50fps. It might be 50.0001fps, which means over a 2-hour tape, the audio drifts noticeably. The integreated [VhsDecodeAutoAudioAlign](https://gitlab.com/wolfre/vhs-decode-auto-audio-align) by **Rene Wolf** solves this by:
+Your VCR doesn't play at exactly 50fps. It might be 50.0001fps, which means over a 2-hour tape, the audio drifts noticeably. The integrated [VhsDecodeAutoAudioAlign](https://gitlab.com/wolfre/vhs-decode-auto-audio-align) by **Rene Wolf** solves this by:
 
 1. Reading actual field timing from the `.tbc.json` file produced by vhs-decode
 2. Calculating where each video field actually occurs in time
