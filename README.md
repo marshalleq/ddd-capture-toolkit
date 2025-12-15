@@ -97,7 +97,18 @@ The result: audio that stays perfectly synchronised throughout the entire tape, 
 - **Job queue** - Parallel processing and batch operations
 - **Command-line DdD control** - Scriptable capture automation
 
-## Quick Start
+## Basic Process to operate
+1. Use menu option 1 to capture the initial video
+2. Use menu option 4 to set where your capture files are (can be multiple disks)
+3. Use menu option 2 to start the Workflow Control Centre
+4. Choose any required flags by choosing the project number and x (optional step)
+5. Choose decode by choose the project number 1 and d for decode together e.g. 1d
+6. Watch the decode with full progress indicators and ETA
+7. Repeat for export step, audio alignment step and final mux step
+8. There is an auto process option, which will do the whole lot in one batch.  Need to retest this
+9. Queue up any additional projects and run them simultaneously
+
+## Quick Start (Install)
 
 ### Prerequisites
 
