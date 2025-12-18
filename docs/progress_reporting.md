@@ -18,7 +18,7 @@ The progress reporting system is distributed across multiple files:
 | vhs-decode | Capture `.json` (duration × fps) | Frame regex from stdout | frames / runtime | remaining_frames / fps |
 | tbc-export | `.tbc.json` (fields / 2) | FFmpeg `frame=` from stderr | FFmpeg `fps=` from stderr | remaining_frames / fps |
 | lds-compress | N/A | Time-based estimation | N/A | N/A |
-| audio-align | N/A | Stage-based (fixed %) | N/A | N/A |
+| audio-align | Input `.flac` file size | Output file size / input size | N/A | progress rate based |
 | final-mux | N/A | Incremental (2% steps) | N/A | N/A |
 
 ---
@@ -223,23 +223,29 @@ job.progress = min(max(5.0, time_progress), 90.0)
 
 #### Progress Tracking
 
-**Source:** `job_queue_manager.py` lines 940-1118
+**Source:** `job_queue_manager.py` (`_execute_audio_align_job`)
 
-**Method:** Stage-based progress updates (not frame-based):
+**Method:** Output file size monitoring - since audio alignment doesn't change the duration, the output file size should be approximately equal to the input file size.
+
 ```python
-# Fixed progress stages:
-job.progress = 10.0   # Initial
-job.progress = 20.0   # Before subprocess start
-job.progress = 30.0   # "Starting VHS audio alignment" detected in output
-job.progress = 50.0   # "Running alignment pipeline" detected in output
-job.progress = 90.0   # "Audio alignment completed successfully" detected
-job.progress = 95.0   # After process completes
-job.progress = 100.0  # Output file verified
+# Get input file size
+input_file_size = os.path.getsize(audio_file)
+
+# Monitor output file growth
+output_size = os.path.getsize(aligned_output)
+progress = min((output_size / input_file_size) * 100, 95.0)
 ```
+
+**Progress stages:**
+- 5% - Job started, input file size captured
+- 5-95% - Output file growing (progress = output_size / input_size)
+- 100% - Output file verified
 
 #### FPS / ETA
 
-**Not tracked** - audio alignment uses stage-based progress, not frame-based.
+**FPS:** Not tracked - audio alignment isn't frame-based, displays "--fps"
+
+**ETA:** Can be estimated from progress rate over time
 
 #### Dependencies
 
@@ -442,8 +448,13 @@ produces:
 
 ## Changelog
 
+### 2025-12-18
+- **Added:** audio-align jobs now have real progress tracking based on output file size monitoring
+- **Fixed:** Progress bar calculation simplified to use consistent formula across all widths
+
 ### 2025-12-15
 - **Fixed:** vhs-decode jobs now properly set `job.total_frames`, `job.current_frame`, and `job.current_fps` on the job object, enabling FPS and ETA display in the workflow control centre
-- **Fixed:** tbc-export jobs now use frame-based progress tracking by parsing FFmpeg's `frame=` output instead of file size estimation
-- **Fixed:** tbc-export FPS is now parsed directly from FFmpeg's `fps=` output for accurate real-time display
+- **Fixed:** tbc-export jobs now use frame-based progress tracking by parsing `tbc-video-export` output with `--show-process-output` flag
+- **Fixed:** tbc-export FPS is now parsed directly from the tool's progress output for accurate real-time display
+- **Fixed:** tbc-export progress now only increases (never goes backwards) when different pipeline stages report different frame counts
 - **Fixed:** Cancelled jobs now correctly show as CANCELLED instead of being overwritten to COMPLETED or FAILED

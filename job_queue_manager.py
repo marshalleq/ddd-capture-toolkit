@@ -1005,12 +1005,17 @@ class JobQueueManager:
                 ]
                 
                 self.logger.info(f"Running alignment command: {' '.join(alignment_cmd)}")
-                
+
+                # Get input file size for progress estimation
+                input_file_size = os.path.getsize(audio_file) if os.path.exists(audio_file) else 0
+                self.logger.info(f"Input audio file size: {input_file_size / (1024*1024):.1f} MB")
+
                 # Update progress during processing
                 with self.lock:
-                    job.progress = 20.0
+                    job.progress = 5.0
+                    job.total_frames = input_file_size  # Use bytes as "frames" for progress calc
                     self.save_queue()
-                
+
                 # Run the subprocess with proper output capture
                 process = subprocess.Popen(
                     alignment_cmd,
@@ -1026,46 +1031,54 @@ class JobQueueManager:
                 # Monitor the process and log output (but don't print to console)
                 stdout_lines = []
                 stderr_lines = []
-                
+                start_time = time.time()
+                last_output_size = 0
+
                 # Read output without blocking the main interface
                 while True:
                     return_code = process.poll()
-                    
+
                     # Read available output
                     try:
                         stdout_line = process.stdout.readline()
                         if stdout_line:
                             stdout_lines.append(stdout_line.strip())
                             self.logger.debug(f"Alignment stdout: {stdout_line.strip()}")
-                            
-                            # Update progress based on output patterns
-                            if 'Starting VHS audio alignment' in stdout_line:
-                                with self.lock:
-                                    job.progress = 30.0
-                                    self.save_queue()
-                            elif 'Running alignment pipeline' in stdout_line:
-                                with self.lock:
-                                    job.progress = 50.0
-                                    self.save_queue()
-                            elif 'Audio alignment completed successfully' in stdout_line:
-                                with self.lock:
-                                    job.progress = 90.0
-                                    self.save_queue()
-                        
+
                         stderr_line = process.stderr.readline()
                         if stderr_line:
                             stderr_lines.append(stderr_line.strip())
                             self.logger.debug(f"Alignment stderr: {stderr_line.strip()}")
-                    
+
                     except Exception as e:
                         self.logger.debug(f"Error reading process output: {e}")
-                    
+
+                    # Monitor output file size for progress
+                    if os.path.exists(aligned_output):
+                        try:
+                            output_size = os.path.getsize(aligned_output)
+                            if output_size > last_output_size and input_file_size > 0:
+                                # Calculate progress based on output file growth
+                                # Output should be roughly same size as input
+                                progress = min((output_size / input_file_size) * 100, 95.0)
+                                progress = max(progress, 5.0)  # Minimum 5%
+
+                                with self.lock:
+                                    job.progress = progress
+                                    job.current_frame = output_size
+                                    # Don't set current_fps - audio alignment isn't frame-based
+
+                                last_output_size = output_size
+                                self.logger.debug(f"Alignment progress: {progress:.1f}% ({output_size / (1024*1024):.1f} MB)")
+                        except Exception as e:
+                            self.logger.debug(f"Error monitoring output file: {e}")
+
                     # Check if process has finished
                     if return_code is not None:
                         break
-                    
+
                     # Small delay to avoid busy waiting
-                    time.sleep(0.1)
+                    time.sleep(0.5)  # Check every 0.5 seconds
                 
                 # Read any remaining output
                 try:

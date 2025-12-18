@@ -69,12 +69,12 @@ class ProgressDisplayUtils:
     @staticmethod
     def create_progress_bar(percentage: float, width: int = 20) -> str:
         """
-        Create progress bar using exact logic from job_queue_display.py lines 173-175
-        
+        Create progress bar string.
+
         Args:
             percentage: Progress percentage (0-100)
             width: Width of progress bar in characters (default 20)
-            
+
         Returns:
             Progress bar string using █ and ░ characters
         """
@@ -82,11 +82,13 @@ class ProgressDisplayUtils:
             percentage = 0
         elif percentage > 100:
             percentage = 100
-            
-        progress_chars = int(percentage / 5)  # 20 chars for 100%
-        if width != 20:
-            progress_chars = int((percentage / 100.0) * width)
-            
+
+        # Calculate filled characters based on percentage and width
+        progress_chars = int((percentage / 100.0) * width)
+
+        # Ensure we don't exceed width
+        progress_chars = min(progress_chars, width)
+
         return "█" * progress_chars + "░" * (width - progress_chars)
     
     @staticmethod
