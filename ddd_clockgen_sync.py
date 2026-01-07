@@ -235,24 +235,44 @@ def get_sox_command(output_filename):
     """Get platform-specific SOX command with optimised buffer settings.
 
     Uses auto-detected Clockgen audio device from config.py.
+    Verifies device accessibility and releases from PipeWire/PulseAudio if needed.
     Falls back to sensible defaults if device not found.
     """
     # Import audio device detection from config
     try:
-        from config import get_sox_device_args, get_audio_device
-        driver, device = get_sox_device_args()
-        audio_info = get_audio_device()
+        from config import prepare_audio_device, get_sox_device_args
+
+        # Use prepare_audio_device for full detection, verification, and release
+        audio_info, error = prepare_audio_device()
 
         if audio_info:
+            device = audio_info['device_id']
             sample_rate = str(audio_info.get('sample_rate', 78125))
             bit_depth = str(audio_info.get('bit_depth', 24))
-            channels = str(audio_info.get('channels', 2))
+            # Always record 2 channels (L+R audio) - the 3rd channel on some devices
+            # is for head switching signals which most setups don't use.
+            # The 'remix 1 2' at the end of the sox command extracts just these channels.
+            channels = '2'
+            device_channels = audio_info.get('channels', 2)
             print(f"Using audio device: {audio_info.get('device_name', device)} ({device})")
+            print(f"   Sample rate: {sample_rate} Hz, Bit depth: {bit_depth}, Device channels: {device_channels}, Recording: 2 (L+R)")
+
+            # Determine driver based on platform
+            if sys.platform == 'win32':
+                driver = 'waveaudio'
+            elif sys.platform == 'darwin':
+                driver = 'coreaudio'
+            else:
+                driver = 'alsa'
         else:
+            # Device not found or not accessible
+            print(f"Warning: {error}")
+            print("Falling back to default audio device...")
+            driver, device = get_sox_device_args()
             sample_rate = '78125'
             bit_depth = '24'
             channels = '2'
-            print(f"Warning: Clockgen device not detected, using defaults ({driver}:{device})")
+
     except ImportError:
         # Fallback if config module not available
         print("Warning: Could not import config module, using legacy device detection")
@@ -720,10 +740,25 @@ def perform_av_alignment():
 
 def cleanup_existing_processes():
     """
-    Check for and clean up any existing vhs-decode or DomesdayDuplicator processes
+    Check for and clean up any existing vhs-decode, sox, or DomesdayDuplicator processes
     that might interfere with new captures
     """
     try:
+        # Check for running sox recording processes (these can hold the audio device)
+        result = subprocess.run(['pgrep', '-f', 'sox.*alsa|sox.*hw:'], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            pids = result.stdout.strip().split('\n')
+            print(f"\nFound {len(pids)} running sox process(es) that may be holding audio device")
+            for pid in pids:
+                if pid.strip():
+                    print(f"   Terminating sox process (PID: {pid})")
+                    try:
+                        subprocess.run(['kill', pid.strip()], check=True)
+                    except subprocess.CalledProcessError:
+                        print(f"   Warning: Could not terminate process {pid}")
+            print("   Sox cleanup completed")
+            time.sleep(0.5)  # Give time for device to be released
+
         # Check for running vhs-decode processes
         result = subprocess.run(['pgrep', '-f', 'vhs-decode'], capture_output=True, text=True)
         if result.returncode == 0 and result.stdout.strip():
@@ -737,7 +772,7 @@ def cleanup_existing_processes():
                     except subprocess.CalledProcessError:
                         print(f"   Warning: Could not terminate process {pid}")
             print("   Cleanup completed")
-        
+
         # Check for running DomesdayDuplicator processes (but don't kill them automatically)
         result = subprocess.run(['pgrep', '-f', 'DomesdayDuplicator.*capture'], capture_output=True, text=True)
         if result.returncode == 0 and result.stdout.strip():
@@ -745,7 +780,7 @@ def cleanup_existing_processes():
             print(f"\nWarning: Found {len(pids)} running DomesdayDuplicator capture process(es)")
             print("   These may interfere with new captures")
             print("   Consider stopping them manually or use 'Stop Current Capture' menu option")
-            
+
     except Exception as e:
         print(f"Process cleanup warning: {e}")
 

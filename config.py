@@ -19,7 +19,14 @@ CLOCKGEN_DEVICE_PATTERNS = [
     r'cxadc.*clockgen',      # Case-insensitive variant
     r'ADC.*ClockGen',        # Alternate naming
     r'ClockGen.*Lite',       # Clockgen Lite variant
+    r'PCM2707',              # TI PCM2707 USB audio codec (common in DIY clockgen)
+    r'PCM2706',              # TI PCM2706 USB audio codec variant
+    r'PCM270\d',             # Any PCM270x variant
+    r'USB.*Audio.*78125',    # Generic USB audio with clockgen sample rate
 ]
+
+# Clockgen devices typically support this exact sample rate
+CLOCKGEN_SAMPLE_RATE = 78125
 
 # Default configuration values
 DEFAULT_CONFIG = {
@@ -435,16 +442,30 @@ def detect_audio_devices():
 
 def find_clockgen_device():
     """
-    Auto-detect the Clockgen audio device by matching known name patterns.
+    Auto-detect the Clockgen audio device by:
+    1. Matching known name patterns
+    2. Checking for devices that support the unique 78125 Hz sample rate
+
     Returns device dict if found, None otherwise.
     """
     devices = detect_audio_devices()
 
+    # First try: match by known name patterns
     for device in devices:
         device_name = device.get('name', '') + ' ' + device.get('description', '')
         for pattern in CLOCKGEN_DEVICE_PATTERNS:
             if re.search(pattern, device_name, re.IGNORECASE):
                 return device
+
+    # Second try: on Linux, check for devices that support 78125 Hz sample rate
+    # This is the unique clockgen sample rate and is unlikely to be supported by normal audio devices
+    if sys.platform == 'linux':
+        for device in devices:
+            device_info = get_device_info_linux(device['device_id'])
+            if device_info and device_info.get('sample_rates'):
+                if CLOCKGEN_SAMPLE_RATE in device_info['sample_rates']:
+                    print(f"Auto-detected Clockgen device by sample rate: {device.get('name', device['device_id'])}")
+                    return device
 
     return None
 
@@ -533,6 +554,216 @@ def get_sox_device_args():
     return driver, device
 
 
+def get_device_info_linux(device_id):
+    """
+    Get detailed device information for a Linux ALSA device.
+    Returns dict with 'channels', 'sample_rates', 'formats' or None on error.
+    """
+    if sys.platform != 'linux':
+        return None
+
+    try:
+        # Extract card and device numbers from device_id (e.g., "hw:2,0")
+        match = re.match(r'hw:(\d+),(\d+)', device_id)
+        if not match:
+            return None
+        card_num = match.group(1)
+
+        # Read from /proc/asound/cardX/stream0 for USB audio devices
+        stream_path = f"/proc/asound/card{card_num}/stream0"
+        if os.path.exists(stream_path):
+            with open(stream_path, 'r') as f:
+                content = f.read()
+
+            info = {'channels': None, 'sample_rates': [], 'formats': []}
+
+            # Parse channels
+            channels_match = re.search(r'Channels:\s*(\d+)', content)
+            if channels_match:
+                info['channels'] = int(channels_match.group(1))
+
+            # Parse sample rates
+            rates_match = re.search(r'Rates:\s*([^\n]+)', content)
+            if rates_match:
+                rates_str = rates_match.group(1)
+                info['sample_rates'] = [int(r) for r in re.findall(r'\d+', rates_str)]
+
+            # Parse formats
+            formats_match = re.search(r'Format:\s*([^\n]+)', content)
+            if formats_match:
+                info['formats'] = [formats_match.group(1).strip()]
+
+            return info
+
+    except Exception as e:
+        pass
+
+    return None
+
+
+def verify_audio_device(device_id, channels=None):
+    """
+    Verify if an audio device is accessible for recording.
+    If channels not specified, will try to detect from device info.
+    Returns tuple (accessible: bool, error_message: str or None).
+    """
+    if sys.platform != 'linux':
+        return True, None  # Skip verification on non-Linux
+
+    # Get actual channel count if not provided
+    if channels is None:
+        device_info = get_device_info_linux(device_id)
+        if device_info and device_info.get('channels'):
+            channels = device_info['channels']
+        else:
+            channels = 2  # Default fallback
+
+    try:
+        # Try a quick test with arecord (0 duration = just probe, no actual recording)
+        result = subprocess.run(
+            ['arecord', '-D', device_id, '-d', '0', '-f', 'S24_3LE', '-r', '78125', '-c', str(channels), '/dev/null'],
+            capture_output=True, text=True, timeout=3
+        )
+
+        if result.returncode == 0:
+            return True, None
+
+        stderr = result.stderr.lower()
+        combined_output = (result.stdout + result.stderr).lower()
+
+        # If we see "Recording WAVE" it means the device was opened successfully
+        # Input/output errors during -d 0 test are normal if no signal is present
+        if 'recording wave' in combined_output:
+            # Device opened successfully - input/output error just means no signal
+            if 'input/output error' in stderr:
+                return True, None  # Device is accessible, just no signal
+            return True, None
+
+        if 'busy' in stderr or 'resource busy' in stderr:
+            return False, "Device is busy (possibly held by PipeWire/PulseAudio)"
+        elif 'no such' in stderr or 'not found' in stderr:
+            return False, "Device not found (may have changed USB ports)"
+        elif 'channel' in stderr and 'non available' in stderr:
+            return False, f"Device doesn't support {channels} channels"
+        else:
+            return False, result.stderr.strip()
+
+    except subprocess.TimeoutExpired:
+        return False, "Device check timed out"
+    except Exception as e:
+        return False, str(e)
+
+
+def release_audio_device_linux(device_id):
+    """
+    Attempt to release an audio device from PipeWire/PulseAudio on Linux.
+    This uses pactl to suspend the device so ALSA can access it directly.
+    Returns True if release was attempted, False otherwise.
+    """
+    if sys.platform != 'linux':
+        return False
+
+    try:
+        # Extract card number from device_id
+        match = re.match(r'hw:(\d+)', device_id)
+        if not match:
+            return False
+        card_num = match.group(1)
+
+        # Try to find and suspend the PulseAudio/PipeWire source
+        # First, list sources to find the matching ALSA device
+        result = subprocess.run(['pactl', 'list', 'sources', 'short'],
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return False
+
+        for line in result.stdout.split('\n'):
+            # Look for sources that match our card number
+            if f'alsa_input' in line and f'card{card_num}' in line.lower():
+                parts = line.split()
+                if len(parts) >= 2:
+                    source_name = parts[1]
+                    # Suspend the source
+                    subprocess.run(['pactl', 'suspend-source', source_name, '1'],
+                                   capture_output=True, timeout=5)
+                    print(f"   Suspended PipeWire/PulseAudio source: {source_name}")
+                    return True
+
+        # Alternative: try suspending by card number directly
+        subprocess.run(['pactl', 'suspend-source', f'alsa_input.usb-*card{card_num}*', '1'],
+                       capture_output=True, timeout=5)
+        return True
+
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        return False
+
+
+def prepare_audio_device(device_id=None):
+    """
+    Prepare an audio device for capture by:
+    1. Auto-detecting if no device_id provided
+    2. Verifying accessibility
+    3. Attempting to release from PipeWire/PulseAudio if busy
+
+    Returns tuple (device_info: dict or None, error_message: str or None).
+    """
+    # Auto-detect device if not provided
+    if device_id is None:
+        audio_device = get_audio_device()
+        if audio_device is None:
+            return None, "No Clockgen audio device detected. Check USB connection."
+        device_id = audio_device['device_id']
+        device_name = audio_device.get('device_name', 'Unknown')
+    else:
+        device_name = device_id
+
+    # Get actual device capabilities
+    if sys.platform == 'linux':
+        device_info = get_device_info_linux(device_id)
+        if device_info and device_info.get('channels'):
+            actual_channels = device_info['channels']
+        else:
+            actual_channels = 2  # Default
+    else:
+        actual_channels = 2
+        device_info = None
+
+    # Verify device is accessible (using actual channel count)
+    accessible, error = verify_audio_device(device_id, channels=actual_channels)
+
+    if not accessible:
+        print(f"Audio device {device_id} not immediately accessible: {error}")
+
+        # Try to release from PipeWire/PulseAudio
+        if 'busy' in (error or '').lower():
+            print("   Attempting to release device from audio server...")
+            if release_audio_device_linux(device_id):
+                import time
+                time.sleep(0.5)  # Give time for release
+                # Retry verification with correct channel count
+                accessible, error = verify_audio_device(device_id, channels=actual_channels)
+                if accessible:
+                    print("   Device successfully released!")
+                else:
+                    print(f"   Device still not accessible: {error}")
+
+        if not accessible:
+            return None, f"Audio device {device_id} not accessible: {error}"
+
+    # Build full device info
+    config = load_config()
+    audio_config = config.get('audio_device', {})
+
+    return {
+        'device_id': device_id,
+        'device_name': device_name,
+        'sample_rate': audio_config.get('sample_rate', CLOCKGEN_SAMPLE_RATE),
+        'bit_depth': audio_config.get('bit_depth', 24),
+        'channels': actual_channels,
+        'device_capabilities': device_info
+    }, None
+
+
 def list_audio_devices():
     """
     List all detected audio devices with their details.
@@ -554,6 +785,18 @@ def list_audio_devices():
         lines.append(f"   Device ID: {device['device_id']}")
         if device.get('description'):
             lines.append(f"   Description: {device['description']}")
+
+        # Show device capabilities on Linux
+        if sys.platform == 'linux':
+            info = get_device_info_linux(device['device_id'])
+            if info:
+                if info.get('channels'):
+                    lines.append(f"   Channels: {info['channels']}")
+                if info.get('sample_rates'):
+                    rates = ', '.join(str(r) for r in info['sample_rates'][:5])
+                    if len(info['sample_rates']) > 5:
+                        rates += '...'
+                    lines.append(f"   Sample rates: {rates}")
 
     return "\n".join(lines)
 
