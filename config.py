@@ -664,35 +664,32 @@ def release_audio_device_linux(device_id):
         return False
 
     try:
-        # Extract card number from device_id
-        match = re.match(r'hw:(\d+)', device_id)
-        if not match:
-            return False
-        card_num = match.group(1)
-
         # Try to find and suspend the PulseAudio/PipeWire source
-        # First, list sources to find the matching ALSA device
+        # List sources to find matching ALSA input devices
         result = subprocess.run(['pactl', 'list', 'sources', 'short'],
                                 capture_output=True, text=True, timeout=5)
         if result.returncode != 0:
             return False
 
+        suspended_any = False
         for line in result.stdout.split('\n'):
-            # Look for sources that match our card number
-            if f'alsa_input' in line and f'card{card_num}' in line.lower():
-                parts = line.split()
-                if len(parts) >= 2:
-                    source_name = parts[1]
-                    # Suspend the source
-                    subprocess.run(['pactl', 'suspend-source', source_name, '1'],
-                                   capture_output=True, timeout=5)
-                    print(f"   Suspended PipeWire/PulseAudio source: {source_name}")
-                    return True
+            # Look for ALSA input sources that might be our clockgen device
+            # Match on known patterns: clockgen, cxadc, pcm2707, or 78125 Hz sample rate
+            line_lower = line.lower()
+            if 'alsa_input' in line_lower:
+                is_clockgen = any(pattern in line_lower for pattern in
+                                  ['clockgen', 'cxadc', 'pcm2707', 'pcm2706', '78125'])
+                if is_clockgen:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        source_name = parts[1]
+                        # Suspend the source
+                        subprocess.run(['pactl', 'suspend-source', source_name, '1'],
+                                       capture_output=True, timeout=5)
+                        print(f"   Suspended PipeWire/PulseAudio source: {source_name}")
+                        suspended_any = True
 
-        # Alternative: try suspending by card number directly
-        subprocess.run(['pactl', 'suspend-source', f'alsa_input.usb-*card{card_num}*', '1'],
-                       capture_output=True, timeout=5)
-        return True
+        return suspended_any
 
     except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
         return False

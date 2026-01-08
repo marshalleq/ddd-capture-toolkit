@@ -19,6 +19,20 @@ def get_clean_env_for_system_tools():
     return clean_env
 
 
+def release_audio_device_before_capture():
+    """
+    Release the audio device from PipeWire/PulseAudio immediately before starting sox.
+    This must be called right before subprocess.Popen(sox_command) to prevent
+    PipeWire from reclaiming the device between release and capture start.
+    """
+    try:
+        from config import release_audio_device_linux
+        if release_audio_device_linux('hw:0,0'):  # device_id doesn't matter, it matches by name
+            time.sleep(0.2)  # Brief pause to ensure device is released
+    except ImportError:
+        pass
+
+
 def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_command=None):
     """
     A shared function to start video and audio capture in parallel threads.
@@ -124,6 +138,8 @@ def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_comma
 
     def audio_capture_thread():
         time.sleep(audio_delay)
+        # Release audio device from PipeWire/PulseAudio right before starting sox
+        release_audio_device_before_capture()
         # Start SOX with direct console output (preserves VU meters)
         sox_process = subprocess.Popen(sox_command)
         
@@ -462,6 +478,7 @@ def perform_av_alignment():
             print("Starting SOX audio recording (calibration baseline with 0.0s delay)...")
             time.sleep(0.0)  # Calibration baseline - zero delay
             alignment_sox_command = get_sox_command(alignment_capture_filename)
+            release_audio_device_before_capture()  # Release from PipeWire right before starting
             capture_process = subprocess.Popen(alignment_sox_command)
             print("SOX audio recording started")
 
@@ -1829,6 +1846,7 @@ def validate_calibration_with_configured_delay():
             print(f"Starting SOX audio recording with {audio_delay:.3f}s delay...")
             time.sleep(audio_delay)  # Apply configured delay
             validation_sox_command = get_sox_command(validation_capture_filename)
+            release_audio_device_before_capture()  # Release from PipeWire right before starting
             capture_process = subprocess.Popen(validation_sox_command)
             print("SOX audio recording started")
             debug_log.append(f"Audio capture started at: {time.strftime('%H:%M:%S')} (after {audio_delay:.3f}s delay)")

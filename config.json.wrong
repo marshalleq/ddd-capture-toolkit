@@ -1,0 +1,22 @@
+{
+    "capture_directory": "/run/media/quentinj/500GSamsung",
+    "default_capture_name": "my_vhs_capture",
+    "audio_delay": 0.8310000000000001,
+    "preferred_video_format": "PAL",
+    "last_used_test_pattern": "default",
+    "performance_settings": {
+        "ffmpeg_threads": 4,
+        "ffmpeg_threads_description": "Number of threads FFmpeg uses (0=auto, 1-16=specific). Lower values reduce CPU load during final muxing to keep UI responsive. Recommended: 4-6 threads for most systems."
+    },
+    "audio_device": {
+        "device_id": null,
+        "device_name": null,
+        "sample_rate": 78125,
+        "bit_depth": 24,
+        "channels": 2
+    },
+    "processing_locations": [
+        "/home/quentinj/projects/ddd-capture-toolkit/temp",
+        "/run/media/quentinj/500GSamsung"
+    ]
+}
