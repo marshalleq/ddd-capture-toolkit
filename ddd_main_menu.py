@@ -3229,9 +3229,11 @@ fi
         
         print("Executing shell-based timing measurement...")
         print()
-        
+
         # Run the shell script and capture output
-        result = subprocess.run(['bash', script_path], capture_output=True, text=True, timeout=60)
+        # Use clean environment to avoid conda Qt conflicts with DomesdayDuplicator
+        result = subprocess.run(['bash', script_path], capture_output=True, text=True, timeout=60,
+                               env=get_clean_env_for_system_tools())
         
         print(result.stdout)
         if result.stderr:
