@@ -41,10 +41,13 @@ try:
     from job_queue_manager import get_job_queue_manager
     from project_status_display import ProjectStatusDisplay, DisplayConfig
     from project_flags import ProjectFlagsManager, DECODE_FLAGS, EXPORT_FLAGS, get_flag_definitions
+    from segment_config import load_segment_config, save_segment_config, toggle_segment_enabled, clear_segment_config
     COMPONENTS_AVAILABLE = True
-except ImportError:
+    SEGMENT_AVAILABLE = True
+except ImportError as e:
     COMPONENTS_AVAILABLE = False
-    print("Missing required component modules - check project setup")
+    SEGMENT_AVAILABLE = False
+    print(f"Missing required component modules - check project setup: {e}")
 
 # Enum for control targets
 class ControlTarget(Enum):
@@ -973,6 +976,7 @@ class WorkflowControlCentre:
         pages = [
             {'type': 'decode', 'title': 'DECODE FLAGS', 'subtitle': 'vhs-decode options'},
             {'type': 'export', 'title': 'EXPORT FLAGS', 'subtitle': 'tbc-video-export options'},
+            {'type': 'segment', 'title': 'SEGMENT CONFIG', 'subtitle': 'test range for decode/export'},
         ]
         current_page = 0
 
@@ -981,18 +985,131 @@ class WorkflowControlCentre:
         export_flags = flags_manager.get_project_flags(project.name, 'export')
         current_flags = {'decode': decode_flags, 'export': export_flags}
 
+        # Segment presets
+        segment_presets = [
+            {'id': 'toggle', 'label': 'Enable/Disable Segment', 'start': None, 'duration': None},
+            {'id': '30s', 'label': 'First 30 seconds', 'start': '00:00', 'duration': '00:30'},
+            {'id': '1m', 'label': 'First 1 minute', 'start': '00:00', 'duration': '01:00'},
+            {'id': '2m', 'label': 'First 2 minutes', 'start': '00:00', 'duration': '02:00'},
+            {'id': '5m', 'label': 'First 5 minutes', 'start': '00:00', 'duration': '05:00'},
+            {'id': 'custom', 'label': 'Custom time range...', 'start': None, 'duration': None},
+            {'id': 'clear', 'label': 'Clear segment config', 'start': None, 'duration': None},
+        ]
+        segment_selected_idx = 0
+
         # Selection state per page
         selected_idx = 0
 
         def get_current_flag_defs():
+            if pages[current_page]['type'] == 'segment':
+                return {}  # Segment page doesn't use flag definitions
             return get_flag_definitions(pages[current_page]['type'])
 
         def get_current_flags():
+            if pages[current_page]['type'] == 'segment':
+                return {}  # Segment page doesn't use flag definitions
             return current_flags[pages[current_page]['type']]
+
+        def render_segment_screen():
+            """Render the segment configuration screen"""
+            nonlocal segment_selected_idx
+            console.clear()
+
+            page = pages[current_page]
+
+            # Title panel with page indicator
+            title = Text()
+            title.append(page['title'], style="bold cyan")
+            title.append(f"  -  {project.name}", style="bold white")
+            title.append("    ", style="white")
+            title.append(f"[Page {current_page + 1}/{len(pages)}: {page['subtitle']}]", style="dim")
+            console.print(Panel(title, box=HEAVY, style="cyan"))
+
+            # Instructions panel
+            instructions = Text()
+            instructions.append("↑↓", style="bold yellow")
+            instructions.append(" Navigate", style="white")
+            instructions.append("  |  ", style="dim")
+            instructions.append("←→", style="bold magenta")
+            instructions.append(" Page", style="white")
+            instructions.append("  |  ", style="dim")
+            instructions.append("Space/Enter", style="bold yellow")
+            instructions.append(" Apply", style="white")
+            instructions.append("  |  ", style="dim")
+            instructions.append("Esc", style="bold red")
+            instructions.append(" Back", style="white")
+            console.print(Panel(instructions, box=ROUNDED, style="dim"))
+            console.print()
+
+            # Load current segment config
+            current_segment = load_segment_config() if SEGMENT_AVAILABLE else None
+
+            # Current segment status panel
+            if current_segment and current_segment.get('enabled'):
+                status_text = Text()
+                status_text.append("SEGMENT ACTIVE", style="bold green")
+                status_text.append(f"\nTime: {current_segment.get('start_time', '?')} → {current_segment.get('end_time', '?')}", style="white")
+                status_text.append(f"\nDuration: {current_segment.get('duration', '?')}", style="white")
+                status_text.append(f"\nPAL frames: {current_segment.get('start_frame_pal', 0)} - {current_segment.get('start_frame_pal', 0) + current_segment.get('frame_count_pal', 0)}", style="dim")
+                console.print(Panel(status_text, title="Current Segment", box=HEAVY, style="green"))
+            elif current_segment:
+                status_text = Text()
+                status_text.append("SEGMENT DISABLED", style="bold yellow")
+                status_text.append(f"\nConfigured: {current_segment.get('start_time', '?')} → {current_segment.get('end_time', '?')}", style="dim")
+                console.print(Panel(status_text, title="Current Segment", box=HEAVY, style="yellow"))
+            else:
+                status_text = Text("No segment configured", style="dim")
+                console.print(Panel(status_text, title="Current Segment", box=HEAVY, style="dim"))
+            console.print()
+
+            # Segment presets table
+            table = Table(
+                title="Segment Options",
+                box=HEAVY,
+                show_header=True,
+                header_style="bold cyan",
+                title_style="bold white"
+            )
+
+            table.add_column(" ", width=2, justify="center")
+            table.add_column("Option", width=30)
+            table.add_column("Start", width=10, justify="center")
+            table.add_column("Duration", width=10, justify="center")
+
+            for idx, preset in enumerate(segment_presets):
+                is_selected = (idx == segment_selected_idx)
+
+                indicator = Text("▶", style="bold yellow") if is_selected else Text(" ")
+
+                if is_selected:
+                    label = Text(preset['label'], style="bold white on blue")
+                else:
+                    label = Text(preset['label'], style="white")
+
+                start = preset['start'] if preset['start'] else "-"
+                duration = preset['duration'] if preset['duration'] else "-"
+
+                table.add_row(indicator, label, start, duration)
+
+            console.print(table)
+            console.print()
+
+            # Info panel
+            info = Text()
+            info.append("Segment mode applies to both DECODE and EXPORT jobs.\n", style="white")
+            info.append("PAL/NTSC frame rates are auto-detected from your files.\n", style="white")
+            info.append("Use this to quickly test settings on a portion of your capture.", style="dim")
+            console.print(Panel(info, title="Info", box=ROUNDED, style="dim"))
 
         def render_flags_screen():
             """Render the flags dialog screen with Rich components"""
             nonlocal selected_idx
+
+            # Handle segment page separately
+            if pages[current_page]['type'] == 'segment':
+                render_segment_screen()
+                return
+
             console.clear()
 
             page = pages[current_page]
@@ -1142,68 +1259,152 @@ class WorkflowControlCentre:
 
             return key
 
+        def apply_segment_preset(preset, fd, old_settings):
+            """Apply a segment preset"""
+            if preset['id'] == 'toggle':
+                # Toggle current segment
+                current = load_segment_config()
+                if current:
+                    new_state = toggle_segment_enabled()
+                    return f"Segment {'enabled' if new_state else 'disabled'}"
+                else:
+                    return "No segment configured to toggle"
+            elif preset['id'] == 'clear':
+                clear_segment_config()
+                return "Segment configuration cleared"
+            elif preset['id'] == 'custom':
+                # Custom time input - need to restore terminal temporarily
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                console.clear()
+                console.print(Panel("CUSTOM SEGMENT", style="bold cyan"))
+                console.print()
+                console.print("Enter times in MM:SS or HH:MM:SS format")
+                console.print()
+                try:
+                    start_time = input("Start time [00:00]: ").strip()
+                    if not start_time:
+                        start_time = "00:00"
+
+                    duration = input("Duration (e.g., 01:00 for 1 minute): ").strip()
+                    if not duration:
+                        tty.setcbreak(fd)
+                        return "Cancelled - no duration entered"
+
+                    description = input("Description (optional): ").strip()
+                    if not description:
+                        description = f"Custom: {start_time} + {duration}"
+
+                    # Restore cbreak mode
+                    tty.setcbreak(fd)
+
+                    if save_segment_config(start_time, duration, description):
+                        return f"Custom segment set: {start_time} + {duration}"
+                    else:
+                        return "Failed to save segment - check time format"
+                except (KeyboardInterrupt, EOFError):
+                    tty.setcbreak(fd)
+                    return "Cancelled"
+            else:
+                # Apply a preset with start/duration
+                if save_segment_config(preset['start'], preset['duration'], preset['label']):
+                    return f"Segment set: {preset['label']}"
+                else:
+                    return "Failed to save segment"
+
         try:
             tty.setcbreak(fd)
 
             while True:
                 render_flags_screen()
 
-                flag_defs = get_current_flag_defs()
-                flag_keys = list(flag_defs.keys())
+                page_type = pages[current_page]['type']
 
                 # Read single keypress
                 key = read_key()
 
-                if key == 'UP':
-                    selected_idx = (selected_idx - 1) % len(flag_keys)
+                # Handle segment page differently
+                if page_type == 'segment':
+                    if key == 'UP':
+                        segment_selected_idx = (segment_selected_idx - 1) % len(segment_presets)
 
-                elif key == 'DOWN':
-                    selected_idx = (selected_idx + 1) % len(flag_keys)
+                    elif key == 'DOWN':
+                        segment_selected_idx = (segment_selected_idx + 1) % len(segment_presets)
 
-                elif key == 'LEFT':
-                    current_page = (current_page - 1) % len(pages)
-                    selected_idx = 0  # Reset selection on page change
+                    elif key == 'LEFT':
+                        current_page = (current_page - 1) % len(pages)
+                        selected_idx = 0
 
-                elif key == 'RIGHT':
-                    current_page = (current_page + 1) % len(pages)
-                    selected_idx = 0  # Reset selection on page change
+                    elif key == 'RIGHT':
+                        current_page = (current_page + 1) % len(pages)
+                        selected_idx = 0
 
-                elif key == '\t':  # Tab - move down
-                    selected_idx = (selected_idx + 1) % len(flag_keys)
+                    elif key in (' ', '\r', '\n'):  # Space or Enter - apply preset
+                        preset = segment_presets[segment_selected_idx]
+                        result = apply_segment_preset(preset, fd, old_settings)
+                        self.message = result
+                        # Don't return - stay on page to see result
 
-                elif key == ' ':  # Space - toggle
-                    flag_key = flag_keys[selected_idx]
-                    page_type = pages[current_page]['type']
-                    current_flags[page_type][flag_key] = not current_flags[page_type].get(flag_key, False)
+                    elif key == 'ESC' or key.lower() == 'q':
+                        self.message = "Segment config closed"
+                        return
 
-                elif key in ('\r', '\n'):  # Enter - save all
-                    # Save both decode and export flags
-                    flags_manager.set_project_flags(project.name, current_flags['decode'], 'decode')
-                    flags_manager.set_project_flags(project.name, current_flags['export'], 'export')
+                    elif key == '\x03':  # Ctrl+C
+                        return
 
-                    # Build summary message
-                    decode_labels = flags_manager.get_enabled_flag_labels(project.name, 'decode')
-                    export_labels = flags_manager.get_enabled_flag_labels(project.name, 'export')
+                else:
+                    # Normal flag pages
+                    flag_defs = get_current_flag_defs()
+                    flag_keys = list(flag_defs.keys())
 
-                    parts = []
-                    if decode_labels:
-                        parts.append(f"Decode: {', '.join(decode_labels)}")
-                    if export_labels:
-                        parts.append(f"Export: {', '.join(export_labels)}")
+                    if key == 'UP':
+                        selected_idx = (selected_idx - 1) % len(flag_keys)
 
-                    if parts:
-                        self.message = f"Flags saved for {project.name} - {'; '.join(parts)}"
-                    else:
-                        self.message = f"All flags cleared for {project.name}"
-                    return
+                    elif key == 'DOWN':
+                        selected_idx = (selected_idx + 1) % len(flag_keys)
 
-                elif key == 'ESC' or key.lower() == 'q':  # Esc or Q - cancel
-                    self.message = "Flags edit cancelled"
-                    return
+                    elif key == 'LEFT':
+                        current_page = (current_page - 1) % len(pages)
+                        selected_idx = 0  # Reset selection on page change
 
-                elif key == '\x03':  # Ctrl+C
-                    self.message = "Flags edit cancelled"
-                    return
+                    elif key == 'RIGHT':
+                        current_page = (current_page + 1) % len(pages)
+                        selected_idx = 0  # Reset selection on page change
+
+                    elif key == '\t':  # Tab - move down
+                        selected_idx = (selected_idx + 1) % len(flag_keys)
+
+                    elif key == ' ':  # Space - toggle
+                        flag_key = flag_keys[selected_idx]
+                        current_flags[page_type][flag_key] = not current_flags[page_type].get(flag_key, False)
+
+                    elif key in ('\r', '\n'):  # Enter - save all
+                        # Save both decode and export flags
+                        flags_manager.set_project_flags(project.name, current_flags['decode'], 'decode')
+                        flags_manager.set_project_flags(project.name, current_flags['export'], 'export')
+
+                        # Build summary message
+                        decode_labels = flags_manager.get_enabled_flag_labels(project.name, 'decode')
+                        export_labels = flags_manager.get_enabled_flag_labels(project.name, 'export')
+
+                        parts = []
+                        if decode_labels:
+                            parts.append(f"Decode: {', '.join(decode_labels)}")
+                        if export_labels:
+                            parts.append(f"Export: {', '.join(export_labels)}")
+
+                        if parts:
+                            self.message = f"Flags saved for {project.name} - {'; '.join(parts)}"
+                        else:
+                            self.message = f"All flags cleared for {project.name}"
+                        return
+
+                    elif key == 'ESC' or key.lower() == 'q':  # Esc or Q - cancel
+                        self.message = "Flags edit cancelled"
+                        return
+
+                    elif key == '\x03':  # Ctrl+C
+                        self.message = "Flags edit cancelled"
+                        return
 
         finally:
             # Restore terminal settings

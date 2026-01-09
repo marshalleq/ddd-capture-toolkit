@@ -1,0 +1,11 @@
+{
+  "start_time": "00:01:00",
+  "end_time": "00:02:00",
+  "start_seconds": 60,
+  "end_seconds": 120,
+  "duration": "00:01:00",
+  "duration_seconds": 60,
+  "description": "TestCube",
+  "enabled": true,
+  "created_at": "2026-01-10 08:33:37"
+}
