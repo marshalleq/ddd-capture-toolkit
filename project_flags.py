@@ -58,7 +58,7 @@ EXPORT_FLAGS = {
     'reverse': {
         'cli_flag': '--reverse',
         'label': 'Reverse field order',
-        'description': 'Reverse the field order'
+        'description': 'Reverse the field order (auto-applies dropout correction first)'
     },
     'bw': {
         'cli_flag': '--bw',

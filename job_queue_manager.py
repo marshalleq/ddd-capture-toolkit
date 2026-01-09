@@ -667,10 +667,117 @@ class JobQueueManager:
             if job.parameters.get('overwrite', False):
                 cmd.append('--overwrite')
 
+            # Check for segment configuration (for testing partial exports)
+            try:
+                from segment_config import load_segment_config
+                segment_config = load_segment_config()
+                if segment_config and segment_config.get('enabled', False):
+                    # Determine video standard from TBC JSON if possible
+                    # Default to PAL if unknown
+                    video_standard = 'pal'
+                    tbc_dir = os.path.dirname(job.input_file)
+                    tbc_base = os.path.basename(job.input_file)
+                    if tbc_base.endswith('.tbc'):
+                        tbc_json_path = os.path.join(tbc_dir, tbc_base[:-4] + '.tbc.json')
+                        if os.path.exists(tbc_json_path):
+                            try:
+                                with open(tbc_json_path, 'r') as f:
+                                    tbc_meta = json.load(f)
+                                    if tbc_meta.get('videoParameters', {}).get('isSourcePal', True):
+                                        video_standard = 'pal'
+                                    else:
+                                        video_standard = 'ntsc'
+                            except:
+                                pass
+
+                    # Get frame numbers based on video standard
+                    if video_standard == 'pal':
+                        start_frame = segment_config.get('start_frame_pal', 0)
+                        frame_count = segment_config.get('frame_count_pal', 0)
+                    else:
+                        start_frame = segment_config.get('start_frame_ntsc', 0)
+                        frame_count = segment_config.get('frame_count_ntsc', 0)
+
+                    if start_frame >= 0 and frame_count > 0:
+                        cmd.extend(['-s', str(start_frame), '-l', str(frame_count)])
+                        self.logger.info(f"Segment mode: start={start_frame}, length={frame_count} ({video_standard.upper()})")
+            except ImportError:
+                pass  # segment_config not available
+            except Exception as e:
+                self.logger.warning(f"Error checking segment config: {e}")
+
             # Add per-project export flags (e.g., --luma-only for B&W sources)
+            # Also handle reverse field order specially - it requires pre-processing
+            reverse_temp_file = None
+            reverse_temp_json = None
             if PROJECT_FLAGS_AVAILABLE and job.project_name:
                 flags_manager = ProjectFlagsManager()
                 cli_flags = flags_manager.get_cli_flags(job.project_name)
+
+                # Check if reverse field order is enabled - requires special handling
+                if '--reverse' in cli_flags:
+                    self.logger.info("Reverse field order enabled - pre-processing with ld-dropout-correct")
+
+                    # Find ld-dropout-correct command
+                    import shutil
+                    dropout_cmd = shutil.which('ld-dropout-correct')
+                    if not dropout_cmd:
+                        # Check common paths
+                        for path in ['/usr/bin/ld-dropout-correct', '/usr/local/bin/ld-dropout-correct',
+                                     os.path.expanduser('~/.local/bin/ld-dropout-correct')]:
+                            if os.path.exists(path):
+                                dropout_cmd = path
+                                break
+
+                    if dropout_cmd:
+                        # Create temp file for dropout-corrected TBC
+                        tbc_dir = os.path.dirname(job.input_file)
+                        tbc_base = os.path.basename(job.input_file)
+                        if tbc_base.endswith('.tbc'):
+                            temp_base = tbc_base[:-4] + '_reverse_temp.tbc'
+                        else:
+                            temp_base = tbc_base + '_reverse_temp.tbc'
+                        reverse_temp_file = os.path.join(tbc_dir, temp_base)
+                        reverse_temp_json = reverse_temp_file + '.json'
+
+                        # Build and run ld-dropout-correct --reverse
+                        dropout_process_cmd = [
+                            dropout_cmd,
+                            '--reverse',
+                            job.input_file,
+                            reverse_temp_file
+                        ]
+                        self.logger.info(f"Running dropout correction with reverse: {' '.join(dropout_process_cmd)}")
+
+                        try:
+                            import subprocess
+                            result = subprocess.run(
+                                dropout_process_cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=3600  # 1 hour timeout for large files
+                            )
+                            if result.returncode != 0:
+                                self.logger.error(f"ld-dropout-correct failed: {result.stderr}")
+                                job.error_message = f"Reverse field dropout correction failed: {result.stderr}"
+                                return False
+                            self.logger.info("Dropout correction with reverse completed successfully")
+                        except subprocess.TimeoutExpired:
+                            self.logger.error("ld-dropout-correct timed out")
+                            job.error_message = "Reverse field dropout correction timed out"
+                            return False
+                        except Exception as e:
+                            self.logger.error(f"ld-dropout-correct error: {e}")
+                            job.error_message = f"Reverse field dropout correction error: {e}"
+                            return False
+
+                        # Now modify the flags: keep --reverse, add --no-dropout-correct
+                        # (dropout correction already done in pre-processing)
+                        if '--no-dropout-correct' not in cli_flags:
+                            cli_flags.append('--no-dropout-correct')
+                    else:
+                        self.logger.warning("ld-dropout-correct not found - reverse field order may not work correctly")
+
                 if cli_flags:
                     cmd.extend(cli_flags)
                     self.logger.info(f"Added project export flags: {' '.join(cli_flags)}")
@@ -707,8 +814,23 @@ class JobQueueManager:
                     
             except Exception as e:
                 self.logger.warning(f"Error during JSON file detection (non-critical): {e}")
+
+            # Use temp file if reverse field order pre-processing was done
+            actual_input_file = reverse_temp_file if reverse_temp_file and os.path.exists(reverse_temp_file) else job.input_file
+
+            # If using temp file, also use its JSON file
+            if reverse_temp_file and os.path.exists(reverse_temp_file) and reverse_temp_json and os.path.exists(reverse_temp_json):
+                # Replace the JSON file reference in cmd if it was added
+                try:
+                    json_idx = cmd.index('--input-tbc-json')
+                    cmd[json_idx + 1] = reverse_temp_json
+                    self.logger.info(f"Using reverse-corrected TBC JSON: {reverse_temp_json}")
+                except ValueError:
+                    # --input-tbc-json not in cmd, add it
+                    cmd.extend(['--input-tbc-json', reverse_temp_json])
+
             cmd.extend([
-                job.input_file,
+                actual_input_file,
                 job.output_file
             ])
             
@@ -933,6 +1055,17 @@ class JobQueueManager:
                 if job.job_id in self.job_processes:
                     del self.job_processes[job.job_id]
                     self.logger.debug(f"Cleaned up process tracking for job {job.job_id}")
+
+                # Clean up reverse field order temp files if they were created
+                if reverse_temp_file:
+                    for temp_file in [reverse_temp_file, reverse_temp_json,
+                                      reverse_temp_file.replace('.tbc', '.tbc_c')]:  # Also clean chroma file
+                        if temp_file and os.path.exists(temp_file):
+                            try:
+                                os.remove(temp_file)
+                                self.logger.info(f"Cleaned up temp file: {temp_file}")
+                            except Exception as cleanup_error:
+                                self.logger.warning(f"Failed to clean up temp file {temp_file}: {cleanup_error}")
             
         except Exception as e:
             job.error_message = str(e)
