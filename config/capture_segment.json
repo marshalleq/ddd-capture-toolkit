@@ -1,11 +1,13 @@
 {
-  "start_time": "00:01:00",
-  "end_time": "00:02:00",
-  "start_seconds": 60,
-  "end_seconds": 120,
-  "duration": "00:01:00",
-  "duration_seconds": 60,
-  "description": "TestCube",
   "enabled": true,
-  "created_at": "2026-01-10 08:33:37"
+  "segment_type": "time_range",
+  "start_time": "00:00",
+  "duration": "02:00",
+  "end_time": "02:00",
+  "start_frame_pal": 0,
+  "frame_count_pal": 3000,
+  "start_frame_ntsc": 0,
+  "frame_count_ntsc": 3596,
+  "description": "First 2 minutes",
+  "created": "2026-01-10T10:15:41.382499"
 }
