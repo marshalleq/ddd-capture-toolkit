@@ -486,21 +486,23 @@ class JobQueueManager:
                     self.logger.info(f"Added project decode flags: {' '.join(cli_flags)}")
 
             # Check for segment configuration (for testing partial decodes)
+            # segment_start_frame is used later for progress calculation
+            segment_start_frame = 0
             try:
                 from segment_config import load_segment_config
                 segment_config = load_segment_config()
                 if segment_config and segment_config.get('enabled', False):
                     video_standard = job.parameters.get('video_standard', 'pal').lower()
                     if video_standard == 'pal':
-                        start_frame = segment_config.get('start_frame_pal', 0)
+                        segment_start_frame = segment_config.get('start_frame_pal', 0)
                         frame_count = segment_config.get('frame_count_pal', 0)
                     else:
-                        start_frame = segment_config.get('start_frame_ntsc', 0)
+                        segment_start_frame = segment_config.get('start_frame_ntsc', 0)
                         frame_count = segment_config.get('frame_count_ntsc', 0)
 
-                    if start_frame >= 0 and frame_count > 0:
-                        cmd.extend(['-s', str(start_frame), '-l', str(frame_count)])
-                        self.logger.info(f"Segment mode: start={start_frame}, length={frame_count} ({video_standard.upper()})")
+                    if segment_start_frame >= 0 and frame_count > 0:
+                        cmd.extend(['-s', str(segment_start_frame), '-l', str(frame_count)])
+                        self.logger.info(f"Segment mode: start={segment_start_frame}, length={frame_count} ({video_standard.upper()})")
                         # Update total_frames to segment frame count for accurate ETA
                         # CRITICAL: Update both the job object AND the local variable
                         with self.lock:
@@ -555,24 +557,28 @@ class JobQueueManager:
                 if frame_match:
                     current_frame = int(frame_match.group(1))
 
-                    # Calculate FPS based on elapsed time
+                    # Calculate frames processed (relative to segment start for segment mode)
+                    frames_processed = current_frame - segment_start_frame
+
+                    # Calculate FPS based on elapsed time and frames actually processed
                     elapsed_time = time.time() - start_time
-                    current_fps = current_frame / elapsed_time if elapsed_time > 0 else 0
+                    current_fps = frames_processed / elapsed_time if elapsed_time > 0 else 0
 
                     if total_frames > 0:
-                        progress = (current_frame / total_frames) * 100
+                        # Use frames_processed for accurate progress in segment mode
+                        progress = (frames_processed / total_frames) * 100
                         # Update job progress with thread safety
                         with self.lock:
                             job.progress = min(progress, 99.9)  # Cap at 99.9% until completion
-                            job.current_frame = current_frame
+                            job.current_frame = frames_processed  # Store relative frame count
                             job.current_fps = current_fps
                             # Skip saving to disk to avoid blocking during job execution
                             # Final progress will be saved when job completes
                     else:
                         # No frame count available, show frame number as basic progress
                         with self.lock:
-                            job.progress = min(current_frame / 1000.0, 50.0)  # Very rough estimate
-                            job.current_frame = current_frame
+                            job.progress = min(frames_processed / 1000.0, 50.0)  # Very rough estimate
+                            job.current_frame = frames_processed
                             job.current_fps = current_fps
             
             # Wait for completion
@@ -699,6 +705,7 @@ class JobQueueManager:
             # Also handle reverse field order specially - it requires pre-processing
             reverse_temp_file = None
             reverse_temp_json = None
+            reverse_temp_chroma = None
             if PROJECT_FLAGS_AVAILABLE and job.project_name:
                 flags_manager = ProjectFlagsManager()
                 cli_flags = flags_manager.get_cli_flags(job.project_name)
@@ -723,20 +730,32 @@ class JobQueueManager:
                         tbc_dir = os.path.dirname(job.input_file)
                         tbc_base = os.path.basename(job.input_file)
                         if tbc_base.endswith('.tbc'):
-                            temp_base = tbc_base[:-4] + '_reverse_temp.tbc'
+                            project_base = tbc_base[:-4]  # Remove .tbc
+                            temp_base = project_base + '_reverse_temp.tbc'
                         else:
+                            project_base = tbc_base
                             temp_base = tbc_base + '_reverse_temp.tbc'
                         reverse_temp_file = os.path.join(tbc_dir, temp_base)
                         reverse_temp_json = reverse_temp_file + '.json'
+                        # ld-dropout-correct creates chroma file with _chroma.tbc suffix
+                        reverse_temp_chroma = os.path.join(tbc_dir, project_base + '_reverse_temp_chroma.tbc')
 
-                        # Build and run ld-dropout-correct --reverse
+                        # Check if source has a chroma file (for colour output)
+                        source_chroma = os.path.join(tbc_dir, project_base + '_chroma.tbc')
+                        has_chroma = os.path.exists(source_chroma)
+                        if has_chroma:
+                            self.logger.info(f"Source has chroma file: {source_chroma}")
+                        else:
+                            self.logger.info("No chroma file found - output will be B&W")
+
+                        # Build and run ld-dropout-correct --reverse on luma TBC
                         dropout_process_cmd = [
                             dropout_cmd,
                             '--reverse',
                             job.input_file,
                             reverse_temp_file
                         ]
-                        self.logger.info(f"Running dropout correction with reverse: {' '.join(dropout_process_cmd)}")
+                        self.logger.info(f"Running dropout correction with reverse (luma): {' '.join(dropout_process_cmd)}")
 
                         try:
                             import subprocess
@@ -747,10 +766,46 @@ class JobQueueManager:
                                 timeout=3600  # 1 hour timeout for large files
                             )
                             if result.returncode != 0:
-                                self.logger.error(f"ld-dropout-correct failed: {result.stderr}")
+                                self.logger.error(f"ld-dropout-correct (luma) failed: {result.stderr}")
                                 job.error_message = f"Reverse field dropout correction failed: {result.stderr}"
                                 return False
-                            self.logger.info("Dropout correction with reverse completed successfully")
+                            self.logger.info("Dropout correction with reverse (luma) completed successfully")
+
+                            # Check if chroma file was automatically created
+                            if has_chroma:
+                                if os.path.exists(reverse_temp_chroma):
+                                    self.logger.info(f"Chroma temp file created automatically: {reverse_temp_chroma}")
+                                else:
+                                    # Chroma file wasn't auto-created, process it explicitly
+                                    # Note: ld-dropout-correct on chroma uses the luma TBC's JSON for metadata
+                                    self.logger.info("Chroma not auto-created, processing chroma file explicitly")
+                                    dropout_chroma_cmd = [
+                                        dropout_cmd,
+                                        '--reverse',
+                                        '--input-json', reverse_temp_file + '.json',  # Use the reversed luma's JSON
+                                        source_chroma,
+                                        reverse_temp_chroma
+                                    ]
+                                    self.logger.info(f"Running dropout correction with reverse (chroma): {' '.join(dropout_chroma_cmd)}")
+
+                                    chroma_result = subprocess.run(
+                                        dropout_chroma_cmd,
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=3600
+                                    )
+                                    if chroma_result.returncode != 0:
+                                        self.logger.warning(f"ld-dropout-correct (chroma) failed: {chroma_result.stderr}")
+                                        self.logger.warning("Continuing without chroma - output will be B&W")
+                                    else:
+                                        self.logger.info("Dropout correction with reverse (chroma) completed successfully")
+
+                                    # Verify chroma was created
+                                    if os.path.exists(reverse_temp_chroma):
+                                        self.logger.info(f"Chroma temp file created: {reverse_temp_chroma}")
+                                    else:
+                                        self.logger.warning("Chroma temp file still not created - output will be B&W")
+
                         except subprocess.TimeoutExpired:
                             self.logger.error("ld-dropout-correct timed out")
                             job.error_message = "Reverse field dropout correction timed out"
@@ -1047,8 +1102,13 @@ class JobQueueManager:
 
                 # Clean up reverse field order temp files if they were created
                 if reverse_temp_file:
-                    for temp_file in [reverse_temp_file, reverse_temp_json,
-                                      reverse_temp_file.replace('.tbc', '.tbc_c')]:  # Also clean chroma file
+                    # Build list of temp files to clean up
+                    temp_files_to_clean = [reverse_temp_file, reverse_temp_json]
+                    # Add chroma file if it was tracked
+                    if reverse_temp_chroma:
+                        temp_files_to_clean.append(reverse_temp_chroma)
+
+                    for temp_file in temp_files_to_clean:
                         if temp_file and os.path.exists(temp_file):
                             try:
                                 os.remove(temp_file)
