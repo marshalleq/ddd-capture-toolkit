@@ -6,6 +6,11 @@
       "decode": {
         "skip_chroma": true
       }
+    },
+    "Andy180": {
+      "export": {
+        "reverse": true
+      }
     }
   }
 }
