@@ -299,28 +299,33 @@ class ProgressDisplayUtils:
         """
         Get total frame count for a job using JSON metadata with caching
         Extracted from job_queue_display.py lines 49-67
-        
+
         Args:
             job: QueuedJob instance
-            
+
         Returns:
             Total frame count or 0 if cannot be determined
         """
+        # First check if job has total_frames set (e.g., for segment mode)
+        # This takes priority over JSON metadata
+        if hasattr(job, 'total_frames') and job.total_frames > 0:
+            return job.total_frames
+
         if not hasattr(job, 'input_file') or not hasattr(job, 'parameters'):
             return 0
-            
+
         # Create cache key
         video_standard = 'pal'
         if hasattr(job, 'parameters') and job.parameters:
             video_standard = job.parameters.get('video_standard', 'pal')
         cache_key = f"{job.input_file}_{video_standard}"
-        
+
         # Check cache first
         if cache_key in ProgressDisplayUtils._frame_count_cache:
             return ProgressDisplayUtils._frame_count_cache[cache_key]
-        
+
         total_frames = 0
-        
+
         # Use parallel decoder for frame counting if available
         if PARALLEL_DECODE_AVAILABLE and job.job_type == "vhs-decode":
             try:
@@ -334,7 +339,7 @@ class ProgressDisplayUtils:
                     ProgressDisplayUtils._frame_count_cache[cache_key] = total_frames
             except Exception:
                 pass  # Fallback to 0 if JSON reading fails
-        
+
         return total_frames
     
     @staticmethod
