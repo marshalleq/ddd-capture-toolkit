@@ -1072,24 +1072,50 @@ class WorkflowControlCentre:
             )
 
             table.add_column(" ", width=2, justify="center")
+            table.add_column("Status", width=8, justify="center")
             table.add_column("Option", width=30)
             table.add_column("Start", width=10, justify="center")
             table.add_column("Duration", width=10, justify="center")
+
+            # Determine which preset matches current config (if any)
+            current_start = current_segment.get('start_time', '') if current_segment else ''
+            current_duration = current_segment.get('duration', '') if current_segment else ''
+            segment_enabled = current_segment.get('enabled', False) if current_segment else False
 
             for idx, preset in enumerate(segment_presets):
                 is_selected = (idx == segment_selected_idx)
 
                 indicator = Text("▶", style="bold yellow") if is_selected else Text(" ")
 
+                # Check if this preset is currently active
+                is_active = False
+                if preset['id'] == 'toggle':
+                    status = Text(" ")
+                elif preset['id'] == 'clear':
+                    status = Text(" ")
+                elif preset['start'] and preset['duration']:
+                    # Compare with current config
+                    if (current_start == preset['start'] and
+                        current_duration == preset['duration'] and
+                        segment_enabled):
+                        is_active = True
+                        status = Text("[X]", style="bold green")
+                    else:
+                        status = Text("[ ]", style="dim")
+                else:
+                    status = Text(" ")
+
                 if is_selected:
                     label = Text(preset['label'], style="bold white on blue")
+                elif is_active:
+                    label = Text(preset['label'], style="bold green")
                 else:
                     label = Text(preset['label'], style="white")
 
                 start = preset['start'] if preset['start'] else "-"
                 duration = preset['duration'] if preset['duration'] else "-"
 
-                table.add_row(indicator, label, start, duration)
+                table.add_row(indicator, status, label, start, duration)
 
             console.print(table)
             console.print()
