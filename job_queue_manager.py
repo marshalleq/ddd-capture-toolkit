@@ -501,6 +501,13 @@ class JobQueueManager:
                     if start_frame >= 0 and frame_count > 0:
                         cmd.extend(['-s', str(start_frame), '-l', str(frame_count)])
                         self.logger.info(f"Segment mode: start={start_frame}, length={frame_count} ({video_standard.upper()})")
+                        # Update total_frames to segment frame count for accurate ETA
+                        # CRITICAL: Update both the job object AND the local variable
+                        with self.lock:
+                            job.total_frames = frame_count
+                            self.save_queue()
+                        total_frames = frame_count  # Update local variable for progress calculation
+                        self.logger.info(f"Updated total_frames to segment count: {frame_count}")
             except ImportError:
                 pass  # segment_config not available
             except Exception as e:
