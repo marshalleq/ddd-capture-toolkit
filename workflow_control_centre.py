@@ -1096,9 +1096,9 @@ class WorkflowControlCentre:
 
             # Info panel
             info = Text()
-            info.append("Segment mode applies to both DECODE and EXPORT jobs.\n", style="white")
-            info.append("PAL/NTSC frame rates are auto-detected from your files.\n", style="white")
-            info.append("Use this to quickly test settings on a portion of your capture.", style="dim")
+            info.append("Segment mode applies to DECODE jobs only.\n", style="white")
+            info.append("Export will process the full TBC (which is already the segment).\n", style="white")
+            info.append("PAL/NTSC frame rates are auto-detected from your files.", style="dim")
             console.print(Panel(info, title="Info", box=ROUNDED, style="dim"))
 
         def render_flags_screen():
