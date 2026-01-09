@@ -485,6 +485,27 @@ class JobQueueManager:
                     cmd.extend(cli_flags)
                     self.logger.info(f"Added project decode flags: {' '.join(cli_flags)}")
 
+            # Check for segment configuration (for testing partial decodes)
+            try:
+                from segment_config import load_segment_config
+                segment_config = load_segment_config()
+                if segment_config and segment_config.get('enabled', False):
+                    video_standard = job.parameters.get('video_standard', 'pal').lower()
+                    if video_standard == 'pal':
+                        start_frame = segment_config.get('start_frame_pal', 0)
+                        frame_count = segment_config.get('frame_count_pal', 0)
+                    else:
+                        start_frame = segment_config.get('start_frame_ntsc', 0)
+                        frame_count = segment_config.get('frame_count_ntsc', 0)
+
+                    if start_frame >= 0 and frame_count > 0:
+                        cmd.extend(['-s', str(start_frame), '-l', str(frame_count)])
+                        self.logger.info(f"Segment mode: start={start_frame}, length={frame_count} ({video_standard.upper()})")
+            except ImportError:
+                pass  # segment_config not available
+            except Exception as e:
+                self.logger.warning(f"Error checking segment config: {e}")
+
             # Add input and output
             cmd.extend([
                 job.input_file,
@@ -666,45 +687,6 @@ class JobQueueManager:
             # Add overwrite flag if requested
             if job.parameters.get('overwrite', False):
                 cmd.append('--overwrite')
-
-            # Check for segment configuration (for testing partial exports)
-            try:
-                from segment_config import load_segment_config
-                segment_config = load_segment_config()
-                if segment_config and segment_config.get('enabled', False):
-                    # Determine video standard from TBC JSON if possible
-                    # Default to PAL if unknown
-                    video_standard = 'pal'
-                    tbc_dir = os.path.dirname(job.input_file)
-                    tbc_base = os.path.basename(job.input_file)
-                    if tbc_base.endswith('.tbc'):
-                        tbc_json_path = os.path.join(tbc_dir, tbc_base[:-4] + '.tbc.json')
-                        if os.path.exists(tbc_json_path):
-                            try:
-                                with open(tbc_json_path, 'r') as f:
-                                    tbc_meta = json.load(f)
-                                    if tbc_meta.get('videoParameters', {}).get('isSourcePal', True):
-                                        video_standard = 'pal'
-                                    else:
-                                        video_standard = 'ntsc'
-                            except:
-                                pass
-
-                    # Get frame numbers based on video standard
-                    if video_standard == 'pal':
-                        start_frame = segment_config.get('start_frame_pal', 0)
-                        frame_count = segment_config.get('frame_count_pal', 0)
-                    else:
-                        start_frame = segment_config.get('start_frame_ntsc', 0)
-                        frame_count = segment_config.get('frame_count_ntsc', 0)
-
-                    if start_frame >= 0 and frame_count > 0:
-                        cmd.extend(['-s', str(start_frame), '-l', str(frame_count)])
-                        self.logger.info(f"Segment mode: start={start_frame}, length={frame_count} ({video_standard.upper()})")
-            except ImportError:
-                pass  # segment_config not available
-            except Exception as e:
-                self.logger.warning(f"Error checking segment config: {e}")
 
             # Add per-project export flags (e.g., --luma-only for B&W sources)
             # Also handle reverse field order specially - it requires pre-processing
