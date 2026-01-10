@@ -11,6 +11,11 @@ from dataclasses import dataclass
 
 # Flag definitions for vhs-decode (decode step)
 DECODE_FLAGS = {
+    'reverse': {
+        'cli_flag': '--reverse',
+        'label': 'Reverse field order',
+        'description': 'Reverse field order during decode (use if video has wrong field order)'
+    },
     'skip_chroma': {
         'cli_flag': '--skip_chroma',
         'label': 'Skip chroma',
@@ -55,10 +60,10 @@ EXPORT_FLAGS = {
         'label': 'Letterbox',
         'description': 'Add letterboxing to output'
     },
-    'reverse': {
+    'fix_reverse': {
         'cli_flag': '--reverse',
-        'label': 'Reverse field order',
-        'description': 'Reverse the field order (auto-applies dropout correction first)'
+        'label': 'Fix field order (already decoded)',
+        'description': 'Fix field order on already-decoded TBC (creates temp files, slower)'
     },
     'bw': {
         'cli_flag': '--bw',
