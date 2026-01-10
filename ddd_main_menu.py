@@ -1065,45 +1065,10 @@ def manual_vhs_decode_with_params(video_standard, tape_speed):
     
     print(f"\nTape Speed Details:")
     print(f"   {speed_descriptions.get(tape_speed, 'Unknown speed')}")
-    
-    # Check for active segment configuration
-    segment_config_path = "config/capture_segment.json"
-    current_segment = None
-    
-    try:
-        if os.path.exists(segment_config_path):
-            import json
-            with open(segment_config_path, 'r') as f:
-                current_segment = json.load(f)
-                
-            if current_segment and current_segment.get('enabled', False):
-                # Calculate format-specific frame parameters NOW (at decode time)
-                fps = 25.0 if video_standard.lower() == 'pal' else 29.97
-                start_seconds = current_segment.get('start_seconds', 0)
-                duration_seconds = current_segment.get('duration_seconds', 0)
-                
-                start_frame = int(start_seconds * fps)
-                length_frames = int(duration_seconds * fps)
-                
-                print("\n" + "="*60)
-                print(f"⚠️  SEGMENT MODE ACTIVE - {video_standard.upper()} DECODE")
-                print("="*60)
-                print(f"Time Range: {current_segment.get('start_time', 'N/A')} to {current_segment.get('end_time', 'N/A')}")
-                print(f"Duration: {current_segment.get('duration', 'N/A')}")
-                print(f"Format-specific frames for {video_standard.upper()} ({fps}fps):")
-                print(f"   Start frame (-s): {start_frame}")
-                print(f"   Length frames (-l): {length_frames}")
-                print(f"⚠️  This will decode only {duration_seconds}s of your capture!")
-                print("="*60)
-                
-                # Store segment parameters for later use
-                current_segment['calculated_start_frame'] = start_frame
-                current_segment['calculated_length_frames'] = length_frames
-                current_segment['calculated_for_format'] = video_standard.upper()
-    except Exception as e:
-        print(f"Warning: Error reading segment configuration: {e}")
-        current_segment = None
-    
+
+    # Note: Segment configuration is now per-project via Workflow Control Centre
+    # This manual decode function does not support segment mode
+
     # Get additional user parameters
     print("\nADDITIONAL PARAMETERS (OPTIONAL)")
     print("=" * 40)

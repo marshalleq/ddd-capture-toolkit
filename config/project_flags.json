@@ -11,6 +11,11 @@
       "export": {
         "reverse": true
       }
+    },
+    "Berlin-1980": {
+      "export": {
+        "reverse": true
+      }
     }
   }
 }

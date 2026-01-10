@@ -41,7 +41,7 @@ try:
     from job_queue_manager import get_job_queue_manager
     from project_status_display import ProjectStatusDisplay, DisplayConfig
     from project_flags import ProjectFlagsManager, DECODE_FLAGS, EXPORT_FLAGS, get_flag_definitions
-    from segment_config import load_segment_config, save_segment_config, toggle_segment_enabled, clear_segment_config
+    from segment_config import load_segment_config, save_segment_config, toggle_segment_enabled, clear_segment_config, has_segment_config
     COMPONENTS_AVAILABLE = True
     SEGMENT_AVAILABLE = True
 except ImportError as e:
@@ -1041,8 +1041,8 @@ class WorkflowControlCentre:
             console.print(Panel(instructions, box=ROUNDED, style="dim"))
             console.print()
 
-            # Load current segment config
-            current_segment = load_segment_config() if SEGMENT_AVAILABLE else None
+            # Load current segment config for this project
+            current_segment = load_segment_config(project.name) if SEGMENT_AVAILABLE else None
 
             # Current segment status panel
             if current_segment and current_segment.get('enabled'):
@@ -1286,23 +1286,23 @@ class WorkflowControlCentre:
             return key
 
         def apply_segment_preset(preset, fd, old_settings):
-            """Apply a segment preset"""
+            """Apply a segment preset for this project"""
             if preset['id'] == 'toggle':
-                # Toggle current segment
-                current = load_segment_config()
+                # Toggle current segment for this project
+                current = load_segment_config(project.name)
                 if current:
-                    new_state = toggle_segment_enabled()
-                    return f"Segment {'enabled' if new_state else 'disabled'}"
+                    new_state = toggle_segment_enabled(project.name)
+                    return f"Segment {'enabled' if new_state else 'disabled'} for {project.name}"
                 else:
-                    return "No segment configured to toggle"
+                    return f"No segment configured for {project.name}"
             elif preset['id'] == 'clear':
-                clear_segment_config()
-                return "Segment configuration cleared"
+                clear_segment_config(project.name)
+                return f"Segment configuration cleared for {project.name}"
             elif preset['id'] == 'custom':
                 # Custom time input - need to restore terminal temporarily
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                 console.clear()
-                console.print(Panel("CUSTOM SEGMENT", style="bold cyan"))
+                console.print(Panel(f"CUSTOM SEGMENT - {project.name}", style="bold cyan"))
                 console.print()
                 console.print("Enter times in MM:SS or HH:MM:SS format")
                 console.print()
@@ -1323,17 +1323,17 @@ class WorkflowControlCentre:
                     # Restore cbreak mode
                     tty.setcbreak(fd)
 
-                    if save_segment_config(start_time, duration, description):
-                        return f"Custom segment set: {start_time} + {duration}"
+                    if save_segment_config(project.name, start_time, duration, description):
+                        return f"Custom segment set for {project.name}: {start_time} + {duration}"
                     else:
                         return "Failed to save segment - check time format"
                 except (KeyboardInterrupt, EOFError):
                     tty.setcbreak(fd)
                     return "Cancelled"
             else:
-                # Apply a preset with start/duration
-                if save_segment_config(preset['start'], preset['duration'], preset['label']):
-                    return f"Segment set: {preset['label']}"
+                # Apply a preset with start/duration for this project
+                if save_segment_config(project.name, preset['start'], preset['duration'], preset['label']):
+                    return f"Segment set for {project.name}: {preset['label']}"
                 else:
                     return "Failed to save segment"
 
