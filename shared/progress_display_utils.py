@@ -282,13 +282,17 @@ class ProgressDisplayUtils:
                         remaining_progress = 100 - progress_percentage
                         eta_seconds = int(remaining_progress / progress_rate)
                 
+                # Get status message if available
+                status_message = getattr(job, 'status_message', '') if hasattr(job, 'status_message') else ''
+
                 return {
                     'percentage': progress_percentage,
                     'fps': fps,
                     'eta_seconds': eta_seconds,
                     'runtime_seconds': runtime_seconds,
                     'current_frame': current_frame,
-                    'total_frames': total_frames
+                    'total_frames': total_frames,
+                    'status_message': status_message
                 }
         
         debug_log(f"No matching RUNNING job found for project='{project_name}', step_type='{step_type}'")
@@ -346,30 +350,37 @@ class ProgressDisplayUtils:
     def format_progress_text(progress_info: Dict[str, Any]) -> str:
         """
         Format progress information into display text
-        
+
         Args:
             progress_info: Progress information dictionary from extract_job_progress_info()
-            
+
         Returns:
             Formatted progress text suitable for display
         """
         if not progress_info:
             return "Waiting..."
-        
+
+        # Check for status message (e.g., "Preparing reverse field order...")
+        status_message = progress_info.get('status_message', '')
         percentage = progress_info.get('percentage', 0)
+
+        # If there's a status message and progress is low, show the status message
+        if status_message and percentage < 1:
+            return status_message
+
         fps = progress_info.get('fps')
         eta_seconds = progress_info.get('eta_seconds')
-        
+
         # Build progress text components
         text_parts = [f"{percentage:.1f}%"]
-        
+
         if fps and fps > 0:
             text_parts.append(f"{fps:.1f}fps")
-        
+
         if eta_seconds and eta_seconds > 0:
             eta_text = ProgressDisplayUtils.format_time(eta_seconds)
             text_parts.append(f"ETA {eta_text}")
-        
+
         return " ".join(text_parts)
     
     @staticmethod

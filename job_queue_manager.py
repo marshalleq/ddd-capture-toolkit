@@ -61,7 +61,8 @@ class QueuedJob:
     progress: float = 0.0  # 0-100
     error_message: str = ""
     project_name: str = "Unknown"  # Project name for workflow tracking
-    
+    status_message: str = ""  # Current operation status (e.g., "Preparing reverse field order...")
+
     # Progress tracking fields for real-time monitoring
     total_frames: int = 0
     current_frame: int = 0
@@ -490,7 +491,7 @@ class JobQueueManager:
             segment_start_frame = 0
             try:
                 from segment_config import load_segment_config
-                segment_config = load_segment_config()
+                segment_config = load_segment_config(job.project_name)
                 if segment_config and segment_config.get('enabled', False):
                     video_standard = job.parameters.get('video_standard', 'pal').lower()
                     if video_standard == 'pal':
@@ -714,6 +715,11 @@ class JobQueueManager:
                 if '--reverse' in cli_flags:
                     self.logger.info("Reverse field order enabled - pre-processing with ld-dropout-correct")
 
+                    # Update status message to show we're in pre-processing phase
+                    with self.lock:
+                        job.status_message = "Preparing reverse field order (luma)..."
+                        job.progress = 0.0
+
                     # Find ld-dropout-correct command
                     import shutil
                     dropout_cmd = shutil.which('ld-dropout-correct')
@@ -763,11 +769,12 @@ class JobQueueManager:
                                 dropout_process_cmd,
                                 capture_output=True,
                                 text=True,
-                                timeout=3600  # 1 hour timeout for large files
+                                timeout=7200  # 2 hour timeout for very large files
                             )
                             if result.returncode != 0:
                                 self.logger.error(f"ld-dropout-correct (luma) failed: {result.stderr}")
                                 job.error_message = f"Reverse field dropout correction failed: {result.stderr}"
+                                job.status_message = ""
                                 return False
                             self.logger.info("Dropout correction with reverse (luma) completed successfully")
 
@@ -779,6 +786,11 @@ class JobQueueManager:
                                     # Chroma file wasn't auto-created, process it explicitly
                                     # Note: ld-dropout-correct on chroma uses the luma TBC's JSON for metadata
                                     self.logger.info("Chroma not auto-created, processing chroma file explicitly")
+
+                                    # Update status for chroma processing
+                                    with self.lock:
+                                        job.status_message = "Preparing reverse field order (chroma)..."
+
                                     dropout_chroma_cmd = [
                                         dropout_cmd,
                                         '--reverse',
@@ -792,7 +804,7 @@ class JobQueueManager:
                                         dropout_chroma_cmd,
                                         capture_output=True,
                                         text=True,
-                                        timeout=3600
+                                        timeout=7200  # 2 hour timeout for very large files
                                     )
                                     if chroma_result.returncode != 0:
                                         self.logger.warning(f"ld-dropout-correct (chroma) failed: {chroma_result.stderr}")
@@ -809,11 +821,17 @@ class JobQueueManager:
                         except subprocess.TimeoutExpired:
                             self.logger.error("ld-dropout-correct timed out")
                             job.error_message = "Reverse field dropout correction timed out"
+                            job.status_message = ""
                             return False
                         except Exception as e:
                             self.logger.error(f"ld-dropout-correct error: {e}")
                             job.error_message = f"Reverse field dropout correction error: {e}"
+                            job.status_message = ""
                             return False
+
+                        # Clear status message before starting export
+                        with self.lock:
+                            job.status_message = "Exporting video..."
 
                         # Now modify the flags: keep --reverse, add --no-dropout-correct
                         # (dropout correction already done in pre-processing)
