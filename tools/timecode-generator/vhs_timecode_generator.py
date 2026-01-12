@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
-VHS Timecode Generator for Precise Audio/Video Alignment - ROBUST FSK VERSION
+VHS Timecode Generator V2 for Precise Audio/Video Alignment
 
 This script generates test patterns with frame-accurate timecode for VHS calibration.
 Each frame contains a unique identifier that is encoded in both video and audio,
 allowing for microsecond-accurate alignment after capture.
 
-Features:
-- Visual frame counter with high contrast for VHS reliability
-- ROBUST audio timecode encoding using improved FSK with wide frequency separation
+V2 Features:
+- 16-bit encoding (40 pixels per block) instead of 32-bit (20 pixels per block)
+- 3 vertical redundant rows for error tolerance
+- Color-based bit encoding: Red for '1', Blue for '0' (survives VHS chroma separation)
+- Mid-gray background (128) for neutral degradation behavior
+- Lower FSK frequencies: 400Hz/800Hz (better VHS linear audio compatibility)
+- Per-frame pilot tone (1200Hz) for frame synchronization
+- 120 samples per bit (double the V1 duration) for better frequency detection
+- Frame type support: leader, countdown, timecode, leadout, separator
 - PAL/NTSC support with proper frame rates
-- Enhanced error correction and multi-method voting for VHS tape quality
-- Memory-efficient processing for any duration (seconds to hours)
-- Colored corner markers for precise frame alignment
-- MONO audio encoding to eliminate stereo channel confusion
+- Memory-efficient processing for any duration
 
 Usage:
-    python3 vhs_timecode_generator.py --duration 60 --format PAL --output calibration_timecode.mp4
+    python3 vhs_timecode_generator.py --duration 62 --format PAL --output calibration_timecode.mp4
+
+Note: This generates simple timecode frames. For the full calibration structure with
+lead-in/lead-out, use vhs_pattern_generator.py instead.
 """
 
 import cv2
@@ -47,85 +53,88 @@ class VHSTimecodeGenerator(SharedTimecodeRobust):
         self.audio_chunk_seconds = 10
         self.audio_chunk_frames = int(self.audio_chunk_seconds * self.fps)
     
-    def generate_frame_image(self, frame_number, timecode_str):
-        """Generate a single frame with visual timecode"""
+    def generate_frame_image(self, frame_number, timecode_str, frame_type='timecode',
+                             countdown_val=0, frames_count=0):
+        """
+        Generate a single frame with V2 visual timecode.
+
+        Args:
+            frame_number: Frame number to encode
+            timecode_str: Human-readable timecode string (HH:MM:SS:FF)
+            frame_type: 'leader', 'countdown', 'timecode', 'leadout', 'separator'
+            countdown_val: Countdown/count-up value for countdown/leadout types
+            frames_count: Frames until/since timecode section
+        """
         # Create black background
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         frame[:] = self.bg_color
-        
+
         # Add main timecode display (large, centered)
         font = cv2.FONT_HERSHEY_SIMPLEX
-        
+
         # Calculate text size for centering
         (text_width, text_height), baseline = cv2.getTextSize(
             timecode_str, font, self.font_scale, self.font_thickness
         )
-        
-        # Center the timecode
+
+        # Center the timecode vertically (accounting for 60px strip at top)
         x = (self.width - text_width) // 2
         y = (self.height + text_height) // 2
-        
-        cv2.putText(frame, timecode_str, (x, y), font, 
-                   self.font_scale, self.text_color, self.font_thickness)
-        
-        # Add frame number in top-left corner
-        frame_text = f"Frame: {frame_number:06d}"
-        cv2.putText(frame, frame_text, (20, 70), font, 
-                   1.0, self.text_color, 2)
-        
-        # Add format info in top-right corner
-        format_text = f"{self.format_type} {self.fps}fps"
-        (fw, fh), _ = cv2.getTextSize(format_text, font, 0.7, 2)
-        cv2.putText(frame, format_text, (self.width - fw - 20, 70), font, 
-                   0.7, self.text_color, 2)
-        
-        # Add machine-readable patterns for extra reliability
-        self._add_sync_patterns(frame, frame_number)
-        
-        return frame
-    
-    def _add_sync_patterns(self, frame, frame_number):
-        """Add machine-readable sync patterns to frame"""
-        # Add binary representation as visual blocks (top edge)
-        binary = format(frame_number, '032b')  # 32-bit binary
-        
-        # Position binary blocks
-        available_width = self.width - 80  # Total width minus 40px corners
-        block_width = available_width // 32
-        start_offset = 40  # Start after left corner
-        
-        for i, bit in enumerate(binary):
-            x_start = start_offset + (i * block_width)
-            x_end = min(x_start + block_width, self.width - 40)
-            
-            # White for 1, dark gray for 0 (still visible)
-            color = (255, 255, 255) if bit == '1' else (64, 64, 64)
-            cv2.rectangle(frame, (x_start, 0), (x_end, 20), color, -1)
-        
-        # Add sync markers in corners for frame detection
-        marker_size = 40
-        marker_color = (255, 255, 255)
-        
-        # Top-left and bottom-right: red squares for primary corner markers
-        cv2.rectangle(frame, (0, 0), (marker_size, marker_size), self.corner_color_primary, -1)
-        cv2.rectangle(frame, (self.width - marker_size, self.height - marker_size), 
-                     (self.width, self.height), self.corner_color_primary, -1)
-        
-        # Top-right and bottom-left: blue squares for secondary corner markers
-        cv2.rectangle(frame, (self.width - marker_size, 0), 
-                     (self.width, marker_size), self.corner_color_secondary, -1)
-        cv2.rectangle(frame, (0, self.height - marker_size), 
-                     (marker_size, self.height), self.corner_color_secondary, -1)
-    
-    def generate_audio_timecode(self, frame_number, duration_seconds):
-        """Generate audio timecode for a frame using ROBUST FSK system"""
-        # Use the robust FSK audio generation
-        mono_audio = self.generate_robust_fsk_audio(frame_number)
 
-        # NOTE: This returns the same mono array twice for internal API compatibility.
-        # This is NOT creating stereo - the final output is genuine MONO audio.
-        # The sox command at line 264 uses '-c', '1' to produce true mono output.
-        # The dual return values are just to satisfy the expected API pattern.
+        cv2.putText(frame, timecode_str, (x, y), font,
+                   self.font_scale, self.text_color, self.font_thickness)
+
+        # Add frame number below the strip (moved down to account for 60px strip)
+        frame_text = f"Frame: {frame_number:06d}"
+        cv2.putText(frame, frame_text, (20, 90), font,
+                   1.0, self.text_color, 2)
+
+        # Add format info and version
+        format_text = f"{self.format_type} {self.fps}fps V2"
+        (fw, fh), _ = cv2.getTextSize(format_text, font, 0.7, 2)
+        cv2.putText(frame, format_text, (self.width - fw - 20, 90), font,
+                   0.7, self.text_color, 2)
+
+        # Add frame type indicator for non-timecode frames
+        if frame_type != 'timecode':
+            type_text = f"[{frame_type.upper()}]"
+            if frame_type == 'countdown':
+                type_text = f"[COUNTDOWN: {countdown_val}]"
+            elif frame_type == 'leadout':
+                type_text = f"[END: {countdown_val}]"
+            (tw, th), _ = cv2.getTextSize(type_text, font, 1.2, 3)
+            cv2.putText(frame, type_text, ((self.width - tw) // 2, self.height - 50), font,
+                       1.2, (0, 255, 255), 3)  # Yellow/cyan text
+
+        # Add V2 machine-readable patterns (16-bit, 3 rows, red/blue colors)
+        self._add_sync_patterns(frame, frame_number, frame_type, countdown_val, frames_count)
+
+        return frame
+
+    # Note: _add_sync_patterns is inherited from SharedTimecodeRobust base class
+    # which now implements V2 encoding (16-bit, 3 rows, red/blue, mid-gray background)
+    
+    def generate_audio_timecode(self, frame_number, frame_type='timecode',
+                                countdown_val=0, frames_count=0):
+        """
+        Generate V2 audio timecode for a frame using ROBUST FSK system with pilot tone.
+
+        Args:
+            frame_number: Frame number to encode
+            frame_type: 'leader', 'countdown', 'timecode', 'leadout', 'separator'
+            countdown_val: Countdown/count-up value
+            frames_count: Frames until/since timecode section
+
+        Returns:
+            tuple: (mono_audio, mono_audio) for API compatibility
+
+        NOTE: This returns the same mono array twice for internal API compatibility.
+        This is NOT creating stereo - the final output is genuine MONO audio.
+        The sox command uses '-c', '1' to produce true mono output.
+        """
+        # Use the V2 robust FSK audio generation with pilot tone
+        mono_audio = self.generate_robust_fsk_audio(frame_number, frame_type,
+                                                     countdown_val, frames_count)
         return mono_audio, mono_audio
     
     def frame_to_timecode(self, frame_number):
@@ -145,15 +154,18 @@ class VHSTimecodeGenerator(SharedTimecodeRobust):
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}:{frame_remainder:02d}"
     
     def generate_test_video(self, duration_seconds, output_path):
-        """Generate complete timecode test video with memory-efficient audio processing"""
+        """Generate complete V2 timecode test video with memory-efficient audio processing"""
         total_frames = int(duration_seconds * self.fps)
-        
-        print(f"Generating {self.format_type} timecode video:")
+
+        print(f"Generating {self.format_type} V2 timecode video:")
         print(f"  Duration: {duration_seconds} seconds")
         print(f"  Total frames: {total_frames}")
         print(f"  Frame rate: {self.fps} fps")
         print(f"  Resolution: {self.width}x{self.height}")
         print(f"  Output: {output_path}")
+        print(f"  V2 Encoding: 16-bit, 3 rows, red/blue colors")
+        print(f"  FSK Frequencies: {self.freq_0}Hz / {self.freq_1}Hz (pilot: {self.freq_pilot}Hz)")
+        print(f"  Samples per bit: {self.samples_per_bit}")
         print(f"  Audio chunk size: {self.audio_chunk_seconds} seconds")
         
         # Create temporary files for video and audio
@@ -237,9 +249,9 @@ class VHSTimecodeGenerator(SharedTimecodeRobust):
                 
                 for i in range(frames_in_chunk):
                     frame_num = frames_processed + i
-                    
-                    # Get mono audio from robust FSK system
-                    mono_audio, _ = self.generate_audio_timecode(frame_num, frame_duration)
+
+                    # Get mono audio from V2 robust FSK system (timecode frames only)
+                    mono_audio, _ = self.generate_audio_timecode(frame_num, frame_type='timecode')
                     chunk_audio.extend(mono_audio)
                 
                 # Convert chunk to numpy array
