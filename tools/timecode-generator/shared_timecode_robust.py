@@ -712,7 +712,79 @@ class SharedTimecodeRobust:
         
         if calculated_checksum != received_checksum:
             return None  # Checksum mismatch
-        
+
+        return frame_number
+
+    def decode_fsk_frame_simple(self, frame_audio):
+        """
+        V2 Simple FSK frame decoder for calibration analysis.
+
+        Decodes a single frame's worth of audio to extract the 12-bit frame number.
+        Handles the V2 structure: pilot tone + silence + 16-bit FSK data.
+
+        Args:
+            frame_audio: Audio samples for one frame (~1920 samples for PAL)
+
+        Returns:
+            int: frame_id if successful timecode frame, None if failed or non-timecode
+        """
+        # V2 structure within a frame:
+        # 10% pilot (192 samples), 5% silence (96), 80% data (1536), 5% trailing silence
+        pilot_samples = int(len(frame_audio) * self.pilot_ratio)
+        silence_samples = int(len(frame_audio) * self.silence_ratio)
+        data_start = pilot_samples + silence_samples
+
+        # Extract the data portion (80% of frame)
+        data_audio = frame_audio[data_start:]
+
+        # Calculate samples per bit for 16 bits in the data portion
+        data_samples = int(len(frame_audio) * self.data_ratio)
+        samples_per_bit_v2 = data_samples // 16
+
+        if samples_per_bit_v2 < 10:  # Sanity check
+            return None
+
+        bits = []
+
+        # Decode each of the 16 bits
+        for bit_idx in range(16):
+            start_bit = bit_idx * samples_per_bit_v2
+            end_bit = start_bit + samples_per_bit_v2
+
+            if end_bit > len(data_audio):
+                return None
+
+            bit_audio = data_audio[start_bit:end_bit]
+
+            # Analyze frequency - compare 400Hz vs 800Hz
+            f0_amplitude = self._analyze_frequency_amplitude(bit_audio, self.freq_0)
+            f1_amplitude = self._analyze_frequency_amplitude(bit_audio, self.freq_1)
+
+            # Determine bit value (0 = 400Hz, 1 = 800Hz)
+            if f0_amplitude > f1_amplitude:
+                bits.append('0')
+            else:
+                bits.append('1')
+
+        if len(bits) != 16:
+            return None
+
+        bit_string = ''.join(bits)
+
+        # V2 timecode format: "10" + 12-bit frame number + "01"
+        prefix = bit_string[:2]
+        suffix = bit_string[14:16]
+
+        if prefix != '10' or suffix != '01':
+            # Not a timecode frame (could be leader, separator, countdown, etc.)
+            return None
+
+        # Extract 12-bit frame number
+        try:
+            frame_number = int(bit_string[2:14], 2)
+        except ValueError:
+            return None
+
         return frame_number
 
     def _analyze_frequency_amplitude(self, bit_audio, target_freq):
@@ -1510,7 +1582,57 @@ class SharedTimecodeRobust:
             print(f"  Audio loading error: {e}")
         
         return None
-    
+
+    def detect_active_content_area(self, frame):
+        """
+        Detect the active content boundaries within a TBC frame.
+
+        TBC output from vhs-decode is typically 928 pixels wide, but the original
+        content (720 pixels) is centered within it. This method finds where the
+        actual content starts and ends.
+
+        Args:
+            frame: Video frame (BGR format)
+
+        Returns:
+            tuple: (left_margin, right_margin, content_width)
+                - left_margin: Pixels to skip on left
+                - right_margin: Pixels to skip on right
+                - content_width: Width of active content
+        """
+        height, width = frame.shape[:2]
+
+        # If frame is already 720 or smaller, no adjustment needed
+        if width <= 720:
+            return 0, 0, width
+
+        # Look at the top strip area (first 60 pixels) where corner markers are
+        top_strip = frame[0:60, :, :]
+
+        # Calculate brightness across the width (sum of all channels)
+        brightness = np.mean(top_strip, axis=(0, 2))  # Average brightness per column
+
+        # Find the threshold - black overscan should be < 20, content > 20
+        threshold = 25
+
+        # Scan from left to find content start
+        left_margin = 0
+        for i in range(width // 4):  # Don't scan past 1/4 width
+            if brightness[i] > threshold:
+                left_margin = max(0, i - 5)  # Small safety margin
+                break
+
+        # Scan from right to find content end
+        right_margin = 0
+        for i in range(width - 1, width * 3 // 4, -1):  # Don't scan past 3/4 width
+            if brightness[i] > threshold:
+                right_margin = max(0, (width - 1 - i) - 5)
+                break
+
+        content_width = width - left_margin - right_margin
+
+        return left_margin, right_margin, content_width
+
     def read_binary_strip(self, frame):
         """
         V2 Read binary timecode from top strip with center sampling and confidence reporting.
@@ -1534,19 +1656,27 @@ class SharedTimecodeRobust:
         if len(frame.shape) != 3 or frame.shape[2] != 3:
             return None, [], 0.0
 
+        # Detect active content area (handles TBC resolution 928 vs original 720)
+        left_offset, right_offset, content_width = self.detect_active_content_area(frame)
+
         # Extract the 60-pixel (3-row) strip from top of frame
         strip = frame[0:self.strip_height, :]
 
         bits = []
         confidences = []
 
-        # V2: 16 blocks (not 32), with margins on sides
-        margin_x = 40  # Skip edge pixels (corner markers)
-        usable_width = width - (margin_x * 2)
+        # V2: 16 blocks (not 32), with margins on sides for corner markers
+        # The corner markers are 40 pixels wide in the original 720-pixel content
+        # Scale the margin based on detected content width
+        corner_margin = int(40 * content_width / 720)  # ~40 for 720, proportionally more for wider
+
+        # Calculate usable width within the content area (excluding corner markers)
+        usable_width = content_width - (corner_margin * 2)
         block_width = usable_width // 16
 
         for i in range(16):
-            x_start = margin_x + (i * block_width)
+            # Start from left_offset (TBC overscan) + corner_margin (corner markers)
+            x_start = left_offset + corner_margin + (i * block_width)
             x_end = x_start + block_width
 
             # CENTER SAMPLING: Skip 25% on each side horizontally to avoid edge contamination

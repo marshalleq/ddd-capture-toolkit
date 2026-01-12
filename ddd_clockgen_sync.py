@@ -60,6 +60,12 @@ def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_comma
         ddd_command = ['DomesdayDuplicator', '--start-capture', '--headless']
 
     def video_capture_thread():
+        # If audio_delay is negative, video needs to be delayed (audio starts first)
+        if audio_delay < 0:
+            video_delay = abs(audio_delay)
+            print(f"[Video Thread] Delaying video start by {video_delay:.3f}s (audio starts first)")
+            time.sleep(video_delay)
+
         print("[Video Thread] Starting DomesdayDuplicator capture...")
         print(f"[Video Thread] Command: {' '.join(ddd_command)}")
         try:
@@ -137,7 +143,11 @@ def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_comma
             print(f"[Video Thread] Exception starting DomesdayDuplicator: {e}")
 
     def audio_capture_thread():
-        time.sleep(audio_delay)
+        # If audio_delay is positive, audio needs to be delayed (video starts first)
+        if audio_delay > 0:
+            print(f"[Audio Thread] Delaying audio start by {audio_delay:.3f}s (video starts first)")
+            time.sleep(audio_delay)
+
         # Release audio device from PipeWire/PulseAudio right before starting sox
         release_audio_device_before_capture()
         # Start SOX with direct console output (preserves VU meters)
