@@ -259,10 +259,10 @@ class JobQueueDisplay:
         print("2. Start/stop job processor")
         print("3. Clean up old jobs")
         print("4. View detailed job information")
-        print("5. Return to display")
-        
-        choice = input("\\nSelect option (1-5): ").strip()
-        
+        print("e. Return to display")
+
+        choice = input("\\nSelect option (1-4/e): ").strip().lower()
+
         if choice == '1':
             self._change_max_concurrent()
         elif choice == '2':

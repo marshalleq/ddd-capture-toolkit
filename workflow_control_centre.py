@@ -2431,10 +2431,10 @@ def simple_workflow_interface():
             print("4. Configure Job Queue Settings")
             print("5. Manual Audio Alignment")
             print("6. Mux Video + Audio (Create Final MKV)")
-            print("7. Return to VHS-Decode Menu")
-            
-            choice = input("\nSelect workflow option (1-7): ").strip()
-            
+            print("e. Return to VHS-Decode Menu")
+
+            choice = input("\nSelect workflow option (1-6/e): ").strip().lower()
+
             if choice == '1':
                 add_vhs_decode_jobs_to_queue()
             elif choice == '2':
@@ -2449,10 +2449,10 @@ def simple_workflow_interface():
             elif choice == '6':
                 mux_video_audio()
                 break  # Return to main menu after muxing
-            elif choice == '7':
+            elif choice == 'e':
                 break  # Return to VHS-Decode menu
             else:
-                print("\nInvalid selection. Please enter 1-7.")
+                print("\nInvalid selection. Please enter 1-6 or e.")
                 time.sleep(1)
                 
         except KeyboardInterrupt:
