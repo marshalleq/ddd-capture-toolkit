@@ -2316,21 +2316,71 @@ def start_capture_and_record():
     # Clean up any existing processes that might interfere
     cleanup_existing_processes()
     
+    # Read configuration
+    config = load_config()
+    calibration_mode = config.get('calibration_mode', False)
+
     # Use configured capture directory for actual captures (not temp folder)
     capture_folder = get_capture_folder()
     if not os.path.exists(capture_folder):
         os.makedirs(capture_folder)
         print(f"Created capture folder: {capture_folder}")
-    
-    # Prompt user for capture name
-    capture_name = prompt_for_capture_name(capture_folder)
-    if not capture_name:
-        return  # User cancelled
-    
-    # Read calibrated audio delay from configuration
-    config = load_config()
-    audio_delay = config.get('audio_delay', 0.000)  # Default to 0.000 if not set
-    print(f"Using configured audio delay: {audio_delay:.3f}s")
+
+    if calibration_mode:
+        # Fixed name for calibration captures
+        capture_name = "calibration"
+        print("\n" + "="*50)
+        print("⚠️  CALIBRATION MODE ACTIVE")
+        print("Audio delay disabled (0.000s) for offset measurement")
+        print(f"Using fixed project name: {capture_name}")
+        print("="*50 + "\n")
+
+        # Check for existing calibration files (all stages of workflow)
+        existing_files = []
+        extensions = [
+            '.lds',           # RF capture
+            '.flac',          # Audio capture
+            '.json',          # Capture metadata
+            '.tbc',           # Luma TBC
+            '.tbc.chroma',    # Chroma TBC
+            '.tbc.json',      # TBC metadata
+            '.tbc.lz4',       # Compressed TBC
+            '_ffv1.mkv',      # Exported video
+            '_aligned.wav',   # Aligned audio
+            '_final.mkv'      # Final muxed output
+        ]
+        for ext in extensions:
+            filepath = os.path.join(capture_folder, f"{capture_name}{ext}")
+            if os.path.exists(filepath):
+                existing_files.append(filepath)
+
+        if existing_files:
+            print("Existing calibration files found:")
+            for f in existing_files:
+                size_mb = os.path.getsize(f) / (1024*1024)
+                print(f"   {os.path.basename(f)} ({size_mb:.1f} MB)")
+            print()
+            overwrite = input("Overwrite existing calibration files? (y/N): ").strip().lower()
+            if overwrite != 'y':
+                print("Calibration capture cancelled.")
+                return
+            # Delete existing files
+            for f in existing_files:
+                try:
+                    os.remove(f)
+                    print(f"Deleted: {os.path.basename(f)}")
+                except Exception as e:
+                    print(f"Warning: Could not delete {os.path.basename(f)}: {e}")
+            print()
+
+        audio_delay = 0.000
+    else:
+        # Normal mode - prompt for capture name
+        capture_name = prompt_for_capture_name(capture_folder)
+        if not capture_name:
+            return  # User cancelled
+        audio_delay = config.get('audio_delay', 0.000)  # Default to 0.000 if not set
+        print(f"Using configured audio delay: {audio_delay:.3f}s")
 
     # Construct output file path for both video and audio
     video_output_path = os.path.join(capture_folder, f"{capture_name}.lds")
