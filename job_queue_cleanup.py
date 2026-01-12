@@ -126,17 +126,17 @@ def main():
     
     print("\nCleanup Options:")
     print("1. Remove all failed jobs")
-    print("2. Remove all completed jobs") 
+    print("2. Remove all completed jobs")
     print("3. Fix stale running jobs")
     print("4. Remove failed AND completed jobs")
     print("5. Full cleanup (remove failed/completed, fix running)")
     print("6. Show status only (no changes)")
-    print("0. Exit")
-    
+    print("e. Exit")
+
     try:
-        choice = input("\nEnter your choice (0-6): ").strip()
-        
-        if choice == '0':
+        choice = input("\nEnter your choice (1-6/e): ").strip().lower()
+
+        if choice == 'e':
             print("Exiting without changes.")
             return
         elif choice == '6':
