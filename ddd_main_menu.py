@@ -95,7 +95,7 @@ def display_main_menu():
     print("4. Configuration")
     print("5. Check Dependencies")
     print("6. Help & Documentation")
-    print("7. Exit")
+    print("e. Exit")
     print("=" * 30)
 
 def create_sync_test_videos():
@@ -129,10 +129,10 @@ def create_sync_test_videos():
     print("4. Create Belle Nuit PAL Test Chart")
     print("5. Create Belle Nuit NTSC Test Chart")
     print("6. Create Custom Test Pattern Videos")
-    print("7. Return to Main Menu")
-    
-    choice = input("\nSelect option (1-7): ").strip()
-    
+    print("e. Return to Main Menu")
+
+    choice = input("\nSelect option (1-6/e): ").strip().lower()
+
     if choice == '1':
         create_calibration_videos()
     elif choice == '2':
@@ -145,7 +145,7 @@ def create_sync_test_videos():
         create_belle_nuit_chart_single('NTSC')
     elif choice == '6':
         create_custom_test_pattern_menu()
-    elif choice == '7':
+    elif choice == 'e':
         return
     else:
         print("\nInvalid selection")
@@ -476,22 +476,22 @@ def create_dvd_isos():
         print("DVD ISO OPTIONS")
         print("=" * 20)
         print("1. Create DVD ISOs from MP4s")
-        print("2. Return to Main Menu")
-        
-        choice = input("\nSelect option (1-2): ").strip()
-        
+        print("e. Return to Main Menu")
+
+        choice = input("\nSelect option (1/e): ").strip().lower()
+
         if choice == '1':
             try:
                 # Run the ISO creation script interactively
                 subprocess.run([sys.executable, 'tools/create_iso_from_mp4.py'])
-                
+
             except KeyboardInterrupt:
                 print("\nOperation cancelled by user")
             except Exception as e:
                 print(f"\nError: {e}")
-            
+
             input("\nPress Enter to continue...")
-        elif choice == '2':
+        elif choice == 'e':
             break  # Return to main menu
         else:
             print("\nInvalid selection")
@@ -531,9 +531,9 @@ def vhs_audio_alignment():
     print("1. View Usage Instructions")
     print("2. Process Audio Files (requires WAV + TBC JSON)")
     print("3. Demo Mode (uses test files)")
-    print("4. Return to Main Menu")
-    
-    choice = input("\nSelect option (1-4): ").strip()
+    print("e. Return to Main Menu")
+
+    choice = input("\nSelect option (1-3/e): ").strip().lower()
     
     if choice == '1':
         print("\nVHS AUDIO ALIGNMENT USAGE")
@@ -640,12 +640,12 @@ def vhs_audio_alignment():
                 
             except Exception as e:
                 print(f"Failed to create test files: {e}")
-        
-    elif choice == '4':
+
+    elif choice == 'e':
         return
     else:
         print("\nInvalid selection")
-    
+
     input("\nPress Enter to return to menu...")
 
 def display_vhs_decode_menu():
@@ -672,9 +672,9 @@ def display_vhs_decode_menu():
         print("=" * 20)
         print("5. Advanced VHS-Decode Settings...")
         print("6. Kill Rogue/Stuck Processes")
-        print("7. Return to Main Menu")
+        print("e. Return to Main Menu")
 
-        selection = input("\nSelect option (1-7): ").strip().lower()
+        selection = input("\nSelect option (1-6/e): ").strip().lower()
 
         if selection == '1':
             launch_workflow_control_centre()
@@ -685,10 +685,10 @@ def display_vhs_decode_menu():
             break  # Return to main menu after advanced options
         elif selection == '6':
             kill_rogue_vhs_processes()
-        elif selection == '7':
+        elif selection == 'e':
             break  # Return to main menu
         else:
-            print("Invalid selection. Please enter 1-7.")
+            print("Invalid selection. Please enter 1-6 or e.")
             time.sleep(1)
 
 def legacy_direct_decode_menu():
@@ -716,9 +716,9 @@ def legacy_direct_decode_menu():
         print("=" * 18)
         print("7. Run TBC Video Export (direct processing)")
         print()
-        print("8. Return to VHS-Decode Menu")
-        
-        selection = input("\nSelect option (1-8): ").strip().lower()
+        print("e. Return to VHS-Decode Menu")
+
+        selection = input("\nSelect option (1-7/e): ").strip().lower()
         
         if selection == '1':
             manual_vhs_decode_with_params('pal', 'SP')
@@ -741,10 +741,10 @@ def legacy_direct_decode_menu():
         elif selection == '7':
             manual_tbc_export()
             break  # Return to main menu after export
-        elif selection == '8':
+        elif selection == 'e':
             break  # Return to VHS-Decode menu
         else:
-            print("Invalid selection. Please enter 1-8.")
+            print("Invalid selection. Please enter 1-7 or e.")
             time.sleep(1)
 
 def manual_vhs_decode():
@@ -1246,10 +1246,10 @@ def display_advanced_vhs_decode_menu():
         print("5. Speed/Quality Presets...")
         print("6. Save/Load Parameter Sets...")
         print("7. Reset to Defaults")
-        print("8. Return to VHS-Decode Menu")
-        
-        selection = input("\nSelect advanced option (1-8): ").strip().lower()
-        
+        print("e. Return to VHS-Decode Menu")
+
+        selection = input("\nSelect advanced option (1-7/e): ").strip().lower()
+
         if selection == '1':
             custom_parameter_builder()
             break
@@ -1265,10 +1265,10 @@ def display_advanced_vhs_decode_menu():
             save_load_parameters()
         elif selection == '7':
             reset_defaults()
-        elif selection == '8':
+        elif selection == 'e':
             break  # Return to VHS-Decode menu
         else:
-            print("Invalid selection. Please enter 1-8.")
+            print("Invalid selection. Please enter 1-7 or e.")
             time.sleep(1)
 
 def custom_parameter_builder():
@@ -1488,10 +1488,10 @@ def parallel_vhs_decode_menu():
     print("3. View Job Queue Status & Progress")
     print("4. Configure Job Queue Settings")
     print("5. Legacy: Direct Multi-Job Decode (Old Interface)")
-    print("6. Return to Advanced Menu")
-    
-    choice = input("\nSelect option (1-6): ").strip()
-    
+    print("e. Return to Advanced Menu")
+
+    choice = input("\nSelect option (1-5/e): ").strip().lower()
+
     if choice == '1':
         add_vhs_decode_jobs_to_queue()
     elif choice == '2':
@@ -1502,7 +1502,7 @@ def parallel_vhs_decode_menu():
         configure_job_queue_settings()
     elif choice == '5':
         legacy_parallel_decode_menu()
-    elif choice == '6':
+    elif choice == 'e':
         return
     else:
         print("\nInvalid selection")
@@ -2427,24 +2427,114 @@ def capture_new_video():
     
     input("\nPress Enter to return to menu...")
 
-def run_av_alignment():
-    """Perform A/V alignment"""
-    clear_screen()
-    display_header()
-    print("\nA/V ALIGNMENT")
-    print("=" * 15)
-    print("Automated audio/video synchronisation")
-    print()
-    
-    # Import and run the original alignment function
-    try:
-        sys.path.append('.')
-        from ddd_clockgen_sync import perform_av_alignment
-        perform_av_alignment()
-    except Exception as e:
-        print(f"Error during alignment: {e}")
-    
-    input("\nPress Enter to return to menu...")
+def display_robust_timecode_menu():
+    """Display the robust timecode calibration submenu"""
+    while True:
+        clear_screen()
+        display_header()
+        print("\nROBUST TIMECODE METHOD (Recommended)")
+        print("=" * 45)
+        print("Uses VHS timecode test patterns for microsecond-accurate")
+        print("audio/video synchronization measurement.")
+        print()
+        print("STEP 1 - PREPARATION:")
+        print("  1. Generate Timecode Test Video")
+        print("  2. Create DVD ISOs from MP4s")
+        print("     (Then burn ISO to DVD with your chosen burning software)")
+        print()
+        print("STEP 2 - CALIBRATION:")
+        print("  3. Capture & Analyze (Record DVD to VHS)")
+        print("     → Captures, analyzes timecode, and SETS the delay")
+        print("  4. Test MP4 Detection (Direct Test)")
+        print("     → Tests detection on MP4 without VHS capture")
+        print()
+        print("STEP 3 - VALIDATION:")
+        print("  5. Workflow Control Centre (Validate Your Timing)")
+        print()
+        print("e. Return to Calibration Menu")
+
+        selection = input("\nSelect option (1-5/e): ").strip().lower()
+
+        if selection == '1':
+            create_sync_test_videos()
+        elif selection == '2':
+            create_dvd_isos()
+        elif selection == '3':
+            precision_timecode_capture()
+        elif selection == '4':
+            validate_mp4_timecode()
+        elif selection == '5':
+            launch_workflow_control_centre()
+        elif selection == 'e':
+            break
+        else:
+            print("Invalid selection. Please enter 1-5 or e.")
+            input("\nPress Enter to continue...")
+
+
+def display_simple_delay_menu():
+    """Display the simple startup delay calibration submenu"""
+    while True:
+        clear_screen()
+        display_header()
+        print("\nSIMPLE STARTUP DELAY METHOD")
+        print("=" * 35)
+        print("Measures hardware startup delays to estimate sync offset.")
+        print("Less accurate than timecode method - use for troubleshooting.")
+        print()
+        print("1. Calculate DdD Startup Delay")
+        print("2. Calculate SOX Startup Delay")
+        print("3. Calculate Sync Offset from Delays")
+        print("e. Return to Calibration Menu")
+
+        selection = input("\nSelect option (1-3/e): ").strip().lower()
+
+        if selection == '1':
+            calculate_ddd_startup_delay()
+        elif selection == '2':
+            calculate_sox_startup_delay()
+        elif selection == '3':
+            calculate_sync_offset_from_delays()
+        elif selection == 'e':
+            break
+        else:
+            print("Invalid selection. Please enter 1-3 or e.")
+            input("\nPress Enter to continue...")
+
+
+def display_calibration_tools_menu():
+    """Display the calibration tools and settings submenu"""
+    while True:
+        clear_screen()
+        display_header()
+        print("\nCALIBRATION TOOLS & SETTINGS")
+        print("=" * 35)
+        print()
+        print("VIDEO GENERATION:")
+        print("  1. Generate Timecode Test Video")
+        print("  2. Create DVD ISOs from MP4s")
+        print()
+        print("SETTINGS:")
+        print("  3. Manual Calibration Value Entry")
+        print("  4. View Current Settings")
+        print()
+        print("e. Return to Calibration Menu")
+
+        selection = input("\nSelect option (1-4/e): ").strip().lower()
+
+        if selection == '1':
+            create_sync_test_videos()
+        elif selection == '2':
+            create_dvd_isos()
+        elif selection == '3':
+            manual_calibration_entry()
+        elif selection == '4':
+            show_project_summary()
+        elif selection == 'e':
+            break
+        else:
+            print("Invalid selection. Please enter 1-4 or e.")
+            input("\nPress Enter to continue...")
 
 
 def display_av_calibration_menu():
@@ -2454,62 +2544,31 @@ def display_av_calibration_menu():
         display_header()
         print("\nA/V CALIBRATION MENU")
         print("=" * 30)
-        print("1. A/V 1 Second Pulse Calibration")
-        print("2. Precision Timecode Capture (Recommended)")
-        print("3. Validate VHS Capture Results")
-        print("4. MP4 Timecode Validation (Direct Test)")
-        print("5. Manual Calibration Value Entry")
-        print("6. Calculate DdD Startup Delay")
-        print("7. Calculate SOX Startup Delay")
-        print("8. Calculate Sync Offset from Delays (Simple Method)")
-        print("9. Validate Results")
-        print("10. Create Sync Test Videos (MP4)")
-        print("11. Create DVD ISOs from MP4s")
-        print("12. View Testing Setup")
-        print("13. Return to Main Menu")
+        print()
+        print("1. Robust Timecode Method (Recommended)")
+        print("   → Frame-accurate timecode patterns for microsecond precision")
+        print()
+        print("2. Simple Startup Delay Method")
+        print("   → Measures hardware delays (less accurate, for troubleshooting)")
+        print()
+        print("3. Tools & Settings")
+        print("   → Manual entry, view settings, validation")
+        print()
+        print("e. Return to Main Menu")
 
-        selection = input("\nSelect calibration option (1-13): ").strip().lower()
+        selection = input("\nSelect option (1-3/e): ").strip().lower()
 
         if selection == '1':
-            run_av_alignment()
-            break  # Return to main menu after calibration
+            display_robust_timecode_menu()
         elif selection == '2':
-            precision_timecode_capture()
-            break  # Return to main menu after timecode capture
+            display_simple_delay_menu()
         elif selection == '3':
-            capture_vhs_validation_tape()
-            break  # Return to main menu after VHS validation
-        elif selection == '4':
-            validate_mp4_timecode()
-            break  # Return to main menu after MP4 validation
-        elif selection == '5':
-            manual_calibration_entry()
-            break  # Return to main menu after manual entry
-        elif selection == '6':
-            calculate_ddd_startup_delay()
-            break  # Return to main menu after startup delay calculation
-        elif selection == '7':
-            calculate_sox_startup_delay()
-            break  # Return to main menu after SOX delay calculation
-        elif selection == '8':
-            calculate_sync_offset_from_delays()
-            break  # Return to main menu after sync offset calculation
-        elif selection == '9':
-            validate_calibration_results()
-            break  # Return to main menu after validation
-        elif selection == '10':
-            create_sync_test_videos()
-            # Don't break here - return to this menu after creating videos
-        elif selection == '11':
-            create_dvd_isos()
-            # Don't break here - return to this menu after creating ISOs
-        elif selection == '12':
-            show_project_summary()
-            # Don't break here - return to this menu after viewing setup
-        elif selection == '13':
-            break  # Return to main menu
+            display_calibration_tools_menu()
+        elif selection == 'e':
+            break
         else:
-            print("Invalid selection. Please enter 1-13.")
+            print("Invalid selection. Please enter 1-3 or e.")
+            input("\nPress Enter to continue...")
 
 
 def manual_calibration_entry():
@@ -2676,8 +2735,7 @@ def calculate_ddd_startup_delay():
     
     try:
         # Create shell script for precise timing measurement
-        # Note: DomesdayDuplicator doesn't take output file parameter in headless mode
-        # It uses its own naming scheme and saves to current directory or configured location
+        # Uses --capture-directory and --output-file to control output location
         shell_script = f'''
 #!/bin/bash
 echo "Testing DomesdayDuplicator startup timing..."
@@ -2688,8 +2746,8 @@ echo "Start time: $start_time"
 existing_files=$(find "{temp_dir}" -name "*.lds" 2>/dev/null | wc -l)
 echo "Existing .lds files: $existing_files"
 
-# Start DomesdayDuplicator in background
-DomesdayDuplicator --start-capture --headless &
+# Start DomesdayDuplicator in background with explicit output location
+DomesdayDuplicator --start-capture --headless --capture-directory "{os.path.abspath(temp_dir)}" --output-file "{test_filename}" &
 ddd_pid=$!
 echo "DomesdayDuplicator PID: $ddd_pid"
 
@@ -3430,18 +3488,15 @@ def precision_timecode_capture():
     alignment_tbc_json_filename = os.path.join(capture_folder, f"{alignment_base_name}.tbc.json")
     alignment_video_filename = os.path.join(capture_folder, f"{alignment_base_name}_ffv1.mkv")
     
-    print("\033[91mIMPORTANT SETUP REQUIRED:\033[0m")
-    print(f"\033[91m   ⚠️  You must manually configure the Domesday Duplicator Client to point to: {os.path.abspath(capture_folder)}\033[0m")
-    print(f"\033[91m   ⚠️  Set DomesdayDuplicator filename to: {alignment_base_name}\033[0m")
-    print(f"   This ensures all calibration files are organized with matching names.")
+    print(f"Output directory: {os.path.abspath(capture_folder)}")
+    print(f"Output filename: {alignment_base_name}")
     print()
-    
+
     print("BEFORE STARTING CALIBRATION CAPTURE:")
     print("1. Make sure you've recorded at least 5 minutes of the included test pattern files onto a VHS tape")
     print("2. Ensure your Domesday duplicator is plugged in and powered on")
     print("3. Ensure your clockgen lite is connected and working")
-    print("4. Configure DomesdayDuplicator output location and filename as shown above")
-    print("5. Insert your VHS tape into your VCR and press play")
+    print("4. Insert your VHS tape into your VCR and press play")
     print()
     
     print("\033[92m⚠️  Press Play on your VCR before pressing Enter now or alignment will be out of sync\033[0m")
@@ -3457,7 +3512,9 @@ def precision_timecode_capture():
         try:
             # 1. Start video capture using command line (headless mode for minimal latency)
             print("Starting DomesdayDuplicator capture (headless mode for minimal latency)...")
-            ddd_process = subprocess.Popen(['DomesdayDuplicator', '--start-capture', '--headless'],
+            ddd_process = subprocess.Popen(['DomesdayDuplicator', '--start-capture', '--headless',
+                                           '--capture-directory', os.path.abspath(capture_folder),
+                                           '--output-file', alignment_base_name],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                       env=get_clean_env_for_system_tools())
             time.sleep(2)  # Wait for startup
@@ -3685,18 +3742,27 @@ def precision_timecode_capture():
     print(f"• TBC timing data (.tbc.json)")
     print()
     print("NEXT STEPS:")
-    print("• Use 'Menu 5 → Option 3: Capture VHS Validation Tape' to analyze these files")
-    print("• The validation will measure your capture timing and calculate needed calibration")
-    print("• Apply the calibration results using 'Menu 5 → Option 5: Manual Calibration Entry'")
+    print("• The calibration delay has been automatically calculated and saved")
+    print("• Use the Workflow Control Centre to process your actual VHS captures")
+    print("• To verify calibration, run Capture & Analyze again - offset should be near 0.000s")
     
     input("\nPress Enter to return to menu...")
 
 
+# TODO: REMOVE THIS FUNCTION - No longer used after menu restructure (Jan 2026)
+# Validation is now done via the Workflow Control Centre or by running Capture & Analyze again.
 def capture_vhs_validation_tape():
-    """Capture VHS Validation Tape function - wrapper for vhs_capture_validation"""
-    vhs_capture_validation()
+    """DEPRECATED: Use Workflow Control Centre or Capture & Analyze instead."""
+    raise NotImplementedError(
+        "capture_vhs_validation_tape() is deprecated. "
+        "Use the Workflow Control Centre or run Capture & Analyze again to validate timing."
+    )
 
-def vhs_capture_validation():
+def _capture_vhs_validation_tape_DISABLED():
+    """Capture VHS Validation Tape function - wrapper for vhs_capture_validation - DISABLED"""
+    _vhs_capture_validation_DISABLED()
+
+def _vhs_capture_validation_DISABLED():
     """Validate existing VHS captures using enhanced VHS timecode analysis"""
     clear_screen()
     display_header()
@@ -4089,59 +4155,6 @@ def validate_mp4_timecode():
     
     input("\nPress Enter to return to menu...")
 
-def validate_calibration_results():
-    """Validate calibration results using configured delay"""
-    clear_screen()
-    display_header()
-    print("\nVALIDATE CALIBRATION RESULTS")
-    print("=" * 40)
-    print("This will test your current calibration by capturing with the")
-    print("configured delay and measuring the resulting offset.")
-    print()
-    print("Process:")
-    print("   1. Uses configured delay (not zero) for capture")
-    print("   2. Runs complete workflow: capture → decode → align → analyze")
-    print("   3. Measures final timing offset")
-    print("   4. Creates debug output for analysis")
-    print("   5. Shows if calibration is working correctly")
-    print()
-    print("Expected result: ~0.000s offset if calibration is accurate")
-    print()
-    
-    # Import config functions to show current settings
-    sys.path.append('.')
-    from config import load_config
-    
-    config = load_config()
-    current_delay = config.get('audio_delay', 0.000)
-    
-    print(f"Current configuration:")
-    print(f"   Audio delay: {current_delay:.3f}s")
-    print(f"   This delay will be applied during validation capture")
-    print()
-    
-    if current_delay == 0.000:
-        print("WARNING: Audio delay is 0.000s")
-        print("   You may want to run calibration first to establish a baseline.")
-        print("   Continuing anyway...")
-        print()
-    
-    confirm = input("Start validation capture? (Y/n): ").strip().lower()
-    if confirm in ['n', 'no']:
-        print("Validation cancelled.")
-        input("\nPress Enter to return to menu...")
-        return
-    
-    try:
-        # Import and run the validation function from ddd_clockgen_sync
-        from ddd_clockgen_sync import validate_calibration_with_configured_delay
-        validate_calibration_with_configured_delay()
-    except Exception as e:
-        print(f"Error during validation: {e}")
-    
-    input("\nPress Enter to return to menu...")
-
-
 def get_current_script_delay():
     """Read the current delay value from the script file"""
     script_file = "ddd_clockgen_sync.py"
@@ -4466,17 +4479,17 @@ def create_custom_test_pattern_menu():
     print("1. Create Custom Calibration Videos (1s ON/OFF)")
     print("2. Create Custom PAL Static Chart")
     print("3. Create Custom NTSC Static Chart")
-    print("4. Return to Video Menu")
-    
-    choice = input("\nSelect option (1-4): ").strip()
-    
+    print("e. Return to Video Menu")
+
+    choice = input("\nSelect option (1-3/e): ").strip().lower()
+
     if choice == '1':
         create_custom_calibration_videos(custom_pattern)
     elif choice == '2':
         create_custom_belle_nuit_chart('PAL', custom_pattern)
     elif choice == '3':
         create_custom_belle_nuit_chart('NTSC', custom_pattern)
-    elif choice == '4':
+    elif choice == 'e':
         return
     else:
         print("\nInvalid selection")
@@ -4773,10 +4786,10 @@ def display_settings_menu():
         print("3. Performance Settings")
         print("4. View Current Settings")
         print("5. Reset to Defaults")
-        print("6. Return to Main Menu")
-        
-        selection = input("\nSelect option (1-6): ").strip()
-        
+        print("e. Return to Main Menu")
+
+        selection = input("\nSelect option (1-5/e): ").strip().lower()
+
         if selection == '1':
             change_capture_directory()
         elif selection == '2':
@@ -4787,10 +4800,10 @@ def display_settings_menu():
             view_detailed_settings()
         elif selection == '5':
             reset_to_defaults()
-        elif selection == '6':
+        elif selection == 'e':
             break  # Return to main menu
         else:
-            print("Invalid selection. Please enter 1, 2, 3, 4, 5, or 6.")
+            print("Invalid selection. Please enter 1-5 or e.")
             time.sleep(1)
 
 def manage_processing_locations():
@@ -4844,10 +4857,10 @@ def manage_processing_locations():
     print("2. Remove Processing Location")
     print("3. View Location Details")
     print("4. Clear All Locations")
-    print("5. Return to Settings Menu")
-    
-    choice = input("\nSelect option (1-5): ").strip()
-    
+    print("e. Return to Settings Menu")
+
+    choice = input("\nSelect option (1-4/e): ").strip().lower()
+
     if choice == '1':
         add_processing_location()
     elif choice == '2':
@@ -4856,10 +4869,10 @@ def manage_processing_locations():
         view_location_details()
     elif choice == '4':
         clear_all_locations()
-    elif choice == '5':
+    elif choice == 'e':
         return
     else:
-        print("Invalid selection. Please enter 1-5.")
+        print("Invalid selection. Please enter 1-4 or e.")
         time.sleep(1)
         manage_processing_locations()  # Return to this menu
 
@@ -5078,17 +5091,17 @@ def change_capture_directory():
     print("1. Interactive Directory Browser (recommended)")
     print("2. Quick Select from Common Locations")
     print("3. Enter Path Manually")
-    print("4. Cancel")
-    
-    choice = input("\nSelect option (1-4): ").strip()
-    
+    print("e. Cancel")
+
+    choice = input("\nSelect option (1-3/e): ").strip().lower()
+
     if choice == '1':
         new_path = interactive_directory_browser()
     elif choice == '2':
         new_path = quick_location_selector()
     elif choice == '3':
         new_path = get_manual_path_input()
-    elif choice == '4':
+    elif choice == 'e':
         print("\nNo changes made.")
         input("Press Enter to continue...")
         return
@@ -5736,8 +5749,8 @@ def main():
             display_header()
             display_main_menu()
             
-            choice = input("\nSelect an option (1-10): ").strip()
-            
+            choice = input("\nSelect an option (1-6/e): ").strip().lower()
+
             if choice == '1':
                 capture_new_video()
             elif choice == '2':
@@ -5750,13 +5763,13 @@ def main():
                 check_dependencies()
             elif choice == '6':
                 show_help()
-            elif choice == '7':
+            elif choice == 'e':
                 clear_screen()
                 print("Thanks for using DdD Sync Capture!")
                 print("Happy archiving! ")
                 break
             else:
-                print("Invalid selection. Please choose 1-7.")
+                print("Invalid selection. Please choose 1-6 or e.")
                 time.sleep(1)
                 
         except KeyboardInterrupt:
@@ -6057,10 +6070,10 @@ def configure_job_queue_settings():
         print("2. Start/stop job processor")
         print("3. Clean up old completed jobs")
         print("4. View detailed job information")
-        print("5. Return to menu")
-        
-        choice = input("\nSelect option (1-5): ").strip()
-        
+        print("e. Return to menu")
+
+        choice = input("\nSelect option (1-4/e): ").strip().lower()
+
         if choice == '1':
             try:
                 current = job_manager.max_concurrent_jobs
@@ -6122,10 +6135,10 @@ def configure_job_queue_settings():
                         print(f"   Completed: {job.completed_at.strftime('%Y-%m-%d %H:%M:%S')}")
                     if job.error_message:
                         print(f"   Error: {job.error_message}")
-        
-        elif choice == '5':
+
+        elif choice == 'e':
             return
-        
+
     except Exception as e:
         print(f"Error accessing job queue: {e}")
     
@@ -6156,10 +6169,10 @@ def legacy_parallel_decode_menu():
     print("2. Configure Parallel Jobs (Select specific files)")
     print("3. Demo Mode (Quick test with limited frames)")
     print("4. View Progress Display (Test interface)")
-    print("5. Return to Job Processing Menu")
-    
-    choice = input("\nSelect option (1-5): ").strip()
-    
+    print("e. Return to Job Processing Menu")
+
+    choice = input("\nSelect option (1-4/e): ").strip().lower()
+
     if choice == '1':
         start_auto_parallel_decode()
     elif choice == '2':
@@ -6168,7 +6181,7 @@ def legacy_parallel_decode_menu():
         run_parallel_demo()
     elif choice == '4':
         test_progress_display()
-    elif choice == '5':
+    elif choice == 'e':
         return
     else:
         print("\nInvalid selection")
@@ -6476,20 +6489,20 @@ def display_performance_settings_menu():
         print("1. Configure FFmpeg Thread Count")
         print("2. View Performance Status")
         print("3. Reset to Defaults")
-        print("4. Return to Settings Menu")
-        
-        selection = input("\nSelect option (1-4): ").strip()
-        
+        print("e. Return to Settings Menu")
+
+        selection = input("\nSelect option (1-3/e): ").strip().lower()
+
         if selection == '1':
             configure_ffmpeg_threads()
         elif selection == '2':
             view_performance_status()
         elif selection == '3':
             reset_performance_defaults()
-        elif selection == '4':
+        elif selection == 'e':
             break  # Return to settings menu
         else:
-            print("Invalid selection. Please enter 1-4.")
+            print("Invalid selection. Please enter 1-3 or e.")
             time.sleep(1)
 
 def configure_ffmpeg_threads():

@@ -425,9 +425,23 @@ def get_alignment_duration():
     return duration
 
 
+# TODO: REMOVE THIS FUNCTION - No longer used after menu restructure (Jan 2026)
+# The robust timecode method in the calibration menu replaces this functionality.
+# Keeping commented out until we confirm nothing else calls it.
 def perform_av_alignment():
     """
+    DEPRECATED: This function is no longer used.
+    Use the Robust Timecode Method in the A/V Calibration menu instead.
+    """
+    raise NotImplementedError(
+        "perform_av_alignment() is deprecated and has been removed. "
+        "Use the Robust Timecode Method in the A/V Calibration menu instead."
+    )
+
+def _perform_av_alignment_DISABLED():
+    """
     Perform automated audio/video alignment with proper RF decode workflow
+    DISABLED - kept for reference only
     """
     try:
         print("\n=== Automated A/V Alignment ===")
@@ -459,15 +473,13 @@ def perform_av_alignment():
         alignment_tbc_json_filename = os.path.join(temp_folder, f"{alignment_base_name}.tbc.json")
         alignment_video_filename = os.path.join(temp_folder, f"{alignment_base_name}_ffv1.mkv")
         
-        print("\033[91mIMPORTANT SETUP REQUIRED:\033[0m")
-        print(f"\033[91m   ⚠️  You must manually configure the Domesday Duplicator Client to point to: {os.path.abspath(temp_folder)}\033[0m")
-        print(f"\033[91m   ⚠️  Set DomesdayDuplicator filename to: {alignment_base_name}\033[0m")
-        print(f"   This ensures all alignment files are organized with matching names.")
+        print(f"Output directory: {os.path.abspath(temp_folder)}")
+        print(f"Output filename: {alignment_base_name}")
         print()
-        
+
         input("Make sure you've recorded at least 5 minutes of the included test pattern files onto a VHS tape. Press any key to continue or Ctrl-C to stop.")
         input("Ensure your Domesday duplicator is plugged in and powered on and your clockgen lite is connected and working. Press any key to continue.")
-        input("Configure DomesdayDuplicator output location and filename as shown above, then insert your VHS tape into your VCR and press play. It's very important to be playing this alignment tape before calibration. Press any key to start Alignment Capture.")
+        input("Insert your VHS tape into your VCR and press play. It's very important to be playing this alignment tape before calibration. Press any key to start Alignment Capture.")
 
         # Capture alignment using command line DomesdayDuplicator
         print("\nStarting RF + Audio capture...")
@@ -484,7 +496,9 @@ def perform_av_alignment():
 
             # 2. Start video capture using command line with headless mode for minimal latency
             print("Starting DomesdayDuplicator capture (headless mode for minimal latency)...")
-            ddd_process = subprocess.Popen(['DomesdayDuplicator', '--start-capture', '--headless'], 
+            ddd_process = subprocess.Popen(['DomesdayDuplicator', '--start-capture', '--headless',
+                                           '--capture-directory', os.path.abspath(temp_folder),
+                                           '--output-file', alignment_base_name],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
             # Check if process is still running (successful start)
@@ -1768,10 +1782,24 @@ def update_capture_delay_only(new_delay):
         return False
 
 
+# TODO: REMOVE THIS FUNCTION - No longer used after menu restructure (Jan 2026)
+# Validation is now done via the Workflow Control Centre.
+# Keeping commented out until we confirm nothing else calls it.
 def validate_calibration_with_configured_delay():
+    """
+    DEPRECATED: This function is no longer used.
+    Use the Workflow Control Centre to validate your timing instead.
+    """
+    raise NotImplementedError(
+        "validate_calibration_with_configured_delay() is deprecated and has been removed. "
+        "Use the Workflow Control Centre to validate your timing instead."
+    )
+
+def _validate_calibration_with_configured_delay_DISABLED():
     """
     Validate calibration results by capturing with configured delay and measuring offset.
     This is identical to perform_av_alignment() but uses the configured delay instead of 0.
+    DISABLED - kept for reference only
     """
     try:
         print("\n=== Calibration Validation ===")
@@ -1810,19 +1838,14 @@ def validate_calibration_with_configured_delay():
         # Create debug output file
         debug_filename = os.path.join(temp_folder, f"{validation_base_name}_debug.txt")
         
-        print("\033[91mIMPORTANT SETUP REQUIRED:\033[0m")
-        print(f"\033[91m   ⚠️  You must manually configure the Domesday Duplicator Client to point to: {os.path.abspath(temp_folder)}\033[0m")
-        print(f"\033[91m   ⚠️  Set DomesdayDuplicator filename to: {validation_base_name}\033[0m")
-        print(f"   Debug output will be saved to: {validation_base_name}_debug.txt")
+        print(f"Output directory: {os.path.abspath(temp_folder)}")
+        print(f"Output filename: {validation_base_name}")
+        print(f"Debug output: {validation_base_name}_debug.txt")
         print()
-        print(f"\033[91mIMPORTANT: Use TEMP folder for validation, not your capture folder!\033[0m")
-        print(f"\033[91m   Temp folder: {os.path.abspath(temp_folder)}\033[0m")
-        print(f"\033[91m   This keeps validation files separate from your regular captures\033[0m")
-        print()
-        
+
         input("Make sure you've recorded at least 5 minutes of the included test pattern files onto a VHS tape. Press any key to continue or Ctrl-C to stop.")
         input("Ensure your Domesday duplicator is plugged in and powered on and your clockgen lite is connected and working. Press any key to continue.")
-        input("Configure DomesdayDuplicator output location and filename as shown above, then insert your VHS tape into your VCR and press play. It's very important to be playing this alignment tape before validation. Press any key to start Validation Capture.")
+        input("Insert your VHS tape into your VCR and press play. It's very important to be playing this alignment tape before validation. Press any key to start Validation Capture.")
 
         # Read configured delay
         config = load_config()
@@ -1854,7 +1877,9 @@ def validate_calibration_with_configured_delay():
 
             # 2. Start video capture using command line
             print("Starting DomesdayDuplicator capture...")
-            ddd_process = subprocess.Popen(['DomesdayDuplicator', '--start-capture', '--headless'], 
+            ddd_process = subprocess.Popen(['DomesdayDuplicator', '--start-capture', '--headless',
+                                           '--capture-directory', os.path.abspath(temp_folder),
+                                           '--output-file', validation_base_name],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
             # Check if process is still running (successful start)

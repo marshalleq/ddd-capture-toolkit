@@ -50,9 +50,9 @@ def show_project_workflow_status():
                 print()
                 print("Options:")
                 print("1. Configure Processing Locations")
-                print("2. Return to VHS-Decode Menu")
-                
-                choice = input("\nSelect option (1-2): ").strip()
+                print("e. Return to VHS-Decode Menu")
+
+                choice = input("\nSelect option (1/e): ").strip().lower()
                 if choice == '1':
                     _configure_processing_locations()
                     continue
@@ -92,10 +92,10 @@ def show_project_workflow_status():
             print("4. ⚙️  Filter & Display Options")
             print("5. 📁 Manage Processing Locations")
             print("6. 🚀 Job Queue Management")
-            print("7. 🔙 Return to VHS-Decode Menu")
-            
-            choice = input("\nSelect option (1-7): ").strip()
-            
+            print("e. 🔙 Return to VHS-Decode Menu")
+
+            choice = input("\nSelect option (1-6/e): ").strip().lower()
+
             if choice == '1':
                 continue  # Refresh by restarting the loop
             elif choice == '2':
@@ -109,10 +109,10 @@ def show_project_workflow_status():
             elif choice == '6':
                 from job_queue_display import show_job_queue_display
                 show_job_queue_display()
-            elif choice == '7':
+            elif choice == 'e':
                 break
             else:
-                print("Invalid selection. Please enter 1-7.")
+                print("Invalid selection. Please enter 1-6 or e.")
                 time.sleep(1)
                 
         except Exception as e:
@@ -178,10 +178,10 @@ def _show_batch_operations_menu(discovery: 'ProjectDiscovery', analyzer: 'Workfl
     print(f"3. Retry Failed Jobs ({len(failed_jobs)} projects with failures)")
     print(f"4. Clean Up Completed Projects")
     print(f"5. Export Project Status Report")
-    print(f"6. Return to Browser")
-    
-    choice = input("\nSelect option (1-6): ").strip()
-    
+    print(f"e. Return to Browser")
+
+    choice = input("\nSelect option (1-5/e): ").strip().lower()
+
     if choice == '1' and ready_decode:
         _batch_queue_decode_jobs(ready_decode, analyzer)
     elif choice == '2' and ready_export:
@@ -192,7 +192,7 @@ def _show_batch_operations_menu(discovery: 'ProjectDiscovery', analyzer: 'Workfl
         _batch_cleanup_projects(projects)
     elif choice == '5':
         _export_project_report(projects, analyzer)
-    elif choice == '6':
+    elif choice == 'e':
         return
     else:
         if choice in ['1', '2', '3']:
@@ -398,10 +398,10 @@ def _show_filter_display_options(display: 'ProjectStatusDisplay', directories: L
     print("9. Show Only Running/Queued Projects")
     print()
     print("10. Enable Auto-refresh Mode")
-    print("11. Return to Browser")
-    
-    choice = input("\nSelect option (1-11): ").strip()
-    
+    print("e. Return to Browser")
+
+    choice = input("\nSelect option (1-10/e): ").strip().lower()
+
     if choice == '1':
         display.config.show_legend = not display.config.show_legend
         print(f"Legend display {'enabled' if display.config.show_legend else 'disabled'}.")
@@ -430,13 +430,13 @@ def _show_filter_display_options(display: 'ProjectStatusDisplay', directories: L
         except KeyboardInterrupt:
             print("\nAuto-refresh stopped.")
             time.sleep(1)
-    elif choice == '11':
+    elif choice == 'e':
         return
     else:
         print("\n⚠️  Filter options not yet fully implemented.")
         print("Currently showing all projects. Advanced filtering coming soon.")
     
-    if choice not in ['10', '11']:
+    if choice not in ['10', 'e']:
         time.sleep(1)
 
 def _configure_processing_locations():
@@ -485,10 +485,10 @@ def _configure_processing_locations():
         print("1. Add New Location")
         print("2. Remove Location")
         print("3. Toggle Location Enabled/Disabled")
-        print("4. Return to Browser")
-        
-        choice = input("\nSelect option (1-4): ").strip()
-        
+        print("e. Return to Browser")
+
+        choice = input("\nSelect option (1-3/e): ").strip().lower()
+
         if choice == '1':
             name = input("Location name: ").strip()
             path = input("Directory path: ").strip()
@@ -534,8 +534,8 @@ def _configure_processing_locations():
                     print("❌ Invalid selection")
             except ValueError:
                 print("❌ Invalid input")
-                
-        elif choice == '4':
+
+        elif choice == 'e':
             return
         else:
             print("❌ Invalid selection")

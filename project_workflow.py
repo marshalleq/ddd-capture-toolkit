@@ -84,22 +84,22 @@ def _show_legacy_workflow_status():
         print("1. Add VHS Decode Jobs to Queue")
         print("2. Add TBC Export Jobs to Queue")
         print("3. View Detailed Job Queue Status")
-        print("4. Return to VHS-Decode Menu")
-        
+        print("e. Return to VHS-Decode Menu")
+
         # Import functions here to avoid circular imports
         from ddd_main_menu import add_vhs_decode_jobs_to_queue, add_tbc_export_jobs_to_queue
         from job_queue_display import show_job_queue_display
-        
-        selection = input("\nSelect option (1-4): ").strip()
-        
+
+        selection = input("\nSelect option (1-3/e): ").strip().lower()
+
         if selection == '1':
             add_vhs_decode_jobs_to_queue()
         elif selection == '2':
             add_tbc_export_jobs_to_queue()
         elif selection == '3':
             show_job_queue_display()
-        elif selection == '4':
+        elif selection == 'e':
             break  # Return to VHS-Decode menu
         else:
-            print("Invalid selection. Please enter 1-4.")
+            print("Invalid selection. Please enter 1-3 or e.")
             time.sleep(1)
