@@ -99,18 +99,18 @@ def display_main_menu():
     print("=" * 30)
 
 def create_sync_test_videos():
-    """Main sync test video creation menu"""
+    """Main video test chart creation menu"""
     clear_screen()
     display_header()
-    print("\nSYNC TEST VIDEO CREATION")
+    print("\nVIDEO TEST CHART CREATION")
     print("=" * 35)
     print("Create test videos for VHS archival workflows")
     print()
-    
+
     # Check if test patterns exist first
     pal_pattern = "media/Test Patterns/testchartpal.tif"
     ntsc_pattern = "media/Test Patterns/testchartntsc.tif"
-    
+
     if not os.path.exists(pal_pattern) or not os.path.exists(ntsc_pattern):
         print("Error: Test pattern images not found!")
         print(f"   Missing: {pal_pattern if not os.path.exists(pal_pattern) else ntsc_pattern}")
@@ -120,11 +120,11 @@ def create_sync_test_videos():
         print("\nPlease ensure test pattern files are in media/Test Patterns/")
         input("\nPress Enter to return to menu...")
         return
-    
+
     print("VIDEO CREATION OPTIONS")
     print("=" * 30)
-    print("1. Calibration Videos (1s ON/OFF pattern)")
-    print("2. VHS Sync Calibration Pattern (35s Cycles) (Recommended)")
+    print("1. 1s On/Off A/V Pattern")
+    print("2. VHS Sync Calibration Pattern (62s V2 Cycles)")
     print("3. Long-Form Timecode Generator (Full Tape Duration)")
     print("4. Create Belle Nuit PAL Test Chart")
     print("5. Create Belle Nuit NTSC Test Chart")
@@ -227,24 +227,27 @@ def create_calibration_videos():
         print(f"\nError: {e}")
     
 def create_vhs_pattern_generator():
-    """Create VHS Pattern with Test Charts + Timecode using the new pattern generator"""
+    """Create VHS Pattern with 7-section V2 calibration cycles"""
     clear_screen()
     display_header()
-    print("\nVHS PATTERN WITH 4-STEP CYCLE")
+    print("\nVHS CALIBRATION PATTERN (V2)")
     print("=" * 40)
-    print("Create 4-step VHS test pattern for sync validation:")
+    print("Create 7-section V2 calibration pattern for A/V sync measurement:")
     print()
-    print("4-Step Cycle Structure (35-second cycles):")
-    print("   1. 3s: Test chart + 1kHz tone")
-    print("   2. 1s: Black screen (no audio) - Visual cue for recording")
-    print("   3. 30s: Timecode - Timing reference")
-    print("   4. 1s: Black screen (no audio) - Visual cue cycle finished")
-    print("   Then loops back to step 1")
+    print("V2 Cycle Structure (62-second cycles):")
+    print("   1. 10s: Leader (0xFFFF) - VCR settling time")
+    print("   2.  5s: Countdown - Frames until timecode starts")
+    print("   3.  1s: Separator (0x0000) - Section boundary")
+    print("   4. 30s: Timecode - Frame numbers for offset calculation")
+    print("   5.  1s: Separator (0x0000) - Section boundary")
+    print("   6.  5s: Count-up - Frames since timecode ended")
+    print("   7. 10s: Tail (0xFFFF) - Cycle complete marker")
     print()
-    print("This pattern is ideal for VHS validation as it provides:")
-    print("   • Audio markers (1kHz tone) at cycle start for validation lock-on")
-    print("   • Clear visual cues for VHS recording management")
-    print("   • Consistent timing for measuring misaligned frame audio")
+    print("V2 features for robust VHS detection:")
+    print("   • Red/blue color encoding (survives VHS luma noise)")
+    print("   • 3-row visual strips with majority voting")
+    print("   • 400/800 Hz FSK audio with 1200 Hz pilot tone")
+    print("   • Machine-readable section markers (no guessing)")
     print()
     
     # Get format preference
@@ -265,39 +268,12 @@ def create_vhs_pattern_generator():
         else:
             print("Invalid choice. Please enter P, N, or B.")
     
-    # Get number of cycles with helpful suggestions
-    print("\nCycle count suggestions:")
-    print("  Default: 10 cycles (5.8 minutes)")
-    print("  30-min tape: 51 cycles")
-    print("  1-hour tape: 103 cycles")
-    print("  3-hour tape: 309 cycles")
-    print("  4-hour tape: 411 cycles")
-    print()
-    
-    while True:
-        try:
-            cycles_input = input("Number of 35-second cycles [10]: ").strip()
-            if not cycles_input:
-                num_cycles = 10  # Default 10 cycles = 7.5 minutes
-            else:
-                num_cycles = int(cycles_input)
-            
-            if num_cycles < 1:
-                print("Must have at least 1 cycle")
-                continue
-            elif num_cycles > 500:
-                print("Very large number of cycles - this will create a long video")
-                confirm = input("Continue anyway? (y/N): ").strip().lower()
-                if confirm not in ['y', 'yes']:
-                    continue
-            
-            break
-            
-        except ValueError:
-            print("Please enter a valid number")
-    
-    total_duration = num_cycles * 35
-    print(f"\nTotal duration: {num_cycles} cycles × 35s = {total_duration}s ({total_duration/60:.1f} minutes)")
+    # Fixed 2 cycles - 12-bit frame encoding (4096 frames) limits unique
+    # frame numbers to ~164 seconds at 25fps, so 2 cycles (124s) is optimal
+    num_cycles = 2
+    total_duration = num_cycles * 62
+    print(f"\nGenerating {num_cycles} cycles × 62s = {total_duration}s calibration video")
+    print("(12-bit encoding limits unique frame numbers to ~164 seconds)")
     
     # Ensure mp4 directory exists
     os.makedirs("media/mp4", exist_ok=True)
@@ -305,24 +281,23 @@ def create_vhs_pattern_generator():
     # Check for existing files
     output_files = []
     for fmt in formats:
-        output_file = f"media/mp4/vhs_pattern_{fmt.lower()}_{num_cycles}cycles_35s.mp4"
+        output_file = f"media/mp4/vhs_calibration_{fmt.lower()}_v2.mp4"
         output_files.append((fmt, output_file))
-        
+
         if os.path.exists(output_file):
             size_mb = os.path.getsize(output_file) / (1024*1024)
             print(f"\nWarning: {fmt} output file already exists!")
             print(f"   {output_file} ({size_mb:.1f} MB)")
-    
+
     if any(os.path.exists(output_file) for _, output_file in output_files):
         overwrite = input("\nOverwrite existing files? (y/N): ").strip().lower()
         if overwrite not in ['y', 'yes']:
             print("Operation cancelled.")
             input("\nPress Enter to return to menu...")
             return
-    
-    print(f"\nCreating VHS pattern(s) for {', '.join(formats)}...")
-    print(f"Pattern: {num_cycles} cycles of 35 seconds each")
-    print("This will take several minutes to complete.")
+
+    print(f"\nCreating VHS calibration video for {', '.join(formats)}...")
+    print("This will take a minute or two to complete.")
     print()
     
     try:
@@ -376,14 +351,16 @@ def create_vhs_pattern_generator():
                 print(f"ERROR generating {fmt} pattern: {e}")
         
         if success_count > 0:
-            print(f"\nVHS pattern creation completed!")
-            print(f"Successfully created {success_count}/{len(formats)} pattern(s)")
+            print(f"\nV2 calibration video created!")
             print()
-            print("USAGE INSTRUCTIONS:")
-            print("1. Record these MP4 files to VHS tape")
-            print("2. Capture back with Domesday Duplicator + audio interface")
-            print("3. Use validation script to analyze the structured timecode sections")
-            print("4. Get precise sync measurements with easy section identification")
+            print("NEXT STEPS:")
+            print("2. Create DVD ISO (option 2), burn to DVD")
+            print("3. Record DVD playback to VHS tape")
+            print("4. Toggle Calibration Mode ON (option 3)")
+            print("   Then Main Menu → Capture to capture VHS")
+            print("5. Process in Workflow Control Centre (option 4)")
+            print("   (D)ecode → (E)xport → (A)lign → (F)inal")
+            print("6. Analyze V2 Calibration (option 5)")
         else:
             print(f"\nFailed to create VHS patterns.")
             print("Please check dependencies and try again.")
@@ -465,15 +442,11 @@ def create_dvd_isos():
         print("Convert MP4 sync test videos to DVD-Video ISOs")
         print("that can be burned and played on hardware DVD players.")
         print()
-        
-        print("This process will:")
-        print("1. Scan for all available MP4 test pattern files")
-        print("2. Convert MP4s to DVD-compatible MPEG-2")
-        print("3. Create proper VIDEO_TS structure")
-        print("4. Generate ISO files ready for burning")
+        print("Scans for MP4s, converts to DVD-compatible MPEG-2,")
+        print("creates VIDEO_TS structure, and generates ISO files.")
         print()
-        
-        print("DVD ISO OPTIONS")
+
+        print("OPTIONS")
         print("=" * 20)
         print("1. Create DVD ISOs from MP4s")
         print("e. Return to Main Menu")
@@ -496,6 +469,111 @@ def create_dvd_isos():
         else:
             print("\nInvalid selection")
             time.sleep(1)
+
+
+def create_calibration_iso(format_type=None):
+    """Create DVD ISO from the V2 calibration video"""
+    clear_screen()
+    display_header()
+    print("\nCREATE CALIBRATION DVD ISO")
+    print("=" * 35)
+
+    # Check which calibration videos exist
+    available = []
+    for fmt in ['PAL', 'NTSC']:
+        mp4_path = f"media/mp4/vhs_calibration_{fmt.lower()}_v2.mp4"
+        if os.path.exists(mp4_path):
+            size_mb = os.path.getsize(mp4_path) / (1024 * 1024)
+            available.append((fmt, mp4_path, size_mb))
+
+    if not available:
+        print("No calibration videos found.")
+        print()
+        print("Please generate the calibration video first (Step 1).")
+        input("\nPress Enter to return...")
+        return False
+
+    # If format not specified and multiple exist, ask user
+    if format_type is None:
+        if len(available) == 1:
+            format_type = available[0][0]
+        else:
+            print("Available calibration videos:")
+            for i, (fmt, path, size) in enumerate(available, 1):
+                print(f"  {i}. {fmt} ({size:.1f} MB)")
+            print()
+            choice = input("Select format (1/2): ").strip()
+            if choice == '1':
+                format_type = available[0][0]
+            elif choice == '2':
+                format_type = available[1][0]
+            else:
+                print("Invalid selection.")
+                input("\nPress Enter to return...")
+                return False
+
+    # Get the selected video
+    mp4_file = f"media/mp4/vhs_calibration_{format_type.lower()}_v2.mp4"
+    file_size = os.path.getsize(mp4_file) / (1024 * 1024)
+    print(f"Source: {mp4_file} ({file_size:.1f} MB)")
+    print(f"Format: {format_type}")
+    print()
+
+    # ISO output path
+    os.makedirs("media/iso", exist_ok=True)
+    iso_file = f"media/iso/vhs_calibration_{format_type.lower()}_v2.iso"
+
+    if os.path.exists(iso_file):
+        iso_size = os.path.getsize(iso_file) / (1024 * 1024)
+        print(f"ISO already exists: {iso_file} ({iso_size:.1f} MB)")
+        overwrite = input("Overwrite? (y/N): ").strip().lower()
+        if overwrite != 'y':
+            print("Cancelled.")
+            input("\nPress Enter to return...")
+            return False
+
+    print("\nCreating DVD-Video ISO...")
+    print("(Converts to MPEG-2, creates VIDEO_TS structure)")
+    print()
+
+    try:
+        # Import the ISO creation function
+        sys.path.insert(0, 'tools')
+        from create_iso_from_mp4 import create_dvd_iso_from_mp4, check_dependencies
+
+        # Check dependencies
+        missing_required, missing_optional = check_dependencies()
+        if missing_required:
+            print(f"Missing required tools: {', '.join(missing_required)}")
+            input("\nPress Enter to return...")
+            return False
+
+        # Create the ISO
+        volume_label = f"VHS_CAL_{format_type.upper()}_V2"
+        success = create_dvd_iso_from_mp4(mp4_file, iso_file, volume_label, format_type.lower())
+
+        if success:
+            iso_size = os.path.getsize(iso_file) / (1024 * 1024)
+            print()
+            print("=" * 35)
+            print(f"ISO created: {iso_file}")
+            print(f"Size: {iso_size:.1f} MB")
+            print()
+            print("Next: Burn this ISO to a DVD, then record")
+            print("the DVD playback to VHS tape.")
+
+        input("\nPress Enter to return...")
+        return success
+
+    except ImportError as e:
+        print(f"Error importing ISO creation tools: {e}")
+        input("\nPress Enter to return...")
+        return False
+    except Exception as e:
+        print(f"Error creating ISO: {e}")
+        input("\nPress Enter to return...")
+        return False
+
 
 def vhs_audio_alignment():
     """Run the VHS audio alignment tool"""
@@ -2407,69 +2485,133 @@ def manual_audio_alignment():
     
     input("\nPress Enter to return to menu...")
 
-def capture_new_video():
-    """Start video capture workflow using the updated DomesdayDuplicator with file-based stop mechanism"""
-    clear_screen()
-    display_header()
-    print("\nCAPTURE NEW VIDEO")
-    print("=" * 25)
-    print("Start Domesday Duplicator capture with synchronised audio")
-    print("(Uses updated file-based stop mechanism for proper JSON metadata generation)")
-    print()
-    
-    # Import and run the original capture function
-    try:
-        sys.path.append('.')
-        from ddd_clockgen_sync import start_capture_and_record
-        start_capture_and_record()
-    except Exception as e:
-        print(f"Error starting capture: {e}")
-    
-    input("\nPress Enter to return to menu...")
-
-def display_robust_timecode_menu():
-    """Display the robust timecode calibration submenu"""
+def capture_new_video(return_to_calibration=False):
+    """Capture menu with calibration mode toggle"""
     while True:
         clear_screen()
         display_header()
-        print("\nROBUST TIMECODE METHOD (Recommended)")
-        print("=" * 45)
-        print("Uses VHS timecode test patterns for microsecond-accurate")
-        print("audio/video synchronization measurement.")
-        print()
-        print("STEP 1 - PREPARATION:")
-        print("  1. Generate Timecode Test Video")
-        print("  2. Create DVD ISOs from MP4s")
-        print("     (Then burn ISO to DVD with your chosen burning software)")
-        print()
-        print("STEP 2 - CALIBRATION:")
-        print("  3. Capture & Analyze (Record DVD to VHS)")
-        print("     → Captures, analyzes timecode, and SETS the delay")
-        print("  4. Test MP4 Detection (Direct Test)")
-        print("     → Tests detection on MP4 without VHS capture")
-        print()
-        print("STEP 3 - VALIDATION:")
-        print("  5. Workflow Control Centre (Validate Your Timing)")
-        print()
-        print("e. Return to Calibration Menu")
 
-        selection = input("\nSelect option (1-5/e): ").strip().lower()
+        # Check calibration mode status
+        from config import load_config
+        config = load_config()
+        calibration_mode = config.get('calibration_mode', False)
+
+        print("\nCAPTURE NEW VIDEO")
+        print("=" * 50)
+
+        # Calibration mode status - prominent display
+        if calibration_mode:
+            print()
+            print("  *** CALIBRATION MODE: ON ***")
+            print("  Audio delay disabled (0.000s)")
+            print("  Project name fixed to 'calibration'")
+            print()
+            print("  Turn calibration mode OFF for normal captures.")
+            print()
+        else:
+            print(f"  Calibration Mode: OFF (normal capture)")
+            print()
+
+        print("Start Domesday Duplicator capture with synchronised audio")
+        print()
+        print("OPTIONS:")
+        print("  1. Start Capture")
+        if calibration_mode:
+            print("  2. Turn Calibration Mode OFF")
+        else:
+            print("  2. Turn Calibration Mode ON")
+        print()
+        if return_to_calibration:
+            print("  e. Return to Calibration Menu")
+        else:
+            print("  e. Return to Main Menu")
+
+        selection = input("\nSelect option (1-2/e): ").strip().lower()
 
         if selection == '1':
-            create_sync_test_videos()
+            # Start capture
+            try:
+                sys.path.append('.')
+                from ddd_clockgen_sync import start_capture_and_record
+                start_capture_and_record()
+            except Exception as e:
+                print(f"Error starting capture: {e}")
+            input("\nPress Enter to continue...")
         elif selection == '2':
-            create_dvd_isos()
-        elif selection == '3':
-            precision_timecode_capture()
-        elif selection == '4':
-            validate_mp4_timecode()
-        elif selection == '5':
-            launch_workflow_control_centre()
+            # Toggle calibration mode - menu refreshes to show new state
+            toggle_calibration_mode()
         elif selection == 'e':
             break
         else:
-            print("Invalid selection. Please enter 1-5 or e.")
+            print("Invalid selection.")
+            time.sleep(1)
+
+def display_robust_timecode_menu():
+    """Display the V2 timecode calibration workflow"""
+    while True:
+        clear_screen()
+        display_header()
+
+        print("\nV2 TIMECODE CALIBRATION")
+        print("=" * 45)
+        print("Frame-accurate A/V sync using V2 timecode patterns.")
+        print()
+        print("STEP 1 - GENERATE:")
+        print("  1. Generate V2 Calibration Video (124 seconds)")
+        print()
+        print("STEP 2 - BURN:")
+        print("  2. Create Calibration DVD ISO")
+        print("     (Then burn ISO to DVD with your burning software)")
+        print()
+        print("STEP 3 - RECORD:")
+        print("     Record DVD playback to VHS tape (manual)")
+        print()
+        print("STEP 4 - CAPTURE:")
+        print("  3. Perform Calibration Capture")
+        print()
+        print("STEP 5 - PROCESS:")
+        print("  4. Workflow Control Centre")
+        print("     Process capture through (D)→(E)→(A)→(F)inal")
+        print()
+        print("STEP 6 - ANALYZE:")
+        print("  5. Analyze V2 Calibration (from _final.mkv)")
+        print()
+        print("TESTING:")
+        print("  6. Test MP4 Detection (without VHS)")
+        print()
+        print("e. Return to Calibration Menu")
+
+        selection = input("\nSelect option (1-6/e): ").strip().lower()
+
+        if selection == '1':
+            create_vhs_pattern_generator()
+        elif selection == '2':
+            create_calibration_iso()
+        elif selection == '3':
+            capture_new_video(return_to_calibration=True)
+        elif selection == '4':
+            launch_workflow_control_centre()
+        elif selection == '5':
+            analyze_v2_calibration()
+        elif selection == '6':
+            validate_mp4_timecode()
+        elif selection == 'e':
+            break
+        else:
+            print("Invalid selection. Please enter 1-6 or e.")
             input("\nPress Enter to continue...")
+
+
+def toggle_calibration_mode():
+    """Toggle calibration mode on/off"""
+    from config import load_config, save_config
+
+    config = load_config()
+    current = config.get('calibration_mode', False)
+    new_value = not current
+
+    config['calibration_mode'] = new_value
+    save_config(config)
 
 
 def display_simple_delay_menu():
@@ -2511,7 +2653,7 @@ def display_calibration_tools_menu():
         print("=" * 35)
         print()
         print("VIDEO GENERATION:")
-        print("  1. Generate Timecode Test Video")
+        print("  1. Make Video Test Charts")
         print("  2. Create DVD ISOs from MP4s")
         print()
         print("SETTINGS:")
@@ -3431,76 +3573,469 @@ def calculate_sync_offset_from_delays():
     input("\nPress Enter to return to menu...")
 
 
-def precision_timecode_capture():
-    """Automated Precision Timecode Capture with VHS Timecode Test Patterns"""
+def analyze_v2_calibration_video(video_file, audio_file):
+    """
+    Analyze V2 calibration video to calculate A/V offset.
+
+    Decodes visual timecodes from video frames and FSK timecodes from audio,
+    then compares them to determine the offset between audio and video.
+
+    Args:
+        video_file: Path to the exported video (MKV/MP4)
+        audio_file: Path to the captured audio (FLAC/WAV)
+
+    Returns:
+        Tuple of (offset_seconds, sample_count, std_dev) or None if analysis fails
+    """
+    import cv2
+    import numpy as np
+
+    # Add tools path for importing timecode module
+    tools_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools', 'timecode-generator')
+    if tools_path not in sys.path:
+        sys.path.insert(0, tools_path)
+
+    try:
+        from shared_timecode_robust import RobustTimecodeGenerator
+    except ImportError as e:
+        print(f"ERROR: Could not import V2 timecode decoder: {e}")
+        return None
+
+    # Detect format from video
+    cap = cv2.VideoCapture(video_file)
+    if not cap.isOpened():
+        print(f"ERROR: Could not open video file: {video_file}")
+        return None
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # Determine format
+    format_type = 'PAL' if abs(fps - 25) < 1 else 'NTSC'
+    print(f"Video: {total_frames} frames at {fps:.2f} fps ({format_type})")
+    print(f"Resolution: {width}x{height}")
+
+    # Create decoder
+    decoder = RobustTimecodeGenerator(format_type=format_type)
+
+    # Sample frames throughout the video (skip first/last 10% for stability)
+    start_frame = int(total_frames * 0.1)
+    end_frame = int(total_frames * 0.9)
+    sample_interval = max(1, (end_frame - start_frame) // 100)  # ~100 samples
+
+    print(f"\nSampling frames {start_frame} to {end_frame} (interval: {sample_interval})")
+
+    decoded_points = []
+    failed_frames = 0
+
+    for frame_num in range(start_frame, end_frame, sample_interval):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+
+        # Decode visual timecode
+        try:
+            decoded_frame, confidence, status = decoder.decode_frame_with_validation(frame)
+
+            if status == "OK" and decoded_frame is not None:
+                # The offset is the difference between the actual frame position
+                # and what the timecode says the frame should be
+                # If video_frame=100 shows timecode=98, video is 2 frames ahead
+                offset_frames = frame_num - decoded_frame
+                decoded_points.append({
+                    'video_frame': frame_num,
+                    'decoded_frame': decoded_frame,
+                    'offset_frames': offset_frames,
+                    'confidence': confidence
+                })
+            else:
+                failed_frames += 1
+        except Exception as e:
+            failed_frames += 1
+
+    cap.release()
+
+    if len(decoded_points) < 5:
+        print(f"\nInsufficient decoded frames: {len(decoded_points)} (need at least 5)")
+        print(f"Failed to decode: {failed_frames} frames")
+        return None
+
+    print(f"Successfully decoded: {len(decoded_points)} frames")
+    print(f"Failed to decode: {failed_frames} frames")
+
+    # Calculate offset statistics
+    offsets = [p['offset_frames'] for p in decoded_points]
+
+    # Use median for robustness against outliers
+    median_offset = np.median(offsets)
+    std_dev = np.std(offsets)
+    mean_confidence = np.mean([p['confidence'] for p in decoded_points])
+
+    print(f"\nOffset analysis:")
+    print(f"   Median offset: {median_offset:.1f} frames")
+    print(f"   Std deviation: {std_dev:.2f} frames")
+    print(f"   Mean confidence: {mean_confidence:.2%}")
+
+    # Convert frames to seconds
+    offset_seconds = median_offset / fps
+
+    # Check for consistency (std dev should be low for good calibration)
+    if std_dev > 5:
+        print(f"\n⚠ Warning: High variation in offset measurements")
+        print(f"   This may indicate inconsistent timecode decoding")
+
+    return (offset_seconds, len(decoded_points), std_dev)
+
+
+def capture_calibration_vhs():
+    """Capture V2 calibration VHS to temp/calibration_v2 files"""
     clear_screen()
     display_header()
-    print("\nPRECISION TIMECODE ANALYSIS (RECOMMENDED)")
+    print("\nCAPTURE CALIBRATION VHS")
     print("=" * 50)
-    print("Automated A/V synchronisation using VHS timecode test patterns")
-    print("This is the most accurate calibration method available.")
+    print("Captures V2 calibration video from VHS tape.")
     print()
-    print("Process:")
-    print("   1. Record VHS timecode test pattern to tape")
-    print("   2. Capture back with Domesday Duplicator + audio interface")
-    print("   3. Analyze timecode for microsecond-accurate timing measurements")
-    print("   4. Automatically update calibration settings")
+
+    # Use project temp directory
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    capture_folder = os.path.join(project_root, "temp")
+
+    # Create temp directory if needed
+    if not os.path.exists(capture_folder):
+        try:
+            os.makedirs(capture_folder)
+        except Exception as e:
+            print(f"ERROR: Could not create temp directory: {e}")
+            input("\nPress Enter to return to menu...")
+            return
+
+    # Fixed calibration filename
+    calibration_base_name = "calibration_v2"
+    rf_file = os.path.join(capture_folder, f"{calibration_base_name}.lds")
+    audio_file = os.path.join(capture_folder, f"{calibration_base_name}.flac")
+
+    # Check for existing files
+    existing = []
+    if os.path.exists(rf_file):
+        existing.append(rf_file)
+    if os.path.exists(audio_file):
+        existing.append(audio_file)
+
+    if existing:
+        print("Existing calibration capture files found:")
+        for f in existing:
+            size_mb = os.path.getsize(f) / (1024*1024)
+            print(f"   {os.path.basename(f)} ({size_mb:.1f} MB)")
+        print()
+        overwrite = input("Overwrite? (y/N): ").strip().lower()
+        if overwrite != 'y':
+            print("Capture cancelled.")
+            input("\nPress Enter to return to menu...")
+            return
+        for f in existing:
+            try:
+                os.remove(f)
+            except:
+                pass
+
+    # Fixed 130-second duration
+    capture_duration = 130
+
+    print(f"\nOutput directory: {capture_folder}")
+    print(f"Output filename: {calibration_base_name}")
+    print(f"Capture duration: {capture_duration} seconds")
     print()
-    print("This uses the SAME timecode validation code as the MP4 Direct Test,")
-    print("ensuring consistent and reliable results across both workflows.")
+    print("BEFORE STARTING:")
+    print("1. V2 calibration video recorded on VHS tape")
+    print("2. Domesday Duplicator plugged in and powered on")
+    print("3. Clockgen Lite connected and working")
+    print("4. VHS tape cued to start of calibration pattern")
     print()
-    
-    # For calibration, always use project temp directory (not user's configured capture directory)
+
+    print("\033[92mPress PLAY on your VCR, then press Enter to start capture\033[0m")
+    input("Press Enter to start (or Ctrl-C to cancel): ")
+
+    print("\nStarting RF + Audio capture...")
+    try:
+        from ddd_clockgen_sync import get_sox_command
+
+        sox_command = get_sox_command(audio_file)
+
+        # Start DomesdayDuplicator capture
+        print("Starting DomesdayDuplicator capture...")
+        ddd_process = subprocess.Popen(
+            ['DomesdayDuplicator', '--start-capture', '--headless',
+             '--capture-directory', os.path.abspath(capture_folder),
+             '--output-file', calibration_base_name],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=get_clean_env_for_system_tools()
+        )
+        time.sleep(2)
+
+        if ddd_process.poll() is None:
+            print("DomesdayDuplicator capture started")
+
+            # Start audio recording
+            print("Starting audio recording...")
+            audio_process = subprocess.Popen(sox_command)
+
+            # Wait for capture duration
+            print(f"\nCapturing for {capture_duration} seconds...")
+            print("Progress: ", end="", flush=True)
+            for i in range(capture_duration):
+                time.sleep(1)
+                if (i + 1) % 10 == 0:
+                    print(f"{i+1}s ", end="", flush=True)
+                elif (i + 1) % 5 == 0:
+                    print(".", end="", flush=True)
+            print()
+
+            # Stop audio
+            print("\nStopping audio recording...")
+            audio_process.terminate()
+            audio_process.wait()
+
+            # Stop DomesdayDuplicator
+            print("Stopping DomesdayDuplicator capture...")
+            subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+                          capture_output=True, text=True, timeout=10,
+                          env=get_clean_env_for_system_tools())
+
+            print("\n" + "="*50)
+            print("CAPTURE COMPLETE")
+            print("="*50)
+
+            # Check files were created
+            rf_exists = os.path.exists(rf_file)
+            audio_exists = os.path.exists(audio_file)
+
+            if rf_exists:
+                size_mb = os.path.getsize(rf_file) / (1024*1024)
+                print(f"✓ RF capture: {os.path.basename(rf_file)} ({size_mb:.1f} MB)")
+            else:
+                print(f"✗ RF capture not found")
+
+            if audio_exists:
+                size_mb = os.path.getsize(audio_file) / (1024*1024)
+                print(f"✓ Audio capture: {os.path.basename(audio_file)} ({size_mb:.1f} MB)")
+            else:
+                print(f"✗ Audio capture not found")
+
+            print()
+            print("NEXT STEP:")
+            print("Use Workflow Control Centre (option 4) to process")
+            print("calibration_v2 through (D)ecode → (E)xport")
+
+        else:
+            print("ERROR: DomesdayDuplicator failed to start")
+            stdout, stderr = ddd_process.communicate()
+            if stderr:
+                print(f"Error: {stderr}")
+
+    except FileNotFoundError:
+        print("ERROR: DomesdayDuplicator not found in PATH")
+    except Exception as e:
+        print(f"Error during capture: {e}")
+
+    input("\nPress Enter to return to menu...")
+
+
+def analyze_v2_calibration():
+    """Analyze processed V2 calibration video and save offset"""
+    clear_screen()
+    display_header()
+    print("\nANALYZE V2 CALIBRATION")
+    print("=" * 50)
+    print("Analyzes V2 timecodes in calibration_final.mkv")
+    print("and saves the calculated A/V offset to config.")
+    print()
+
+    # Get capture directory
+    from config import load_config
+    config = load_config()
+    capture_folder = config.get('capture_directory', '')
+
+    if not capture_folder or not os.path.exists(capture_folder):
+        print("ERROR: Capture directory not configured or doesn't exist")
+        print("Please configure capture directory in Settings.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    # Look for the standard calibration file
+    calibration_file = os.path.join(capture_folder, "calibration_final.mkv")
+
+    if not os.path.exists(calibration_file):
+        print(f"Calibration file not found:")
+        print(f"   {calibration_file}")
+        print()
+        print("Please ensure you have:")
+        print("1. Captured with Calibration Mode ON (uses 'calibration' as name)")
+        print("2. Processed through Workflow Control Centre:")
+        print("   (D)ecode → (E)xport → (A)lign → (F)inal")
+        input("\nPress Enter to return to menu...")
+        return
+
+    video_file = calibration_file
+    video_size = os.path.getsize(video_file) / (1024*1024)
+    from datetime import datetime
+    mtime = os.path.getmtime(video_file)
+    mod_date = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
+
+    print(f"Found: calibration_final.mkv")
+    print(f"Size: {video_size:.1f} MB")
+    print(f"Modified: {mod_date}")
+    print()
+    print("Analyzing V2 timecodes...")
+    print()
+
+    # Run analysis (audio_file not needed for visual timecode analysis)
+    result = analyze_v2_calibration_video(video_file, None)
+
+    if result is None:
+        print("\n⚠ Analysis failed - could not decode V2 timecodes")
+        print("Possible causes:")
+        print("   - V2 calibration pattern not on tape")
+        print("   - VHS quality too degraded")
+        print("   - Wrong section captured")
+        input("\nPress Enter to return to menu...")
+        return
+
+    offset_seconds, sample_count, std_dev = result
+
+    print()
+    print("="*50)
+    print("CALIBRATION RESULTS")
+    print("="*50)
+    print(f"A/V Offset: {offset_seconds:+.4f} seconds ({offset_seconds*1000:+.1f} ms)")
+    print(f"Samples: {sample_count}")
+    print(f"Consistency: {std_dev:.2f} frames std dev")
+    print()
+
+    if offset_seconds > 0:
+        print(f"Audio is {abs(offset_seconds*1000):.1f}ms BEHIND video")
+    elif offset_seconds < 0:
+        print(f"Audio is {abs(offset_seconds*1000):.1f}ms AHEAD of video")
+    else:
+        print("Audio and video are synchronized")
+
+    print()
+    save = input("Save this calibration to config? (Y/n): ").strip().lower()
+    if save != 'n':
+        try:
+            config = load_config()
+            config['audio_delay'] = offset_seconds
+            config['calibration_method'] = 'v2_timecode'
+            config['calibration_samples'] = sample_count
+            # Turn off calibration mode now that we have a value
+            config['calibration_mode'] = False
+
+            from config import save_config
+            if save_config(config):
+                print(f"\n✓ Calibration saved: {offset_seconds:+.4f}s")
+                print("✓ Calibration mode disabled")
+                print("✓ This delay will be applied to future captures")
+            else:
+                print("\n⚠ Failed to save calibration")
+        except Exception as e:
+            print(f"\n⚠ Error saving: {e}")
+    else:
+        print("\nCalibration not saved.")
+
+    input("\nPress Enter to return to menu...")
+
+
+def precision_timecode_capture():
+    """Automated V2 Timecode Calibration - Capture, Decode, and Analyze"""
+    clear_screen()
+    display_header()
+    print("\nV2 TIMECODE CALIBRATION")
+    print("=" * 50)
+    print("Automated calibration using V2 timecode patterns.")
+    print()
+    print("This will:")
+    print("   1. Capture 130 seconds of VHS (V2 calibration video)")
+    print("   2. Decode RF to TBC and export video")
+    print("   3. Analyze V2 timecodes to calculate A/V offset")
+    print("   4. Save calibration to config")
+    print()
+
+    # For calibration, always use project temp directory
     sys.path.append('.')
     project_root = os.path.dirname(os.path.abspath(__file__))
     capture_folder = os.path.join(project_root, "temp")
-    
+
     # Create temp directory if it doesn't exist
     if not os.path.exists(capture_folder):
         try:
             os.makedirs(capture_folder)
-            print(f"Created calibration temp directory: {capture_folder}")
         except Exception as e:
-            print(f"ERROR: Could not create calibration temp directory: {e}")
+            print(f"ERROR: Could not create temp directory: {e}")
             input("\nPress Enter to return to menu...")
             return
-    
-    print(f"Using calibration directory: {capture_folder}")
-    
-    # CAPTURE PHASE - Fixed 45-second duration for calibration consistency
-    print("\nSTEP 1: CAPTURE VHS WITH DOMESDAY DUPLICATOR + SOX AUDIO")
-    print("=" * 55)
-    
-    # Use fixed 45-second duration for calibration (not user-configurable)
-    alignment_duration_seconds = 45
-    print(f"Calibration capture duration: {alignment_duration_seconds} seconds (fixed for consistency)")
-    
-    # Generate automated filename with timestamp
-    from datetime import datetime
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    alignment_base_name = f"precision_calibration_{timestamp}"
-    print(f"Using calibration filename: {alignment_base_name}")
-    
-    # Create alignment file paths with timestamp
-    alignment_capture_filename = os.path.join(capture_folder, f"{alignment_base_name}.flac")
-    alignment_rf_filename = os.path.join(capture_folder, f"{alignment_base_name}.lds")
-    alignment_tbc_filename = os.path.join(capture_folder, f"{alignment_base_name}.tbc")
-    alignment_tbc_json_filename = os.path.join(capture_folder, f"{alignment_base_name}.tbc.json")
-    alignment_video_filename = os.path.join(capture_folder, f"{alignment_base_name}_ffv1.mkv")
-    
-    print(f"Output directory: {os.path.abspath(capture_folder)}")
-    print(f"Output filename: {alignment_base_name}")
+
+    # Fixed calibration filename (not timestamped)
+    calibration_base_name = "calibration_v2"
+
+    # Define all calibration file paths
+    calibration_files = {
+        'rf': os.path.join(capture_folder, f"{calibration_base_name}.lds"),
+        'audio': os.path.join(capture_folder, f"{calibration_base_name}.flac"),
+        'tbc': os.path.join(capture_folder, f"{calibration_base_name}.tbc"),
+        'tbc_json': os.path.join(capture_folder, f"{calibration_base_name}.tbc.json"),
+        'video': os.path.join(capture_folder, f"{calibration_base_name}_ffv1.mkv"),
+    }
+
+    # Check for existing calibration files
+    existing_files = [f for f in calibration_files.values() if os.path.exists(f)]
+    if existing_files:
+        print("Existing calibration files found:")
+        for f in existing_files:
+            size_mb = os.path.getsize(f) / (1024*1024)
+            print(f"   {os.path.basename(f)} ({size_mb:.1f} MB)")
+        print()
+        overwrite = input("Overwrite existing files? (y/N): ").strip().lower()
+        if overwrite != 'y':
+            print("Calibration cancelled.")
+            input("\nPress Enter to return to menu...")
+            return
+        # Delete existing files
+        for f in existing_files:
+            try:
+                os.remove(f)
+            except Exception as e:
+                print(f"Warning: Could not delete {f}: {e}")
+
+    # Fixed 130-second duration (124s video + 6s buffer)
+    calibration_duration_seconds = 130
+
+    print(f"\nCalibration directory: {capture_folder}")
+    print(f"Calibration filename: {calibration_base_name}")
+    print(f"Capture duration: {calibration_duration_seconds} seconds")
     print()
 
-    print("BEFORE STARTING CALIBRATION CAPTURE:")
-    print("1. Make sure you've recorded at least 5 minutes of the included test pattern files onto a VHS tape")
-    print("2. Ensure your Domesday duplicator is plugged in and powered on")
-    print("3. Ensure your clockgen lite is connected and working")
-    print("4. Insert your VHS tape into your VCR and press play")
+    print("STEP 1: CAPTURE VHS WITH DOMESDAY DUPLICATOR + SOX AUDIO")
+    print("=" * 55)
     print()
-    
-    print("\033[92m⚠️  Press Play on your VCR before pressing Enter now or alignment will be out of sync\033[0m")
-    input("When all setup steps above are complete, press Enter to start Calibration Capture (or Ctrl-C to cancel): ")
+    print("BEFORE STARTING:")
+    print("1. Ensure V2 calibration video is recorded on VHS tape")
+    print("2. Domesday Duplicator plugged in and powered on")
+    print("3. Clockgen Lite connected and working")
+    print("4. VHS tape cued to start of calibration pattern")
+    print()
+
+    print("\033[92mPress PLAY on your VCR, then press Enter to start capture\033[0m")
+    input("Press Enter to start capture (or Ctrl-C to cancel): ")
+
+    # Use the calibration file paths
+    alignment_capture_filename = calibration_files['audio']
+    alignment_base_name = calibration_base_name
+    alignment_duration_seconds = calibration_duration_seconds
+    alignment_tbc_filename = calibration_files['tbc']
+    alignment_tbc_json_filename = calibration_files['tbc_json']
+    alignment_video_filename = calibration_files['video']
 
     # Capture calibration using command line DomesdayDuplicator
     print("\nStarting RF + Audio capture...")
@@ -3659,93 +4194,89 @@ def precision_timecode_capture():
             if not run_tbc_video_export(tbc_file, video_file):
                 print("Video export failed, but continuing with audio alignment...")
         
-        print("\nRF decode workflow complete!")
-        
-        # Audio timing analysis and config update
-        print("\nSTEP 3: AUDIO ALIGNMENT ANALYSIS")
+        print("\nDecode workflow complete!")
+
+        # V2 Timecode Analysis
+        print("\nSTEP 3: V2 TIMECODE ANALYSIS")
         print("=" * 35)
-        print(f"Using TBC JSON file: {tbc_json_file}")
-        print("\nAnalyzing raw audio directly for calibration")
-        print("(This eliminates alignment-induced measurement errors)")
-        
-        # Check if captured audio file exists
-        if not os.path.exists(alignment_capture_filename):
-            print(f"\nERROR: Audio capture file not found: {alignment_capture_filename}")
-            print("The audio capture may have failed.")
+
+        # Check required files exist
+        if not os.path.exists(video_file):
+            print(f"\nERROR: Video file not found: {video_file}")
+            print("Video export may have failed.")
             input("\nPress Enter to return to menu...")
             return
-        
-        print(f"\nAnalyzing alignment between:")
-        print(f"   TBC JSON: {os.path.basename(tbc_json_file)}")
+
+        if not os.path.exists(alignment_capture_filename):
+            print(f"\nERROR: Audio file not found: {alignment_capture_filename}")
+            input("\nPress Enter to return to menu...")
+            return
+
+        print(f"Analyzing V2 timecodes in:")
+        print(f"   Video: {os.path.basename(video_file)}")
         print(f"   Audio: {os.path.basename(alignment_capture_filename)}")
-        
+        print()
+
         try:
-            from ddd_clockgen_sync import analyze_alignment_with_tbc
-            timing_result = analyze_alignment_with_tbc(alignment_capture_filename, tbc_json_file)
-            
-            if timing_result is not None:
-                if isinstance(timing_result, (int, float)):
-                    measured_offset = timing_result
-                    print(f"\n=== CALIBRATION MEASUREMENT RESULTS ===")
-                    print(f"Raw measured offset: {measured_offset:+.3f}s")
-                    print(f"   Positive = audio starts after video")
-                    print(f"   Negative = audio starts before video")
-                    
-                    # Calculate required delay (same logic as menu 5.1)
-                    if measured_offset >= 0:
-                        required_delay = measured_offset
-                        print(f"\nRequired audio delay: {required_delay:.3f}s")
-                        print(f"   This delay will synchronize audio with video")
-                        
-                        # Apply calibration automatically
-                        try:
-                            from config import load_config, save_config
-                            config = load_config()
-                            config['audio_delay'] = required_delay
-                            
-                            if save_config(config):
-                                print(f"\n✓ CALIBRATION APPLIED: {required_delay:.3f}s delay saved to config")
-                                print("✓ This calibration will be used for future captures")
-                            else:
-                                print("\n⚠ Failed to save calibration to config file")
-                        except Exception as e:
-                            print(f"\n⚠ Error applying calibration: {e}")
-                    else:
-                        print(f"\nNegative offset detected - this suggests system timing issues")
-                        print(f"Please review the measurement and consider manual calibration")
-                        
+            # Call V2 timecode analyzer
+            offset_result = analyze_v2_calibration_video(video_file, alignment_capture_filename)
+
+            if offset_result is not None:
+                measured_offset, sample_count, std_dev = offset_result
+
+                print(f"\n{'='*50}")
+                print("V2 CALIBRATION RESULTS")
+                print(f"{'='*50}")
+                print(f"Measured A/V offset: {measured_offset:+.4f} seconds")
+                print(f"Sample points: {sample_count}")
+                print(f"Standard deviation: {std_dev:.4f} frames")
+                print()
+                print(f"Interpretation:")
+                if measured_offset > 0:
+                    print(f"   Audio starts {abs(measured_offset):.3f}s AFTER video")
+                elif measured_offset < 0:
+                    print(f"   Audio starts {abs(measured_offset):.3f}s BEFORE video")
                 else:
-                    print(f"\nAlignment analysis completed with result: {timing_result}")
+                    print(f"   Audio and video are synchronized")
+
+                # Save calibration
+                print("\nSTEP 4: SAVE CALIBRATION")
+                print("=" * 35)
+
+                try:
+                    from config import load_config, save_config
+                    config = load_config()
+                    config['audio_delay'] = measured_offset
+                    config['calibration_method'] = 'v2_timecode'
+                    config['calibration_samples'] = sample_count
+
+                    if save_config(config):
+                        print(f"✓ Calibration saved: {measured_offset:+.4f}s")
+                        print("✓ This will be used for future A/V alignment")
+                    else:
+                        print("⚠ Failed to save calibration")
+                except Exception as e:
+                    print(f"⚠ Error saving calibration: {e}")
             else:
-                print(f"\nAlignment analysis failed or could not detect timing patterns.")
-                print(f"This may indicate:")
-                print(f"   - No clear timing patterns in the audio")
-                print(f"   - Incompatible audio/TBC formats")
-                print(f"   - Missing test pattern audio signals")
-                
+                print("\n⚠ V2 timecode analysis failed")
+                print("Could not decode timecodes from video.")
+                print("Possible causes:")
+                print("   - V2 calibration pattern not recorded on tape")
+                print("   - VHS quality too degraded for reliable decoding")
+                print("   - Wrong section of tape captured")
+
         except Exception as e:
-            print(f"\nError during alignment analysis: {e}")
-            print(f"Continuing to validation step...")
-            
+            print(f"\nError during V2 analysis: {e}")
+            import traceback
+            traceback.print_exc()
+
     except Exception as e:
         print(f"Error during capture process: {e}")
-    
+
     print("\n" + "="*60)
-    print("CALIBRATION CAPTURE COMPLETED")
+    print("V2 CALIBRATION COMPLETE")
     print("=" * 60)
-    print("VHS timecode capture has been completed successfully!")
-    print()
-    print("Files created in calibration temp directory:")
-    print(f"• RF capture (.lds)")
-    print(f"• Decoded video (.mkv)")
-    print(f"• Raw audio (.flac)")
-    print(f"• TBC timing data (.tbc.json)")
-    print()
-    print("NEXT STEPS:")
-    print("• The calibration delay has been automatically calculated and saved")
-    print("• Use the Workflow Control Centre to process your actual VHS captures")
-    print("• To verify calibration, run Capture & Analyze again - offset should be near 0.000s")
-    
+
     input("\nPress Enter to return to menu...")
 
 

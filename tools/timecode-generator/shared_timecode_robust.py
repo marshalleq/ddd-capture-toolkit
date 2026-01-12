@@ -46,136 +46,312 @@ class SharedTimecodeRobust:
         # Audio parameters optimized for VHS robustness
         self.sample_rate = 48000
         self.audio_channels = 1  # MONO - eliminates stereo confusion
-        
-        # ROBUST frequency selection for VHS
-        # Wide separation: 800Hz for '0', 1600Hz for '1' (2:1 ratio)
-        self.freq_0 = 800   # Low frequency for '0' bit
-        self.freq_1 = 1600  # High frequency for '1' bit (exactly double)
-        
+
+        # V2 ROBUST frequency selection for VHS linear audio compatibility
+        # Lower frequencies: 400Hz for '0', 800Hz for '1' (2:1 ratio maintained)
+        # Both frequencies well within VHS linear audio passband (100Hz - 10kHz)
+        self.freq_0 = 400   # Low frequency for '0' bit
+        self.freq_1 = 800   # High frequency for '1' bit (exactly double)
+        self.freq_pilot = 1200  # Pilot tone for frame sync (not 400 or 800)
+
         # Detection ranges with significant guard bands
-        self.freq_0_range = (650, 950)    # 300Hz guard band around 800Hz
-        self.freq_1_range = (1350, 1850) # 250Hz guard band around 1600Hz
-        # No overlap: 950Hz < 1350Hz, 400Hz separation between ranges
-        
-        # Bit timing for reliable encoding
+        self.freq_0_range = (300, 500)    # 200Hz bandwidth around 400Hz
+        self.freq_1_range = (650, 950)    # 300Hz bandwidth around 800Hz
+        self.freq_pilot_range = (1050, 1350)  # For pilot tone detection
+        # Guard bands: 500-650Hz (150Hz), 950-1050Hz (100Hz)
+
+        # V2 Bit timing - 16 bits per frame for larger blocks and longer bit duration
         self.samples_per_frame = int(self.sample_rate / self.fps)
-        self.bits_per_frame = 32  # 24-bit frame + 8-bit checksum
-        self.samples_per_bit = self.samples_per_frame // self.bits_per_frame
+        self.bits_per_frame = 16  # "10" + 12-bit frame + "01" = 16 bits
+        self.samples_per_bit = self.samples_per_frame // self.bits_per_frame  # ~120 samples
+
+        # Pilot tone timing (per frame)
+        self.pilot_ratio = 0.10      # 10% of frame for pilot tone
+        self.silence_ratio = 0.05   # 5% silence separator
+        self.data_ratio = 0.80      # 80% for FSK data
+        # Remaining 5% trailing silence
         
         # Visual parameters
         self.font_scale = 3.0
         self.font_thickness = 8
         self.text_color = (255, 255, 255)  # White text
         self.bg_color = (0, 0, 0)          # Black background
-        
-        # Corner marker colors (BGR format)
-        self.corner_color_primary = (0, 0, 255)    # Red corners
-        self.corner_color_secondary = (255, 0, 0)  # Blue corners
 
-    def generate_frame_image(self, frame_number, timecode_str):
-        """Generate a single frame with visual timecode"""
-        # Create black background
+        # V2 Binary strip parameters
+        self.strip_height = 60             # 3 rows of 20 pixels each
+        self.strip_row_height = 20         # Height of each row
+        self.strip_num_rows = 3            # Number of redundant rows
+        self.strip_bg_color = (128, 128, 128)  # Mid-gray background (neutral)
+
+        # V2 Bit colors (BGR format) - Color-based encoding for VHS robustness
+        self.bit_1_color = (0, 0, 255)     # Red for '1' bit
+        self.bit_0_color = (255, 0, 0)     # Blue for '0' bit
+
+        # Corner marker colors (BGR format) - unchanged
+        self.corner_color_primary = (0, 0, 255)    # Red corners (top-left, bottom-right)
+        self.corner_color_secondary = (255, 0, 0)  # Blue corners (top-right, bottom-left)
+        self.corner_size = 40              # Corner marker size in pixels
+
+    def generate_frame_image(self, frame_number, timecode_str, frame_type='timecode',
+                              countdown_value=0, frames_until_timecode=0,
+                              countup_value=0, frames_since_timecode=0):
+        """
+        Generate a single frame with visual timecode and V2 encoding.
+
+        Args:
+            frame_number: Frame number within the section
+            timecode_str: Display text (timecode or section label)
+            frame_type: 'leader', 'countdown', 'timecode', 'leadout', 'separator'
+            countdown_value: For countdown, seconds remaining (5,4,3,2,1)
+            frames_until_timecode: For countdown, frames until timecode section starts
+            countup_value: For leadout, seconds elapsed (1,2,3,4,5)
+            frames_since_timecode: For leadout, frames since timecode section ended
+
+        Returns:
+            Frame image with V2 visual encoding
+        """
+        # Create background - use mid-gray for better visibility
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         frame[:] = self.bg_color
-        
-        # Add main timecode display (large, centered)
+
+        # Add main display (large, centered)
         font = cv2.FONT_HERSHEY_SIMPLEX
-        
+
         # Calculate text size for centering
         (text_width, text_height), baseline = cv2.getTextSize(
             timecode_str, font, self.font_scale, self.font_thickness
         )
-        
-        # Center the timecode
+
+        # Center the display text
         x = (self.width - text_width) // 2
         y = (self.height + text_height) // 2
-        
-        cv2.putText(frame, timecode_str, (x, y), font, 
+
+        cv2.putText(frame, timecode_str, (x, y), font,
                    self.font_scale, self.text_color, self.font_thickness)
-        
-        # Add frame number in top-left corner
-        frame_text = f"Frame: {frame_number:06d}"
-        cv2.putText(frame, frame_text, (20, 70), font, 
-                   1.0, self.text_color, 2)
-        
-        # Add format info in top-right corner
-        format_text = f"{self.format_type} {self.fps}fps - ROBUST FSK"
+
+        # Add section type indicator in top-left (below binary strip)
+        section_label = frame_type.upper()
+        if frame_type == 'countdown':
+            section_label = f"COUNTDOWN: {countdown_value} ({frames_until_timecode} frames)"
+        elif frame_type == 'leadout':
+            section_label = f"LEAD-OUT: {countup_value} ({frames_since_timecode} frames)"
+        elif frame_type == 'timecode':
+            section_label = f"TIMECODE Frame: {frame_number:06d}"
+        elif frame_type == 'leader':
+            section_label = "LEADER (0xFFFF)"
+        elif frame_type == 'separator':
+            section_label = "SEPARATOR (0x0000)"
+
+        cv2.putText(frame, section_label, (20, 90), font,
+                   0.8, self.text_color, 2)
+
+        # Add format info in top-right corner (below binary strip)
+        format_text = f"{self.format_type} {self.fps}fps - V2 FSK"
         (fw, fh), _ = cv2.getTextSize(format_text, font, 0.7, 2)
-        cv2.putText(frame, format_text, (self.width - fw - 20, 70), font, 
+        cv2.putText(frame, format_text, (self.width - fw - 20, 90), font,
                    0.7, self.text_color, 2)
-        
-        # Add machine-readable patterns
-        self._add_sync_patterns(frame, frame_number)
-        
+
+        # Determine the correct countdown/countup value and frames count for sync patterns
+        if frame_type == 'countdown':
+            cv_val = countdown_value
+            fc_val = frames_until_timecode
+        elif frame_type == 'leadout':
+            cv_val = countup_value
+            fc_val = frames_since_timecode
+        else:
+            cv_val = 0
+            fc_val = 0
+
+        # Add V2 machine-readable patterns (binary strip + corners)
+        self._add_sync_patterns(frame, frame_number, frame_type, cv_val, fc_val)
+
         return frame
     
-    def _add_sync_patterns(self, frame, frame_number):
-        """Add machine-readable sync patterns to frame"""
-        # Add binary representation as visual blocks (top edge)
-        binary = format(frame_number, '032b')  # 32-bit binary
-        
-        # Position binary blocks between corner markers
-        available_width = self.width - 80  # Total width minus 40px corners
-        block_width = available_width // 32
-        start_offset = 40  # Start after left corner
-        
-        for i, bit in enumerate(binary):
-            x_start = start_offset + (i * block_width)
-            x_end = min(x_start + block_width, self.width - 40)
-            
-            # White for 1, dark gray for 0 (still visible)
-            color = (255, 255, 255) if bit == '1' else (64, 64, 64)
-            cv2.rectangle(frame, (x_start, 0), (x_end, 20), color, -1)
-        
-        # Add sync markers in corners
-        marker_size = 40
-        
-        # Top-left and bottom-right: red squares
-        cv2.rectangle(frame, (0, 0), (marker_size, marker_size), self.corner_color_primary, -1)
-        cv2.rectangle(frame, (self.width - marker_size, self.height - marker_size), 
-                     (self.width, self.height), self.corner_color_primary, -1)
-        
-        # Top-right and bottom-left: blue squares
-        cv2.rectangle(frame, (self.width - marker_size, 0), 
-                     (self.width, marker_size), self.corner_color_secondary, -1)
-        cv2.rectangle(frame, (0, self.height - marker_size), 
-                     (marker_size, self.height), self.corner_color_secondary, -1)
-    
-    def generate_robust_fsk_audio(self, frame_number):
+    def get_bit_pattern(self, frame_number, frame_type='timecode', countdown_val=0, frames_count=0):
         """
-        Generate robust FSK audio for a single frame
-        
+        Get 16-bit pattern based on frame type.
+
+        Args:
+            frame_number: Frame number (for timecode type)
+            frame_type: 'leader', 'countdown', 'timecode', 'leadout', 'separator'
+            countdown_val: Countdown value 5,4,3,2,1 (for countdown type)
+            frames_count: Frames until start or since end (for countdown/leadout)
+
+        Returns:
+            str: 16-bit binary string
+        """
+        if frame_type == 'leader' or frame_type == 'tail':
+            # All ones - 0xFFFF
+            return '1111111111111111'
+        elif frame_type == 'separator':
+            # All zeros - 0x0000
+            return '0000000000000000'
+        elif frame_type == 'countdown':
+            # "11" prefix + 4-bit countdown value + 10-bit frames remaining
+            countdown_bits = format(min(countdown_val, 15), '04b')
+            frames_bits = format(min(frames_count, 1023), '010b')
+            return f'11{countdown_bits}{frames_bits}'
+        elif frame_type == 'leadout':
+            # "00" prefix + 4-bit count-up value + 10-bit frames since end
+            countup_bits = format(min(countdown_val, 15), '04b')
+            frames_bits = format(min(frames_count, 1023), '010b')
+            return f'00{countup_bits}{frames_bits}'
+        else:  # timecode
+            # "10" prefix + 12-bit frame number + "01" suffix
+            # 12 bits supports 4096 frames = 164 seconds at 25fps
+            frame_bits = format(min(frame_number, 4095), '012b')
+            return f'10{frame_bits}01'
+
+    def _add_sync_patterns(self, frame, frame_number, frame_type='timecode', countdown_val=0, frames_count=0):
+        """
+        Add V2 machine-readable sync patterns to frame.
+
+        Features:
+        - 16 bits (40 pixels each) instead of 32 bits (20 pixels each)
+        - 3 vertical rows for redundancy
+        - Color-based encoding: Red for '1', Blue for '0'
+        - Mid-gray background (neutral for VHS degradation)
+        """
+        # Get 16-bit pattern based on frame type
+        bits = self.get_bit_pattern(frame_number, frame_type, countdown_val, frames_count)
+
+        # Calculate block dimensions
+        available_width = self.width - (2 * self.corner_size)  # Width minus corners
+        block_width = available_width // self.bits_per_frame  # ~40 pixels for 16 bits
+
+        # Fill strip background with mid-gray (neutral color)
+        frame[0:self.strip_height, self.corner_size:self.width - self.corner_size] = self.strip_bg_color
+
+        # Draw each bit as colored block in all 3 rows
+        for i, bit in enumerate(bits):
+            x_start = self.corner_size + (i * block_width)
+            x_end = x_start + block_width
+
+            # Color based on bit value: Red for '1', Blue for '0'
+            color = self.bit_1_color if bit == '1' else self.bit_0_color
+
+            # Draw in all 3 rows for vertical redundancy
+            for row in range(self.strip_num_rows):
+                y_start = row * self.strip_row_height
+                y_end = y_start + self.strip_row_height
+                cv2.rectangle(frame, (x_start, y_start), (x_end, y_end), color, -1)
+
+        # Add corner markers
+        # Top-left: red square
+        cv2.rectangle(frame, (0, 0),
+                     (self.corner_size, self.corner_size),
+                     self.corner_color_primary, -1)
+        # Bottom-right: red square
+        cv2.rectangle(frame, (self.width - self.corner_size, self.height - self.corner_size),
+                     (self.width, self.height),
+                     self.corner_color_primary, -1)
+        # Top-right: blue square
+        cv2.rectangle(frame, (self.width - self.corner_size, 0),
+                     (self.width, self.corner_size),
+                     self.corner_color_secondary, -1)
+        # Bottom-left: blue square
+        cv2.rectangle(frame, (0, self.height - self.corner_size),
+                     (self.corner_size, self.height),
+                     self.corner_color_secondary, -1)
+    
+    def generate_robust_fsk_audio(self, frame_number, frame_type='timecode', countdown_val=0, frames_count=0):
+        """
+        Generate V2 robust FSK audio for a single frame with pilot tone.
+
+        Args:
+            frame_number: Frame number to encode (for timecode type)
+            frame_type: 'leader', 'countdown', 'timecode', 'leadout', 'separator'
+            countdown_val: Countdown/count-up value (for countdown/leadout types)
+            frames_count: Frames until/since timecode section
+
+        Returns:
+            numpy array: MONO audio samples for this frame
+
+        V2 Frame structure:
+        - 10% pilot tone (1200Hz) for frame sync
+        - 5% silence separator
+        - 80% FSK data (16 bits)
+        - 5% trailing silence
+        """
+        audio = np.zeros(self.samples_per_frame)
+
+        # Calculate section boundaries
+        pilot_samples = int(self.samples_per_frame * self.pilot_ratio)
+        silence1_samples = int(self.samples_per_frame * self.silence_ratio)
+        data_samples = int(self.samples_per_frame * self.data_ratio)
+        # Trailing silence fills remainder
+
+        # Section 1: Pilot tone (1200Hz) for frame synchronization
+        pilot_tone = self._generate_robust_tone(self.freq_pilot, pilot_samples)
+        audio[0:pilot_samples] = pilot_tone
+
+        # Section 2: Silence separator (already zeros)
+        data_start = pilot_samples + silence1_samples
+
+        # Section 3: FSK data (16 bits)
+        # Get bit pattern based on frame type
+        bits = self.get_bit_pattern(frame_number, frame_type, countdown_val, frames_count)
+
+        # Calculate samples per bit for the data section
+        samples_per_data_bit = data_samples // self.bits_per_frame
+
+        for i, bit in enumerate(bits):
+            start_sample = data_start + (i * samples_per_data_bit)
+            end_sample = start_sample + samples_per_data_bit
+
+            # Ensure we don't exceed frame bounds
+            if end_sample > self.samples_per_frame:
+                end_sample = self.samples_per_frame
+
+            if start_sample < end_sample:
+                # Select frequency based on bit value
+                frequency = self.freq_0 if bit == '0' else self.freq_1
+
+                # Generate tone with improved robustness
+                tone = self._generate_robust_tone(frequency, end_sample - start_sample)
+                audio[start_sample:end_sample] = tone
+
+        # Section 4: Trailing silence (already zeros)
+
+        return audio
+
+    def generate_robust_fsk_audio_legacy(self, frame_number):
+        """
+        Legacy V1 FSK audio generation (32-bit, no pilot tone).
+        Kept for backward compatibility with existing test videos.
+
         Args:
             frame_number: Frame number to encode
-            
+
         Returns:
             numpy array: MONO audio samples for this frame
         """
         # Encode frame number as binary (24 bits)
         binary = format(frame_number, '024b')
-        
+
         # Calculate enhanced checksum (CRC-like)
         checksum = self._calculate_robust_checksum(frame_number)
         checksum_bin = format(checksum, '08b')
-        
+
         # Complete data: 24-bit frame + 8-bit checksum = 32 bits
         data_bits = binary + checksum_bin
-        
-        # Generate audio samples
+
+        # Generate audio samples (using old 32-bit timing)
+        legacy_samples_per_bit = self.samples_per_frame // 32
         audio = np.zeros(self.samples_per_frame)
-        
+
         for i, bit in enumerate(data_bits):
-            start_sample = i * self.samples_per_bit
-            end_sample = min(start_sample + self.samples_per_bit, self.samples_per_frame)
-            
-            # Select frequency based on bit value
+            start_sample = i * legacy_samples_per_bit
+            end_sample = min(start_sample + legacy_samples_per_bit, self.samples_per_frame)
+
+            # Select frequency based on bit value (using V2 frequencies for compatibility)
             frequency = self.freq_0 if bit == '0' else self.freq_1
-            
+
             # Generate tone with improved robustness
             tone = self._generate_robust_tone(frequency, end_sample - start_sample)
-            
+
             audio[start_sample:end_sample] = tone
-        
+
         return audio
     
     def _generate_robust_tone(self, frequency, n_samples):
@@ -1337,66 +1513,225 @@ class SharedTimecodeRobust:
     
     def read_binary_strip(self, frame):
         """
-        Read binary timecode from top strip of video frame (shared utility)
-        
+        V2 Read binary timecode from top strip with center sampling and confidence reporting.
+
+        Reads the 60-pixel (3-row) binary strip using color-based detection (red vs blue)
+        with center sampling to avoid edge contamination from VHS horizontal shift.
+
+        Args:
+            frame: Video frame (BGR format)
+
+        Returns:
+            tuple: (bits: str, confidences: list[float], overall_confidence: float)
+                - bits: 16-character binary string
+                - confidences: Confidence value (0-1) for each bit
+                - overall_confidence: Average confidence across all bits
+                Returns (None, [], 0.0) if frame format is invalid
+        """
+        height, width = frame.shape[:2]
+
+        # Ensure we have a color frame for V2 color-based detection
+        if len(frame.shape) != 3 or frame.shape[2] != 3:
+            return None, [], 0.0
+
+        # Extract the 60-pixel (3-row) strip from top of frame
+        strip = frame[0:self.strip_height, :]
+
+        bits = []
+        confidences = []
+
+        # V2: 16 blocks (not 32), with margins on sides
+        margin_x = 40  # Skip edge pixels (corner markers)
+        usable_width = width - (margin_x * 2)
+        block_width = usable_width // 16
+
+        for i in range(16):
+            x_start = margin_x + (i * block_width)
+            x_end = x_start + block_width
+
+            # CENTER SAMPLING: Skip 25% on each side horizontally to avoid edge contamination
+            h_margin = block_width // 4
+            center_x_start = x_start + h_margin
+            center_x_end = x_end - h_margin
+
+            # Sample all 3 vertical rows and vote (with confidence per row)
+            row_results = []
+            row_height = self.strip_height // 3  # 20 pixels per row
+
+            for row in range(3):
+                # Skip 5 pixels top/bottom of each 20-pixel row
+                y_start = row * row_height + 5
+                y_end = y_start + 10  # Sample middle 10 pixels
+
+                # Ensure we stay within strip bounds
+                y_end = min(y_end, self.strip_height)
+
+                if center_x_end > center_x_start and y_end > y_start:
+                    center_block = frame[y_start:y_end, center_x_start:center_x_end]
+
+                    # Color-based detection: compare red vs blue channels (BGR format)
+                    blue_avg = np.mean(center_block[:, :, 0])
+                    red_avg = np.mean(center_block[:, :, 2])
+
+                    # Calculate confidence based on color separation
+                    separation = abs(red_avg - blue_avg)
+                    max_possible = 255.0  # Maximum possible separation
+                    row_confidence = separation / max_possible
+
+                    # '1' = red (higher red channel), '0' = blue (higher blue channel)
+                    row_bit = '1' if red_avg > blue_avg else '0'
+                    row_results.append((row_bit, row_confidence))
+
+            # Majority vote across 3 rows
+            if len(row_results) >= 2:
+                ones = sum(1 for b, c in row_results if b == '1')
+                bit = '1' if ones >= 2 else '0'
+
+                # Confidence calculation with disagreement penalty
+                agreeing_confidences = [c for b, c in row_results if b == bit]
+                dissenting_confidences = [c for b, c in row_results if b != bit]
+
+                base_confidence = np.mean(agreeing_confidences) if agreeing_confidences else 0.0
+
+                if dissenting_confidences:
+                    # Penalize proportionally to dissenting row's confidence
+                    # High-confidence dissent = bigger penalty
+                    dissent_penalty = np.mean(dissenting_confidences) * 0.5
+                    bit_confidence = base_confidence * (1 - dissent_penalty)
+                else:
+                    # All rows agree - full confidence
+                    bit_confidence = base_confidence
+            else:
+                # Not enough valid rows
+                bit = '0'
+                bit_confidence = 0.0
+
+            bits.append(bit)
+            confidences.append(bit_confidence)
+
+        # Overall frame confidence
+        overall_confidence = np.mean(confidences) if confidences else 0.0
+
+        return ''.join(bits), confidences, overall_confidence
+
+    def read_binary_strip_legacy(self, frame):
+        """
+        Legacy V1 binary strip reader (32-bit grayscale) for backward compatibility.
+
         Args:
             frame: Video frame (BGR or grayscale)
-            
+
         Returns:
             int: Frame number if successful, None if failed
         """
         height, width = frame.shape[:2]
-        
+
         # Extract the top 20 pixels
         strip = frame[0:20, :]
-        
+
         # Convert to grayscale
         if len(strip.shape) == 3:
             strip_gray = cv2.cvtColor(strip, cv2.COLOR_BGR2GRAY)
         else:
             strip_gray = strip
-        
+
         # Adaptive threshold based on strip characteristics
         strip_mean = np.mean(strip_gray)
         strip_std = np.std(strip_gray)
-        
+
         # For VHS captures with low intensity, use adaptive threshold
-        # If strip is very dark (mean < 100), use mean + std/2 as threshold
-        # Otherwise use traditional 128 threshold
         if strip_mean < 100 and strip_std > 20:
             threshold = strip_mean + (strip_std * 0.5)
         else:
             threshold = 128
-        
-        # Read 32 bits
+
+        # Read 32 bits (legacy encoding)
         bits = []
         block_width = width // 32
-        
+
         for i in range(32):
             x_start = i * block_width
             x_end = min(x_start + block_width, width)
-            
+
             if x_end > x_start:
-                # Sample the middle of this block
                 block = strip_gray[:, x_start:x_end]
                 avg_intensity = np.mean(block)
-                
-                # Use adaptive threshold
                 bit = '1' if avg_intensity > threshold else '0'
                 bits.append(bit)
-        
+
         if len(bits) == 32:
-            # Convert binary to frame number
             binary_str = ''.join(bits)
             try:
                 frame_number = int(binary_str, 2)
-                # Use robust frame ID validation
                 if self._validate_frame_id_range(frame_number):
                     return frame_number
             except ValueError:
                 pass
-        
+
         return None
+
+    def decode_frame_with_validation(self, frame):
+        """
+        Decode V2 frame with confidence validation - fail explicitly if confidence too low.
+
+        This is the primary decoding method that should be used for V2 encoded frames.
+        It does NOT fall back to other algorithms - instead it reports failures explicitly.
+
+        Args:
+            frame: Video frame (BGR format)
+
+        Returns:
+            tuple: (frame_number, overall_confidence, status)
+                - frame_number: Decoded frame number or None if failed
+                - overall_confidence: Confidence level (0-1)
+                - status: 'OK', 'LOW_CONFIDENCE', 'TOO_MANY_UNCERTAIN_BITS:N',
+                          'INVALID_MARKERS', or 'INVALID_FRAME'
+        """
+        MIN_CONFIDENCE = 0.15  # 15% minimum color separation required
+        MAX_UNCERTAIN_BITS = 2  # Allow at most 2 uncertain bits
+
+        # Read binary strip with confidence
+        bits, confidences, overall_confidence = self.read_binary_strip(frame)
+
+        if bits is None or len(bits) != 16:
+            return None, 0.0, "INVALID_FRAME"
+
+        # Check overall confidence threshold
+        if overall_confidence < MIN_CONFIDENCE:
+            return None, overall_confidence, "LOW_CONFIDENCE"
+
+        # Count low-confidence individual bits
+        low_conf_bits = sum(1 for c in confidences if c < MIN_CONFIDENCE)
+        if low_conf_bits > MAX_UNCERTAIN_BITS:
+            return None, overall_confidence, f"TOO_MANY_UNCERTAIN_BITS:{low_conf_bits}"
+
+        # Detect frame type from prefix bits
+        prefix = bits[:2]
+        suffix = bits[14:16]
+
+        if bits == '1111111111111111':
+            # Leader or Tail (0xFFFF)
+            return ('leader', overall_confidence, "OK")
+        elif bits == '0000000000000000':
+            # Separator (0x0000)
+            return ('separator', overall_confidence, "OK")
+        elif prefix == '11':
+            # Countdown: "11" + 4-bit countdown + 10-bit frames_until
+            countdown_val = int(bits[2:6], 2)
+            frames_until = int(bits[6:16], 2)
+            return (('countdown', countdown_val, frames_until), overall_confidence, "OK")
+        elif prefix == '00':
+            # Lead-out: "00" + 4-bit count-up + 10-bit frames_since
+            countup_val = int(bits[2:6], 2)
+            frames_since = int(bits[6:16], 2)
+            return (('leadout', countup_val, frames_since), overall_confidence, "OK")
+        elif prefix == '10' and suffix == '01':
+            # Timecode: "10" + 12-bit frame number + "01"
+            frame_number = int(bits[2:14], 2)
+            return (frame_number, overall_confidence, "OK")
+        else:
+            # Invalid marker pattern
+            return None, overall_confidence, f"INVALID_MARKERS:prefix={prefix},suffix={suffix}"
     
     def detect_corner_markers(self, frame, red_lower=None, red_upper=None, blue_lower=None, blue_upper=None):
         """
@@ -1462,7 +1797,102 @@ class SharedTimecodeRobust:
             }
 
         return {'detected': False}
-    
+
+    def correct_frame_perspective(self, frame, corner_info=None):
+        """
+        Use corner markers to correct perspective distortion in captured frames.
+
+        The V2 encoding uses colored corner markers:
+        - Red corners at top-left and bottom-right
+        - Blue corners at top-right and bottom-left
+
+        This method detects these corners and applies a perspective transform
+        to correct for any skew or distortion from the VHS capture process.
+
+        Args:
+            frame: Video frame (BGR format)
+            corner_info: Optional pre-detected corner info from detect_corner_markers()
+                        If None, will detect corners automatically
+
+        Returns:
+            tuple: (corrected_frame, success, message)
+                - corrected_frame: Perspective-corrected frame (or original if failed)
+                - success: Boolean indicating if correction was applied
+                - message: Status message explaining result
+        """
+        height, width = frame.shape[:2]
+
+        # Detect corners if not provided
+        if corner_info is None:
+            corner_info = self.detect_corner_markers(frame)
+
+        if not corner_info.get('detected', False):
+            return frame, False, "Corners not detected"
+
+        red_corners = corner_info['red_corners']
+        blue_corners = corner_info['blue_corners']
+
+        if len(red_corners) < 2 or len(blue_corners) < 2:
+            return frame, False, f"Insufficient corners: {len(red_corners)} red, {len(blue_corners)} blue"
+
+        # Sort corners by position to identify each corner
+        # Red corners: top-left (smallest x+y) and bottom-right (largest x+y)
+        # Blue corners: top-right (largest x, smallest y) and bottom-left (smallest x, largest y)
+
+        # Sort red corners by x+y sum
+        red_sorted = sorted(red_corners, key=lambda c: c[0] + c[1])
+        top_left = red_sorted[0]  # Smallest x+y
+        bottom_right = red_sorted[-1]  # Largest x+y
+
+        # Sort blue corners - need to distinguish top-right from bottom-left
+        # Top-right has large x, small y
+        # Bottom-left has small x, large y
+        blue_sorted = sorted(blue_corners, key=lambda c: c[0] - c[1])
+        bottom_left = blue_sorted[0]  # Smallest x-y (small x, large y)
+        top_right = blue_sorted[-1]  # Largest x-y (large x, small y)
+
+        # Validate corner positions make sense
+        # Top corners should have y < height/2, bottom corners y > height/2
+        # Left corners should have x < width/2, right corners x > width/2
+        if not (top_left[1] < height * 0.6 and top_left[0] < width * 0.6):
+            return frame, False, f"Top-left corner position invalid: {top_left}"
+        if not (top_right[1] < height * 0.6 and top_right[0] > width * 0.4):
+            return frame, False, f"Top-right corner position invalid: {top_right}"
+        if not (bottom_left[1] > height * 0.4 and bottom_left[0] < width * 0.6):
+            return frame, False, f"Bottom-left corner position invalid: {bottom_left}"
+        if not (bottom_right[1] > height * 0.4 and bottom_right[0] > width * 0.4):
+            return frame, False, f"Bottom-right corner position invalid: {bottom_right}"
+
+        # Source points (detected corners)
+        src_points = np.float32([
+            top_left,
+            top_right,
+            bottom_left,
+            bottom_right
+        ])
+
+        # Destination points (ideal corner positions)
+        # The corner markers are placed at corner_size pixels from the edges
+        margin = self.corner_size // 2  # Center of the corner marker
+        dst_points = np.float32([
+            [margin, margin],                    # Top-left
+            [width - margin, margin],            # Top-right
+            [margin, height - margin],           # Bottom-left
+            [width - margin, height - margin]    # Bottom-right
+        ])
+
+        # Calculate perspective transform matrix
+        try:
+            M = cv2.getPerspectiveTransform(src_points, dst_points)
+
+            # Apply perspective transform
+            corrected = cv2.warpPerspective(frame, M, (width, height))
+
+            return corrected, True, "Perspective corrected successfully"
+
+        except Exception as e:
+            return frame, False, f"Transform failed: {str(e)}"
+
     def read_binary_strip_with_corners(self, frame, corner_info):
         """
         Read binary strip using corner markers for precise alignment (shared utility)
@@ -1552,11 +1982,12 @@ class SharedTimecodeRobust:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}:{frame_remainder:02d}"
     
     def generate_metadata(self, total_frames, duration_seconds):
-        """Generate metadata for the robust timecode system"""
+        """Generate metadata for the V2 robust timecode system"""
         return {
             "timecode_metadata": {
-                "generator": "VHS Robust Timecode Generator v2.0",
-                "method_version": "2.0",  # Robust version
+                "generator": "VHS Robust Timecode Generator V2.0",
+                "method_version": "2.0",
+                "encoding_version": "V2",
                 "timestamp": datetime.now().isoformat(),
                 "format": self.format_type,
                 "fps": self.fps,
@@ -1567,27 +1998,47 @@ class SharedTimecodeRobust:
             "encoding_parameters": {
                 "audio_sample_rate": self.sample_rate,
                 "audio_channels": self.audio_channels,  # MONO
-                "freq_0": self.freq_0,  # 800Hz for '0'
-                "freq_1": self.freq_1,  # 1600Hz for '1'
-                "freq_0_range": self.freq_0_range,  # Detection range
-                "freq_1_range": self.freq_1_range,  # Detection range
-                "bits_per_frame": self.bits_per_frame,
-                "samples_per_bit": self.samples_per_bit,
-                "checksum_method": "enhanced_xor_rotation"
+                "freq_0": self.freq_0,  # 400Hz for '0'
+                "freq_1": self.freq_1,  # 800Hz for '1'
+                "freq_pilot": self.freq_pilot,  # 1200Hz pilot tone
+                "freq_0_range": self.freq_0_range,  # Detection range (300-500Hz)
+                "freq_1_range": self.freq_1_range,  # Detection range (650-950Hz)
+                "freq_pilot_range": self.freq_pilot_range,  # (1050-1350Hz)
+                "bits_per_frame": self.bits_per_frame,  # 16 bits
+                "samples_per_bit": self.samples_per_bit,  # ~120 samples
+                "frame_structure": "10% pilot + 5% silence + 80% data + 5% silence"
+            },
+            "v2_visual_encoding": {
+                "strip_height": f"{self.strip_height}px (3 rows x 20px)",
+                "block_count": 16,
+                "block_width": "~40px",
+                "bit_1_color": "red (BGR: 0,0,255)",
+                "bit_0_color": "blue (BGR: 255,0,0)",
+                "background": "mid-gray (128,128,128)"
+            },
+            "v2_frame_types": {
+                "leader": "0xFFFF (all 1s) - preparation/tail marker",
+                "separator": "0x0000 (all 0s) - section transition",
+                "countdown": "'11' + 4-bit countdown + 10-bit frames_until",
+                "timecode": "'10' + 12-bit frame + '01' suffix",
+                "leadout": "'00' + 4-bit countup + 10-bit frames_since"
             },
             "robustness_features": {
                 "frequency_separation": f"{self.freq_1 - self.freq_0}Hz (2:1 ratio)",
                 "guard_band_separation": f"{self.freq_1_range[0] - self.freq_0_range[1]}Hz",
-                "detection_methods": ["fft_amplitude", "zero_crossing_rate", "autocorrelation"],
-                "error_correction": "enhanced_checksum_with_voting",
-                "mono_audio": "eliminates_stereo_channel_confusion"
+                "pilot_tone": f"{self.freq_pilot}Hz for frame synchronization",
+                "detection_methods": ["spectrogram", "pilot_sync", "zero_crossing", "color_based"],
+                "visual_redundancy": "3 vertical rows with majority voting",
+                "center_sampling": "Skip 25% margins to avoid edge contamination",
+                "confidence_reporting": "Per-bit and per-frame confidence scores",
+                "mono_audio": "Eliminates stereo channel confusion"
             },
             "usage_instructions": {
-                "audio_channel": "MONO - FSK-encoded frame numbers (800Hz='0', 1600Hz='1')",
+                "audio_channel": f"MONO - FSK-encoded ({self.freq_0}Hz='0', {self.freq_1}Hz='1')",
                 "visual_timecode": "Human-readable HH:MM:SS:FF format",
-                "binary_strip": "Machine-readable frame number (top edge)",
-                "sync_markers": "Colored corner markers for frame detection",
-                "vhs_optimized": "Wide frequency separation and robust detection for VHS recording/playback"
+                "binary_strip": "V2 16-bit color-coded strip (top 60px)",
+                "sync_markers": "Red/Blue corner markers for perspective correction",
+                "vhs_optimized": "Lower frequencies (400/800Hz) for VHS linear audio track"
             }
         }
     
@@ -1744,5 +2195,594 @@ class SharedTimecodeRobust:
             # Return the highest confidence detection for the best frame ID
             best_detections = frame_groups[best_frame_id]
             return max(best_detections, key=lambda x: x[2])
-        
+
         return None
+
+    # =========================================================================
+    # V2 Spectrogram-Based FSK Decoding
+    # =========================================================================
+
+    def decode_fsk_spectrogram(self, audio_channel):
+        """
+        Spectrogram-based FSK decoding for better timing tolerance.
+
+        Uses scipy's spectrogram to analyze frequency content over time,
+        providing more robust detection than bit-by-bit approaches when
+        timing is uncertain (common with VHS captures).
+
+        Args:
+            audio_channel: Mono audio samples
+
+        Returns:
+            list: List of (sample_position, decoded_result, confidence) tuples
+                  where decoded_result is the return from decode_frame_with_validation
+        """
+        try:
+            from scipy.signal import spectrogram
+        except ImportError:
+            print("Warning: scipy not available, falling back to standard FSK decoder")
+            return self.decode_fsk_audio(audio_channel, strict=False)
+
+        results = []
+
+        # Compute spectrogram with overlapping windows
+        # Using ~10ms windows (480 samples at 48kHz) with 50% overlap
+        nperseg = 480
+        noverlap = 240
+
+        f, t, Sxx = spectrogram(audio_channel, fs=self.sample_rate,
+                                nperseg=nperseg, noverlap=noverlap)
+
+        # Find frequency bin indices for our target frequencies
+        f0_idx = np.argmin(np.abs(f - self.freq_0))  # 400 Hz
+        f1_idx = np.argmin(np.abs(f - self.freq_1))  # 800 Hz
+        pilot_idx = np.argmin(np.abs(f - self.freq_pilot))  # 1200 Hz
+
+        # Get power at each frequency
+        f0_power = Sxx[f0_idx, :]
+        f1_power = Sxx[f1_idx, :]
+        pilot_power = Sxx[pilot_idx, :]
+
+        # Find frame boundaries using pilot tone detection
+        # The pilot tone appears at the start of each frame
+        pilot_threshold = np.mean(pilot_power) + 2 * np.std(pilot_power)
+        pilot_peaks = np.where(pilot_power > pilot_threshold)[0]
+
+        # Group pilot peaks into frame starts
+        frame_starts_time = []
+        if len(pilot_peaks) > 0:
+            current_group_start = pilot_peaks[0]
+            for i in range(1, len(pilot_peaks)):
+                # If gap is larger than expected pilot duration, it's a new frame
+                expected_pilot_bins = int((self.samples_per_frame * self.pilot_ratio) /
+                                          (nperseg - noverlap))
+                if pilot_peaks[i] - pilot_peaks[i-1] > expected_pilot_bins * 2:
+                    frame_starts_time.append(t[current_group_start])
+                    current_group_start = pilot_peaks[i]
+            frame_starts_time.append(t[current_group_start])
+
+        # For each detected frame, decode the FSK bits
+        for frame_start_time in frame_starts_time:
+            sample_pos = int(frame_start_time * self.sample_rate)
+
+            # Extract audio for this frame
+            frame_end_sample = min(sample_pos + self.samples_per_frame, len(audio_channel))
+            if frame_end_sample <= sample_pos:
+                continue
+
+            frame_audio = audio_channel[sample_pos:frame_end_sample]
+
+            # Decode the FSK bits from this frame
+            decoded_bits = self._decode_bits_from_spectrogram(frame_audio, f, Sxx, t, frame_start_time)
+
+            if decoded_bits is not None and len(decoded_bits) == 16:
+                # Parse the 16-bit pattern
+                result = self._parse_v2_bits(decoded_bits)
+                if result is not None:
+                    results.append((sample_pos, result, 0.8))  # Spectrogram confidence
+
+        return results
+
+    def _decode_bits_from_spectrogram(self, frame_audio, f, Sxx, t, frame_start_time):
+        """
+        Decode individual bits from spectrogram data.
+
+        Args:
+            frame_audio: Audio samples for one frame
+            f: Frequency bins from spectrogram
+            Sxx: Spectrogram power data
+            t: Time bins from spectrogram
+            frame_start_time: Start time of this frame in seconds
+
+        Returns:
+            str: 16-character binary string or None if failed
+        """
+        try:
+            from scipy.signal import spectrogram as sp
+        except ImportError:
+            return None
+
+        # Compute a local spectrogram for just this frame
+        if len(frame_audio) < 256:
+            return None
+
+        f_local, t_local, Sxx_local = sp(frame_audio, fs=self.sample_rate,
+                                          nperseg=256, noverlap=128)
+
+        f0_idx = np.argmin(np.abs(f_local - self.freq_0))
+        f1_idx = np.argmin(np.abs(f_local - self.freq_1))
+
+        f0_power = Sxx_local[f0_idx, :]
+        f1_power = Sxx_local[f1_idx, :]
+
+        # Skip the pilot tone portion (first 10% + 5% silence = 15%)
+        data_start_bin = int(len(t_local) * 0.15)
+        data_end_bin = int(len(t_local) * 0.95)
+
+        if data_start_bin >= data_end_bin:
+            return None
+
+        # Divide data region into 16 bits
+        data_bins = data_end_bin - data_start_bin
+        bins_per_bit = data_bins // 16
+
+        if bins_per_bit < 1:
+            return None
+
+        bits = []
+        for i in range(16):
+            bit_start = data_start_bin + (i * bins_per_bit)
+            bit_end = bit_start + bins_per_bit
+
+            # Compare power at f0 vs f1 for this bit
+            f0_bit_power = np.mean(f0_power[bit_start:bit_end])
+            f1_bit_power = np.mean(f1_power[bit_start:bit_end])
+
+            # '1' = high frequency (f1), '0' = low frequency (f0)
+            bit = '1' if f1_bit_power > f0_bit_power else '0'
+            bits.append(bit)
+
+        return ''.join(bits)
+
+    def _parse_v2_bits(self, bits):
+        """
+        Parse a 16-bit V2 encoded pattern.
+
+        Args:
+            bits: 16-character binary string
+
+        Returns:
+            tuple or None: Parsed result based on frame type
+        """
+        if len(bits) != 16:
+            return None
+
+        prefix = bits[:2]
+        suffix = bits[14:16]
+
+        if bits == '1111111111111111':
+            return ('leader', 1.0)
+        elif bits == '0000000000000000':
+            return ('separator', 1.0)
+        elif prefix == '11':
+            # Countdown
+            countdown_val = int(bits[2:6], 2)
+            frames_until = int(bits[6:16], 2)
+            return (('countdown', countdown_val, frames_until), 0.9)
+        elif prefix == '00':
+            # Lead-out
+            countup_val = int(bits[2:6], 2)
+            frames_since = int(bits[6:16], 2)
+            return (('leadout', countup_val, frames_since), 0.9)
+        elif prefix == '10' and suffix == '01':
+            # Timecode
+            frame_number = int(bits[2:14], 2)
+            return (frame_number, 0.95)
+        else:
+            return None
+
+    # =========================================================================
+    # V2 Pilot Tone Detection for Frame Synchronization
+    # =========================================================================
+
+    def detect_pilot_tones(self, audio_channel):
+        """
+        Detect 1200Hz pilot tones to identify frame boundaries in audio.
+
+        The V2 encoding places a 1200Hz pilot tone at the start of each frame
+        (first 10% of frame duration). This method detects these pilot tones
+        to synchronize audio frame boundaries.
+
+        Args:
+            audio_channel: Mono audio samples
+
+        Returns:
+            dict: Detection results including:
+                - 'frame_starts': List of sample positions where frames start
+                - 'pilot_confidence': Average detection confidence (0-1)
+                - 'detected_count': Number of pilot tones detected
+                - 'expected_count': Expected number based on audio duration
+        """
+        try:
+            from scipy.signal import butter, filtfilt
+        except ImportError:
+            # Fallback without scipy
+            return self._detect_pilot_tones_simple(audio_channel)
+
+        # Design a bandpass filter around 1200Hz
+        nyquist = self.sample_rate / 2
+        low_freq = (self.freq_pilot_range[0]) / nyquist
+        high_freq = (self.freq_pilot_range[1]) / nyquist
+
+        # Ensure frequencies are valid for filter design
+        low_freq = max(0.01, min(0.99, low_freq))
+        high_freq = max(low_freq + 0.01, min(0.99, high_freq))
+
+        try:
+            b, a = butter(4, [low_freq, high_freq], btype='band')
+            filtered = filtfilt(b, a, audio_channel)
+        except Exception:
+            # Filter design failed, use simple approach
+            return self._detect_pilot_tones_simple(audio_channel)
+
+        # Compute envelope using absolute value and smoothing
+        envelope = np.abs(filtered)
+        # Smooth with moving average
+        window_size = int(self.sample_rate * 0.005)  # 5ms window
+        if window_size > 1:
+            envelope = np.convolve(envelope, np.ones(window_size)/window_size, mode='same')
+
+        # Calculate expected pilot duration in samples
+        pilot_samples = int(self.samples_per_frame * self.pilot_ratio)  # ~192 samples
+
+        # Dynamic threshold based on signal statistics
+        threshold = np.mean(envelope) + 2 * np.std(envelope)
+
+        # Find regions above threshold
+        above_threshold = envelope > threshold
+
+        # Find rising edges (transitions from below to above threshold)
+        edges = np.diff(above_threshold.astype(int))
+        rising_edges = np.where(edges == 1)[0]
+
+        # Filter rising edges to ensure minimum spacing (one frame apart)
+        min_spacing = int(self.samples_per_frame * 0.8)  # At least 80% of a frame
+        frame_starts = []
+        last_start = -min_spacing
+
+        for edge in rising_edges:
+            if edge - last_start >= min_spacing:
+                frame_starts.append(edge)
+                last_start = edge
+
+        # Calculate expected count based on audio duration
+        expected_count = len(audio_channel) // self.samples_per_frame
+
+        # Calculate confidence
+        if expected_count > 0:
+            detection_ratio = len(frame_starts) / expected_count
+            # Good confidence if we detect close to expected number
+            confidence = max(0.0, min(1.0, 1.0 - abs(1.0 - detection_ratio)))
+        else:
+            confidence = 0.0
+
+        return {
+            'frame_starts': frame_starts,
+            'pilot_confidence': confidence,
+            'detected_count': len(frame_starts),
+            'expected_count': expected_count
+        }
+
+    def _detect_pilot_tones_simple(self, audio_channel):
+        """
+        Simple pilot tone detection without scipy (using FFT).
+
+        Args:
+            audio_channel: Mono audio samples
+
+        Returns:
+            dict: Detection results
+        """
+        frame_starts = []
+        window_size = int(self.samples_per_frame * self.pilot_ratio * 2)  # ~384 samples
+        hop_size = self.samples_per_frame // 4  # Check every quarter frame
+
+        # Scan through audio looking for pilot tone
+        for start in range(0, len(audio_channel) - window_size, hop_size):
+            window = audio_channel[start:start + window_size]
+
+            # FFT to detect 1200Hz
+            fft_result = np.fft.fft(window)
+            freqs = np.fft.fftfreq(len(window), 1/self.sample_rate)
+
+            # Find power at pilot frequency
+            pilot_idx = np.argmin(np.abs(freqs - self.freq_pilot))
+            pilot_power = np.abs(fft_result[pilot_idx])
+
+            # Find power at neighboring frequencies (for comparison)
+            total_power = np.sum(np.abs(fft_result[:len(fft_result)//2]))
+
+            if total_power > 0:
+                pilot_ratio = pilot_power / total_power
+                # If pilot frequency dominates, this is likely a pilot tone
+                if pilot_ratio > 0.3:  # Pilot is at least 30% of total power
+                    # Check if this is a new frame (not too close to previous)
+                    if len(frame_starts) == 0 or start - frame_starts[-1] >= self.samples_per_frame * 0.8:
+                        frame_starts.append(start)
+
+        expected_count = len(audio_channel) // self.samples_per_frame
+        detection_ratio = len(frame_starts) / expected_count if expected_count > 0 else 0
+        confidence = max(0.0, min(1.0, 1.0 - abs(1.0 - detection_ratio)))
+
+        return {
+            'frame_starts': frame_starts,
+            'pilot_confidence': confidence,
+            'detected_count': len(frame_starts),
+            'expected_count': expected_count
+        }
+
+    def decode_fsk_with_pilot_sync(self, audio_channel):
+        """
+        Decode FSK audio using pilot tone synchronization for frame boundaries.
+
+        This method first detects pilot tones to find frame boundaries,
+        then decodes each frame's FSK data. This provides better accuracy
+        than fixed-boundary decoding when timing is uncertain.
+
+        Args:
+            audio_channel: Mono audio samples
+
+        Returns:
+            list: List of (sample_position, decoded_result, confidence) tuples
+        """
+        # First, detect pilot tones to find frame boundaries
+        pilot_info = self.detect_pilot_tones(audio_channel)
+        frame_starts = pilot_info['frame_starts']
+
+        if len(frame_starts) == 0:
+            # No pilot tones detected, fall back to standard decoding
+            return self.decode_fsk_audio(audio_channel, strict=False)
+
+        results = []
+
+        for i, frame_start in enumerate(frame_starts):
+            # Determine frame end (next pilot or end of audio)
+            if i + 1 < len(frame_starts):
+                frame_end = frame_starts[i + 1]
+            else:
+                frame_end = min(frame_start + self.samples_per_frame, len(audio_channel))
+
+            if frame_end <= frame_start:
+                continue
+
+            frame_audio = audio_channel[frame_start:frame_end]
+
+            # Skip pilot portion and decode FSK data
+            data_start = int(len(frame_audio) * (self.pilot_ratio + self.silence_ratio))
+            data_end = int(len(frame_audio) * (1.0 - self.silence_ratio))
+
+            if data_end <= data_start:
+                continue
+
+            data_audio = frame_audio[data_start:data_end]
+
+            # Decode the 16 bits
+            bits = self._decode_bits_from_audio(data_audio)
+
+            if bits is not None and len(bits) == 16:
+                result = self._parse_v2_bits(bits)
+                if result is not None:
+                    confidence = 0.85 + (pilot_info['pilot_confidence'] * 0.1)
+                    results.append((frame_start, result, confidence))
+
+        return results
+
+    def _decode_bits_from_audio(self, audio_data):
+        """
+        Decode 16 FSK bits from audio data.
+
+        Args:
+            audio_data: Audio samples containing 16 bits of FSK data
+
+        Returns:
+            str: 16-character binary string or None if failed
+        """
+        if len(audio_data) < 16:
+            return None
+
+        samples_per_bit = len(audio_data) // 16
+        bits = []
+
+        for i in range(16):
+            bit_start = i * samples_per_bit
+            bit_end = bit_start + samples_per_bit
+            bit_audio = audio_data[bit_start:bit_end]
+
+            # Use zero-crossing rate to determine frequency
+            # Higher ZCR = higher frequency = '1'
+            # Lower ZCR = lower frequency = '0'
+            zero_crossings = np.sum(np.abs(np.diff(np.sign(bit_audio))) > 0)
+            zcr = zero_crossings / len(bit_audio) * self.sample_rate
+
+            # Expected ZCR: freq_0 (400Hz) ≈ 800 crossings/sec, freq_1 (800Hz) ≈ 1600 crossings/sec
+            threshold = (self.freq_0 + self.freq_1) / 2 * 2  # ≈ 1200
+            bit = '1' if zcr > threshold else '0'
+            bits.append(bit)
+
+        return ''.join(bits)
+
+    # =========================================================================
+    # V2 State Machine Decoder
+    # =========================================================================
+
+    class DecoderState:
+        """State machine states for V2 calibration cycle decoding"""
+        SEARCHING = 'SEARCHING'
+        IN_LEADER = 'IN_LEADER'
+        IN_COUNTDOWN = 'IN_COUNTDOWN'
+        READY_FOR_TIMECODE = 'READY_FOR_TIMECODE'
+        READING_TIMECODE = 'READING_TIMECODE'
+        TIMECODE_COMPLETE = 'TIMECODE_COMPLETE'
+        IN_LEADOUT = 'IN_LEADOUT'
+        CYCLE_COMPLETE = 'CYCLE_COMPLETE'
+
+    def decode_with_state_machine(self, video_frames, get_frame_func=None):
+        """
+        State machine decoder for V2 structured calibration video.
+
+        Processes video frames using a state machine to track the calibration
+        cycle structure (Leader -> Countdown -> Separator -> Timecode ->
+        Separator -> Count-up -> Tail).
+
+        Args:
+            video_frames: Either a list of frames or total frame count
+            get_frame_func: Optional function to get frame by index.
+                           If None, video_frames must be a list.
+
+        Returns:
+            dict: Decoding results including:
+                - 'timecode_frames': List of (video_frame_num, decoded_frame_num, confidence)
+                - 'state_transitions': List of (video_frame_num, old_state, new_state)
+                - 'cycles_detected': Number of complete cycles found
+                - 'errors': List of error messages
+        """
+        results = {
+            'timecode_frames': [],
+            'state_transitions': [],
+            'cycles_detected': 0,
+            'errors': []
+        }
+
+        state = self.DecoderState.SEARCHING
+        cycles = 0
+        consecutive_leader_frames = 0
+        leader_threshold = 5  # Frames needed to confirm leader
+
+        # Determine iteration method
+        if get_frame_func is not None:
+            frame_count = video_frames
+            get_frame = get_frame_func
+        else:
+            frame_count = len(video_frames)
+            get_frame = lambda i: video_frames[i]
+
+        for frame_num in range(frame_count):
+            try:
+                frame = get_frame(frame_num)
+                decoded, confidence, status = self.decode_frame_with_validation(frame)
+            except Exception as e:
+                results['errors'].append(f"Frame {frame_num}: {str(e)}")
+                continue
+
+            if status != "OK":
+                # Frame decode failed - may indicate transition or noise
+                consecutive_leader_frames = 0
+                continue
+
+            old_state = state
+
+            # State machine transitions based on decoded content
+            if decoded == 'leader':
+                consecutive_leader_frames += 1
+                if state == self.DecoderState.SEARCHING and consecutive_leader_frames >= leader_threshold:
+                    state = self.DecoderState.IN_LEADER
+                elif state == self.DecoderState.IN_LEADOUT:
+                    state = self.DecoderState.CYCLE_COMPLETE
+                    cycles += 1
+
+            elif decoded == 'separator':
+                consecutive_leader_frames = 0
+                if state == self.DecoderState.IN_COUNTDOWN:
+                    state = self.DecoderState.READY_FOR_TIMECODE
+                elif state == self.DecoderState.READING_TIMECODE:
+                    state = self.DecoderState.TIMECODE_COMPLETE
+
+            elif isinstance(decoded, tuple) and decoded[0] == 'countdown':
+                consecutive_leader_frames = 0
+                state = self.DecoderState.IN_COUNTDOWN
+
+            elif isinstance(decoded, tuple) and decoded[0] == 'leadout':
+                consecutive_leader_frames = 0
+                state = self.DecoderState.IN_LEADOUT
+
+            elif isinstance(decoded, int):
+                # Timecode frame number
+                consecutive_leader_frames = 0
+                if state in (self.DecoderState.READY_FOR_TIMECODE, self.DecoderState.READING_TIMECODE):
+                    state = self.DecoderState.READING_TIMECODE
+                    results['timecode_frames'].append((frame_num, decoded, confidence))
+
+            # Record state transitions
+            if state != old_state:
+                results['state_transitions'].append((frame_num, old_state, state))
+
+            # Reset for next cycle
+            if state == self.DecoderState.CYCLE_COMPLETE:
+                state = self.DecoderState.SEARCHING
+                consecutive_leader_frames = 0
+
+        results['cycles_detected'] = cycles
+        return results
+
+    def calculate_calibration_offset(self, state_machine_results):
+        """
+        Calculate the audio/video offset from state machine decoding results.
+
+        Uses multi-point sampling with averaging to get a robust offset measurement.
+
+        Args:
+            state_machine_results: Results dict from decode_with_state_machine()
+
+        Returns:
+            dict: Offset analysis including:
+                - 'mean_offset': Average offset in frames
+                - 'std_offset': Standard deviation of offsets
+                - 'sample_count': Number of samples used
+                - 'confidence': Overall confidence (0-1)
+                - 'offsets': List of individual offset measurements
+        """
+        timecode_frames = state_machine_results.get('timecode_frames', [])
+
+        if len(timecode_frames) < 3:
+            return {
+                'mean_offset': None,
+                'std_offset': None,
+                'sample_count': len(timecode_frames),
+                'confidence': 0.0,
+                'offsets': [],
+                'error': 'Insufficient timecode frames for calibration'
+            }
+
+        offsets = []
+        for video_frame_num, decoded_frame_num, confidence in timecode_frames:
+            # The offset is the difference between where we found the frame
+            # and what frame number it claims to be
+            # If video frame 100 contains timecode frame 95, offset is +5
+            offset = video_frame_num - decoded_frame_num
+            offsets.append(offset)
+
+        # Use robust statistics (median and MAD) to handle outliers
+        median_offset = np.median(offsets)
+        mad = np.median(np.abs(np.array(offsets) - median_offset))
+
+        # Filter outliers (more than 3 MAD from median)
+        filtered_offsets = [o for o in offsets if abs(o - median_offset) <= 3 * mad]
+
+        if len(filtered_offsets) < 3:
+            filtered_offsets = offsets  # Fall back to all if too many filtered
+
+        mean_offset = np.mean(filtered_offsets)
+        std_offset = np.std(filtered_offsets)
+
+        # Confidence based on consistency (low std = high confidence)
+        max_acceptable_std = 5.0  # 5 frames of variation is acceptable
+        confidence = max(0.0, 1.0 - (std_offset / max_acceptable_std))
+
+        return {
+            'mean_offset': mean_offset,
+            'std_offset': std_offset,
+            'sample_count': len(filtered_offsets),
+            'confidence': confidence,
+            'offsets': filtered_offsets,
+            'outliers_removed': len(offsets) - len(filtered_offsets)
+        }
