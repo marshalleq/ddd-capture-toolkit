@@ -575,6 +575,240 @@ def create_calibration_iso(format_type=None):
         return False
 
 
+def burn_iso_to_dvd(iso_path=None):
+    """
+    Burn an ISO file to DVD.
+
+    Args:
+        iso_path: Path to ISO file. If None, scans media/iso and lets user select.
+
+    Returns:
+        True if burn successful, False otherwise.
+    """
+    clear_screen()
+    display_header()
+    print("\nBURN DVD")
+    print("=" * 35)
+
+    # Check for growisofs
+    try:
+        result = subprocess.run(['which', 'growisofs'], capture_output=True, text=True)
+        if result.returncode != 0:
+            print("ERROR: growisofs not found.")
+            print()
+            print("Install dvd+rw-tools:")
+            print("  Fedora: sudo dnf install dvd+rw-tools")
+            print("  Ubuntu: sudo apt install dvd+rw-tools")
+            input("\nPress Enter to return...")
+            return False
+    except Exception as e:
+        print(f"Error checking for growisofs: {e}")
+        input("\nPress Enter to return...")
+        return False
+
+    # If no ISO specified, scan and let user select
+    if iso_path is None:
+        iso_dir = "media/iso"
+        if not os.path.exists(iso_dir):
+            print(f"No ISO directory found: {iso_dir}")
+            print("Create an ISO first.")
+            input("\nPress Enter to return...")
+            return False
+
+        iso_files = [f for f in os.listdir(iso_dir) if f.lower().endswith('.iso')]
+        if not iso_files:
+            print("No ISO files found in media/iso/")
+            print("Create an ISO first.")
+            input("\nPress Enter to return...")
+            return False
+
+        print("Available ISO files:")
+        for i, iso_file in enumerate(sorted(iso_files), 1):
+            full_path = os.path.join(iso_dir, iso_file)
+            size_mb = os.path.getsize(full_path) / (1024 * 1024)
+            print(f"  {i}. {iso_file} ({size_mb:.1f} MB)")
+        print()
+
+        try:
+            choice = input(f"Select ISO to burn (1-{len(iso_files)}, or 'e' to cancel): ").strip()
+            if choice.lower() == 'e':
+                return False
+            idx = int(choice) - 1
+            if 0 <= idx < len(iso_files):
+                iso_path = os.path.join(iso_dir, sorted(iso_files)[idx])
+            else:
+                print("Invalid selection.")
+                input("\nPress Enter to return...")
+                return False
+        except ValueError:
+            print("Invalid selection.")
+            input("\nPress Enter to return...")
+            return False
+
+    # Verify ISO exists
+    if not os.path.exists(iso_path):
+        print(f"ISO file not found: {iso_path}")
+        input("\nPress Enter to return...")
+        return False
+
+    iso_size = os.path.getsize(iso_path) / (1024 * 1024)
+    print(f"ISO to burn: {os.path.basename(iso_path)} ({iso_size:.1f} MB)")
+    print()
+
+    # Auto-detect DVD drive
+    print("Detecting DVD drive...")
+    dvd_device = None
+    try:
+        # Check /dev/sr* devices
+        import glob
+        sr_devices = sorted(glob.glob('/dev/sr*'))
+
+        if not sr_devices:
+            print("No DVD drive found (/dev/sr* not present).")
+            input("\nPress Enter to return...")
+            return False
+
+        # If multiple drives, check which has media
+        for device in sr_devices:
+            try:
+                result = subprocess.run(['dvd+rw-mediainfo', device],
+                                        capture_output=True, text=True, timeout=5)
+                output = result.stdout + result.stderr
+                # Check if this drive has usable media
+                if 'no media' not in output.lower() and 'INQUIRY' in output:
+                    dvd_device = device
+                    # Extract drive name
+                    for line in output.split('\n'):
+                        if 'INQUIRY:' in line:
+                            drive_name = line.split('INQUIRY:')[1].strip()
+                            print(f"Found: {device} - {drive_name}")
+                            break
+                    break
+            except:
+                continue
+
+        if not dvd_device:
+            # No drive with media, default to first drive
+            dvd_device = sr_devices[0]
+            print(f"Using: {dvd_device}")
+            print("No disc detected - please insert a blank DVD.")
+            input("\nPress Enter to return...")
+            return False
+
+    except Exception as e:
+        print(f"Drive detection failed: {e}")
+        print("Falling back to /dev/sr0")
+        dvd_device = '/dev/sr0'
+
+    # Check DVD drive and media
+    print("Checking media...")
+    try:
+        result = subprocess.run(['dvd+rw-mediainfo', dvd_device],
+                                capture_output=True, text=True, timeout=10)
+        output = result.stdout + result.stderr
+
+        if 'no media' in output.lower() or 'no disc' in output.lower():
+            print("No disc in drive. Please insert a blank DVD.")
+            input("\nPress Enter to return...")
+            return False
+
+        # Check if disc is blank or appendable
+        if 'Disc status:' in output:
+            if 'blank' in output.lower():
+                print("Blank DVD detected - ready to burn.")
+            elif 'complete' in output.lower():
+                print("WARNING: Disc already has data.")
+                print("This will overwrite the disc if it's rewritable (DVD+RW/DVD-RW).")
+                print("If it's a write-once disc (DVD+R/DVD-R), burning will fail.")
+                confirm = input("\nContinue anyway? (y/N): ").strip().lower()
+                if confirm != 'y':
+                    return False
+        else:
+            print("Could not determine disc status.")
+
+        # Show media type
+        for line in output.split('\n'):
+            if 'Mounted Media:' in line:
+                print(f"Media: {line.split(':')[1].strip()}")
+                break
+
+    except subprocess.TimeoutExpired:
+        print("Timeout checking DVD drive.")
+    except FileNotFoundError:
+        print("dvd+rw-mediainfo not found - skipping media check.")
+    except Exception as e:
+        print(f"Warning: Could not check media: {e}")
+
+    print()
+    print("Ready to burn DVD.")
+    print()
+    print("This will:")
+    print("  1. Write the ISO image to the DVD")
+    print("  2. Finalize the disc for maximum compatibility")
+    print()
+    confirm = input("Start burning? (y/N): ").strip().lower()
+    if confirm != 'y':
+        print("Cancelled.")
+        input("\nPress Enter to return...")
+        return False
+
+    # Burn the DVD
+    print()
+    print(f"Burning to {dvd_device}... (this may take several minutes)")
+    print("-" * 40)
+
+    try:
+        # growisofs -dvd-compat -Z /dev/sr0=file.iso
+        # -dvd-compat: Close disc for maximum player compatibility
+        # -Z: Start new session (required for blank disc)
+        burn_cmd = ['growisofs', '-dvd-compat', '-Z', f'{dvd_device}={iso_path}']
+
+        process = subprocess.Popen(burn_cmd, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True)
+
+        # Stream output
+        for line in iter(process.stdout.readline, ''):
+            line = line.strip()
+            if line:
+                print(f"  {line}")
+
+        process.wait()
+
+        if process.returncode == 0:
+            print("-" * 40)
+            print()
+            print("DVD burned successfully!")
+            print()
+            print("The disc should now play in any DVD player.")
+            print("You may want to test it before recording to VHS.")
+
+            # Try to eject
+            try:
+                subprocess.run(['eject', dvd_device], timeout=10)
+                print("\nDisc ejected.")
+            except:
+                pass
+
+            input("\nPress Enter to return...")
+            return True
+        else:
+            print("-" * 40)
+            print()
+            print(f"Burning failed with exit code {process.returncode}")
+            print()
+            print("Common issues:")
+            print("  - Disc not blank or not rewritable")
+            print("  - Disc incompatible with drive")
+            print("  - Drive or disc dirty/damaged")
+            input("\nPress Enter to return...")
+            return False
+
+    except Exception as e:
+        print(f"\nError during burning: {e}")
+        input("\nPress Enter to return...")
+        return False
+
+
 def vhs_audio_alignment():
     """Run the VHS audio alignment tool"""
     clear_screen()
@@ -2561,44 +2795,54 @@ def display_robust_timecode_menu():
         print()
         print("STEP 2 - BURN:")
         print("  2. Create Calibration DVD ISO")
-        print("     (Then burn ISO to DVD with your burning software)")
+        print("  3. Burn Calibration DVD")
         print()
         print("STEP 3 - RECORD:")
         print("     Record DVD playback to VHS tape (manual)")
         print()
         print("STEP 4 - CAPTURE:")
-        print("  3. Perform Calibration Capture")
+        print("  4. Perform Calibration Capture")
         print()
         print("STEP 5 - PROCESS:")
-        print("  4. Workflow Control Centre")
+        print("  5. Workflow Control Centre")
         print("     Process capture through (D)→(E)→(A)→(F)inal")
         print()
         print("STEP 6 - ANALYZE:")
-        print("  5. Analyze V2 Calibration (from _final.mkv)")
+        print("  6. Analyze V2 Calibration (from _final.mkv)")
         print()
         print("TESTING:")
-        print("  6. Test MP4 Detection (without VHS)")
+        print("  7. Test MP4 Detection (without VHS)")
         print()
         print("e. Return to Calibration Menu")
 
-        selection = input("\nSelect option (1-6/e): ").strip().lower()
+        selection = input("\nSelect option (1-7/e): ").strip().lower()
 
         if selection == '1':
             create_vhs_pattern_generator()
         elif selection == '2':
             create_calibration_iso()
         elif selection == '3':
-            capture_new_video(return_to_calibration=True)
+            # Burn the calibration ISO
+            cal_iso = "media/iso/vhs_calibration_pal_v2.iso"
+            if not os.path.exists(cal_iso):
+                cal_iso = "media/iso/vhs_calibration_ntsc_v2.iso"
+            if os.path.exists(cal_iso):
+                burn_iso_to_dvd(cal_iso)
+            else:
+                print("No calibration ISO found. Create one first (option 2).")
+                input("\nPress Enter to continue...")
         elif selection == '4':
-            launch_workflow_control_centre()
+            capture_new_video(return_to_calibration=True)
         elif selection == '5':
-            analyze_v2_calibration()
+            launch_workflow_control_centre()
         elif selection == '6':
+            analyze_v2_calibration()
+        elif selection == '7':
             validate_mp4_timecode()
         elif selection == 'e':
             break
         else:
-            print("Invalid selection. Please enter 1-6 or e.")
+            print("Invalid selection. Please enter 1-7 or e.")
             input("\nPress Enter to continue...")
 
 
@@ -2655,27 +2899,30 @@ def display_calibration_tools_menu():
         print("VIDEO GENERATION:")
         print("  1. Make Video Test Charts")
         print("  2. Create DVD ISOs from MP4s")
+        print("  3. Burn DVD ISO")
         print()
         print("SETTINGS:")
-        print("  3. Manual Calibration Value Entry")
-        print("  4. View Current Settings")
+        print("  4. Manual Calibration Value Entry")
+        print("  5. View Current Settings")
         print()
         print("e. Return to Calibration Menu")
 
-        selection = input("\nSelect option (1-4/e): ").strip().lower()
+        selection = input("\nSelect option (1-5/e): ").strip().lower()
 
         if selection == '1':
             create_sync_test_videos()
         elif selection == '2':
             create_dvd_isos()
         elif selection == '3':
-            manual_calibration_entry()
+            burn_iso_to_dvd()  # No path = let user select from available ISOs
         elif selection == '4':
+            manual_calibration_entry()
+        elif selection == '5':
             show_project_summary()
         elif selection == 'e':
             break
         else:
-            print("Invalid selection. Please enter 1-4 or e.")
+            print("Invalid selection. Please enter 1-5 or e.")
             input("\nPress Enter to continue...")
 
 
@@ -3577,18 +3824,27 @@ def analyze_v2_calibration_video(video_file, audio_file):
     """
     Analyze V2 calibration video to calculate A/V offset.
 
-    Decodes visual timecodes from video frames and FSK timecodes from audio,
-    then compares them to determine the offset between audio and video.
+    Compares visual timecodes from video frames with FSK timecodes from audio
+    to determine the actual A/V offset. Uses zero-crossing rate (ZCR) based
+    FSK decoding which works with the short bit durations in V2 encoding.
+
+    The V2 timecode system embeds frame numbers in both:
+    - Visual: Red/blue binary strip at top of frame
+    - Audio: FSK tones (400Hz/800Hz) encoding frame numbers
+
+    The audio and video are searched independently for timecodes, then
+    matching timecode values are compared to find the position offset.
 
     Args:
         video_file: Path to the exported video (MKV/MP4)
-        audio_file: Path to the captured audio (FLAC/WAV)
+        audio_file: Path to the aligned audio (WAV) at 78125 Hz sample rate
 
     Returns:
         Tuple of (offset_seconds, sample_count, std_dev) or None if analysis fails
     """
     import cv2
     import numpy as np
+    import subprocess
 
     # Add tools path for importing timecode module
     tools_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools', 'timecode-generator')
@@ -3596,12 +3852,12 @@ def analyze_v2_calibration_video(video_file, audio_file):
         sys.path.insert(0, tools_path)
 
     try:
-        from shared_timecode_robust import RobustTimecodeGenerator
+        from shared_timecode_robust import SharedTimecodeRobust
     except ImportError as e:
         print(f"ERROR: Could not import V2 timecode decoder: {e}")
         return None
 
-    # Detect format from video
+    # Open video file
     cap = cv2.VideoCapture(video_file)
     if not cap.isOpened():
         print(f"ERROR: Could not open video file: {video_file}")
@@ -3617,77 +3873,189 @@ def analyze_v2_calibration_video(video_file, audio_file):
     print(f"Video: {total_frames} frames at {fps:.2f} fps ({format_type})")
     print(f"Resolution: {width}x{height}")
 
-    # Create decoder
-    decoder = RobustTimecodeGenerator(format_type=format_type)
+    # Audio sample rate for Rene Wolf Sound Card
+    audio_sample_rate = 78125
+    samples_per_frame = audio_sample_rate // int(fps)
 
-    # Sample frames throughout the video (skip first/last 10% for stability)
-    start_frame = int(total_frames * 0.1)
-    end_frame = int(total_frames * 0.9)
-    sample_interval = max(1, (end_frame - start_frame) // 100)  # ~100 samples
+    # Load audio file at native sample rate (don't resample)
+    print(f"\nLoading audio from: {audio_file}")
+    if not os.path.exists(audio_file):
+        print(f"ERROR: Audio file not found: {audio_file}")
+        cap.release()
+        return None
 
-    print(f"\nSampling frames {start_frame} to {end_frame} (interval: {sample_interval})")
+    try:
+        result = subprocess.run(
+            ['ffmpeg', '-i', audio_file, '-f', 's16le', '-acodec', 'pcm_s16le', '-'],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+        raw_audio = np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+        # Take left channel (stereo capture but mono source)
+        audio_data = raw_audio[0::2]
+        audio_duration = len(audio_data) / audio_sample_rate
+        print(f"Audio: {len(audio_data)} samples ({audio_duration:.2f} seconds) at {audio_sample_rate} Hz")
+    except Exception as e:
+        print(f"ERROR: Audio processing error: {e}")
+        cap.release()
+        return None
 
-    decoded_points = []
-    failed_frames = 0
+    # ZCR-based FSK decoder for V2 (works with short bit durations)
+    def decode_audio_fsk_zcr(audio_segment):
+        """Decode V2 FSK using zero-crossing rate (ZCR)"""
+        # V2 structure: 15% header (pilot+silence), 80% data, 5% trailing
+        data_start = int(len(audio_segment) * 0.15)
+        data_end = int(len(audio_segment) * 0.95)
+        data = audio_segment[data_start:data_end]
 
-    for frame_num in range(start_frame, end_frame, sample_interval):
+        samples_per_bit = len(data) // 16
+        if samples_per_bit < 50:
+            return None
+
+        bits = []
+        for i in range(16):
+            bit_audio = data[i * samples_per_bit:(i + 1) * samples_per_bit]
+            # Count zero crossings
+            signs = np.sign(bit_audio)
+            signs[signs == 0] = 1
+            crossings = np.sum(np.abs(np.diff(signs)) > 0)
+            # ZCR as frequency estimate
+            zcr = crossings / len(bit_audio) * audio_sample_rate / 2
+            # 400Hz vs 800Hz threshold at 600Hz
+            bits.append('0' if zcr < 600 else '1')
+
+        decoded = ''.join(bits)
+        # Check for valid timecode frame: prefix '10', suffix '01'
+        if decoded[:2] == '10' and decoded[14:] == '01':
+            frame_num = int(decoded[2:14], 2)
+            if frame_num < 800:  # Reasonable range for calibration video
+                return frame_num
+        return None
+
+    # Create visual timecode decoder
+    decoder = SharedTimecodeRobust(format_type=format_type)
+
+    print(f"\nAnalyzing V2 timecodes...")
+    print(f"  Samples per frame: {samples_per_frame}")
+
+    # Step 1: Build video timecode map
+    # Limit to first cycle (~1550 frames for 62s cycle at 25fps) to avoid duplicate TCs
+    print("  Scanning video for visual timecodes (first cycle only)...")
+    video_tc_map = {}  # timecode -> video_frame_position
+    first_cycle_frames = int(62 * fps)  # 62 second cycle
+
+    for frame_num in range(0, min(total_frames, first_cycle_frames)):
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
         ret, frame = cap.read()
         if not ret:
             continue
 
-        # Decode visual timecode
         try:
-            decoded_frame, confidence, status = decoder.decode_frame_with_validation(frame)
+            result, confidence, status = decoder.decode_frame_with_validation(frame)
+            if status == 'OK' and isinstance(result, int) and result < 800:
+                if result not in video_tc_map:
+                    video_tc_map[result] = frame_num
+        except:
+            pass
 
-            if status == "OK" and decoded_frame is not None:
-                # The offset is the difference between the actual frame position
-                # and what the timecode says the frame should be
-                # If video_frame=100 shows timecode=98, video is 2 frames ahead
-                offset_frames = frame_num - decoded_frame
-                decoded_points.append({
-                    'video_frame': frame_num,
-                    'decoded_frame': decoded_frame,
-                    'offset_frames': offset_frames,
-                    'confidence': confidence
-                })
-            else:
-                failed_frames += 1
-        except Exception as e:
-            failed_frames += 1
-
+    print(f"  Found {len(video_tc_map)} unique visual timecodes")
     cap.release()
 
-    if len(decoded_points) < 5:
-        print(f"\nInsufficient decoded frames: {len(decoded_points)} (need at least 5)")
-        print(f"Failed to decode: {failed_frames} frames")
+    if len(video_tc_map) < 10:
+        print("ERROR: Insufficient visual timecodes decoded from video")
         return None
 
-    print(f"Successfully decoded: {len(decoded_points)} frames")
-    print(f"Failed to decode: {failed_frames} frames")
+    # Step 2: Search audio for FSK patterns using sliding window
+    # VHS wow/flutter means FSK isn't aligned to exact frame boundaries
+    # Use 1/8 frame steps to find where valid timecodes actually are
+    # Limit to first cycle to match video search
+    print("  Scanning audio for FSK timecodes (sliding window, first cycle)...")
+    audio_tc_map = {}  # timecode -> audio_frame_position (fractional)
 
-    # Calculate offset statistics
-    offsets = [p['offset_frames'] for p in decoded_points]
+    step = samples_per_frame // 8  # 1/8 frame resolution
+    first_cycle_samples = int(62 * audio_sample_rate)  # 62 second cycle
+    max_samples = min(len(audio_data) - samples_per_frame, first_cycle_samples)
 
-    # Use median for robustness against outliers
-    median_offset = np.median(offsets)
-    std_dev = np.std(offsets)
-    mean_confidence = np.mean([p['confidence'] for p in decoded_points])
+    for sample_pos in range(0, max_samples, step):
+        segment = audio_data[sample_pos:sample_pos + samples_per_frame]
+        tc = decode_audio_fsk_zcr(segment)
+        if tc is not None:
+            # Record fractional frame position
+            frame_pos = sample_pos / samples_per_frame
+            if tc not in audio_tc_map:
+                audio_tc_map[tc] = frame_pos
 
-    print(f"\nOffset analysis:")
-    print(f"   Median offset: {median_offset:.1f} frames")
-    print(f"   Std deviation: {std_dev:.2f} frames")
-    print(f"   Mean confidence: {mean_confidence:.2%}")
+    print(f"  Found {len(audio_tc_map)} unique audio timecodes")
 
-    # Convert frames to seconds
+    if len(audio_tc_map) < 10:
+        print("ERROR: Insufficient audio FSK timecodes decoded")
+        print("       Check that calibration video audio was recorded properly")
+        return None
+
+    # Step 3: Calculate offsets for matching timecodes
+    print("\nCalculating A/V offset...")
+    matching_tcs = set(video_tc_map.keys()) & set(audio_tc_map.keys())
+    print(f"  Matching timecodes: {len(matching_tcs)}")
+
+    if len(matching_tcs) < 5:
+        print("ERROR: Insufficient matching timecodes between audio and video")
+        return None
+
+    # Calculate initial offsets
+    tc_offsets = []  # (timecode, offset)
+    for tc in sorted(matching_tcs):
+        video_pos = video_tc_map[tc]
+        audio_pos = audio_tc_map[tc]
+        offset = video_pos - audio_pos
+        tc_offsets.append((tc, offset, video_pos, audio_pos))
+
+    offsets = [o for _, o, _, _ in tc_offsets]
+    initial_median = np.median(offsets)
+
+    # Filter outliers: keep only offsets within 5 frames of initial median
+    # This removes spurious decodes from non-timecode sections
+    outlier_threshold = 5.0
+    filtered = [(tc, o, vp, ap) for tc, o, vp, ap in tc_offsets
+                if abs(o - initial_median) <= outlier_threshold]
+
+    outliers_removed = len(tc_offsets) - len(filtered)
+    if outliers_removed > 0:
+        print(f"  Filtered {outliers_removed} outlier(s) (>5 frames from median)")
+
+    if len(filtered) < 5:
+        print("ERROR: Insufficient consistent timecode matches after filtering")
+        return None
+
+    # Recalculate with filtered data
+    filtered_offsets = [o for _, o, _, _ in filtered]
+    median_offset = np.median(filtered_offsets)
+    std_dev = np.std(filtered_offsets)
     offset_seconds = median_offset / fps
 
-    # Check for consistency (std dev should be low for good calibration)
-    if std_dev > 5:
-        print(f"\n⚠ Warning: High variation in offset measurements")
-        print(f"   This may indicate inconsistent timecode decoding")
+    print(f"\n=== A/V OFFSET ANALYSIS ===")
+    print(f"  Consistent timecodes analyzed: {len(filtered)}")
+    print(f"  Median offset: {median_offset:.2f} frames")
+    print(f"  Std deviation: {std_dev:.3f} frames")
+    print(f"  Offset in seconds: {offset_seconds:.4f}s ({offset_seconds * 1000:.1f}ms)")
 
-    return (offset_seconds, len(decoded_points), std_dev)
+    # Sample comparisons from filtered data
+    print(f"\nSample comparisons:")
+    for tc, offset, vp, ap in filtered[:5]:
+        print(f"  TC {tc}: video frame {vp}, audio pos {ap:.2f}, offset={offset:.2f}")
+
+    if std_dev > 1.0:
+        print(f"\n⚠ Note: Some variation in offset ({std_dev:.2f} frames)")
+        print(f"   This is normal for VHS captures due to wow/flutter")
+
+    # Interpretation
+    print(f"\nInterpretation:")
+    if median_offset < 0:
+        print(f"  Video is {abs(median_offset):.1f} frames AHEAD of audio")
+        print(f"  Audio lags by {abs(offset_seconds)*1000:.1f}ms")
+    else:
+        print(f"  Audio is {median_offset:.1f} frames AHEAD of video")
+        print(f"  Audio leads by {offset_seconds*1000:.1f}ms")
+
+    return (offset_seconds, len(filtered), std_dev)
 
 
 def capture_calibration_vhs():
@@ -3853,46 +4221,54 @@ def analyze_v2_calibration():
     print("and saves the calculated A/V offset to config.")
     print()
 
-    # Get capture directory
-    from config import load_config
-    config = load_config()
-    capture_folder = config.get('capture_directory', '')
+    # Calibration files are stored in the project's temp directory
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    temp_folder = os.path.join(project_root, "temp")
 
-    if not capture_folder or not os.path.exists(capture_folder):
-        print("ERROR: Capture directory not configured or doesn't exist")
-        print("Please configure capture directory in Settings.")
-        input("\nPress Enter to return to menu...")
-        return
+    # Look for the standard calibration files
+    # Use calibration_ffv1.mkv (video only) and calibration.flac (raw audio)
+    # We use RAW audio, not aligned, because auto_audio_align applies TBC
+    # corrections that assume audio is already roughly aligned - which it
+    # isn't during calibration. Using aligned audio would corrupt the measurement.
+    video_file = os.path.join(temp_folder, "calibration_ffv1.mkv")
+    audio_file = os.path.join(temp_folder, "calibration.flac")
 
-    # Look for the standard calibration file
-    calibration_file = os.path.join(capture_folder, "calibration_final.mkv")
-
-    if not os.path.exists(calibration_file):
-        print(f"Calibration file not found:")
-        print(f"   {calibration_file}")
+    if not os.path.exists(video_file):
+        print(f"Calibration video not found:")
+        print(f"   {video_file}")
         print()
         print("Please ensure you have:")
         print("1. Captured with Calibration Mode ON (uses 'calibration' as name)")
         print("2. Processed through Workflow Control Centre:")
-        print("   (D)ecode → (E)xport → (A)lign → (F)inal")
+        print("   (D)ecode → (E)xport")
+        print("   (Align and Final steps are NOT needed for calibration)")
         input("\nPress Enter to return to menu...")
         return
 
-    video_file = calibration_file
+    if not os.path.exists(audio_file):
+        print(f"Calibration audio not found:")
+        print(f"   {audio_file}")
+        print()
+        print("This is the raw audio from the capture step.")
+        print("Please ensure you captured with Calibration Mode ON.")
+        input("\nPress Enter to return to menu...")
+        return
+
     video_size = os.path.getsize(video_file) / (1024*1024)
+    audio_size = os.path.getsize(audio_file) / (1024*1024)
     from datetime import datetime
     mtime = os.path.getmtime(video_file)
     mod_date = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
 
-    print(f"Found: calibration_final.mkv")
-    print(f"Size: {video_size:.1f} MB")
+    print(f"Found: calibration_ffv1.mkv ({video_size:.1f} MB)")
+    print(f"Found: calibration.flac ({audio_size:.1f} MB) [raw audio]")
     print(f"Modified: {mod_date}")
     print()
-    print("Analyzing V2 timecodes...")
+    print("Analyzing V2 timecodes (visual + audio FSK)...")
     print()
 
-    # Run analysis (audio_file not needed for visual timecode analysis)
-    result = analyze_v2_calibration_video(video_file, None)
+    # Run analysis with both video and audio files
+    result = analyze_v2_calibration_video(video_file, audio_file)
 
     if result is None:
         print("\n⚠ Analysis failed - could not decode V2 timecodes")
@@ -3914,27 +4290,38 @@ def analyze_v2_calibration():
     print(f"Consistency: {std_dev:.2f} frames std dev")
     print()
 
-    if offset_seconds > 0:
-        print(f"Audio is {abs(offset_seconds*1000):.1f}ms BEHIND video")
-    elif offset_seconds < 0:
-        print(f"Audio is {abs(offset_seconds*1000):.1f}ms AHEAD of video")
+    # offset = video_pos - audio_pos
+    # offset < 0 means audio_pos > video_pos, audio was captured LATER
+    #   -> during playback, audio content is AHEAD -> need to DELAY audio
+    # offset > 0 means audio_pos < video_pos, audio was captured EARLIER
+    #   -> during playback, audio content is BEHIND -> need to ADVANCE audio (not possible, so no delay)
+    corrected_delay = -offset_seconds
+    if offset_seconds < 0:
+        print(f"Audio was captured {abs(offset_seconds*1000):.1f}ms LATER than video")
+        print(f"Fix: Delay audio start by {abs(corrected_delay*1000):.1f}ms")
+    elif offset_seconds > 0:
+        print(f"Audio was captured {abs(offset_seconds*1000):.1f}ms EARLIER than video")
+        print(f"Fix: No delay needed (audio_delay = 0)")
+        corrected_delay = 0  # Can't advance audio, just don't delay
     else:
         print("Audio and video are synchronized")
+
+    print(f"\naudio_delay to save: {corrected_delay:+.4f}s")
 
     print()
     save = input("Save this calibration to config? (Y/n): ").strip().lower()
     if save != 'n':
         try:
+            from config import load_config, save_config
             config = load_config()
-            config['audio_delay'] = offset_seconds
+            config['audio_delay'] = corrected_delay
             config['calibration_method'] = 'v2_timecode'
             config['calibration_samples'] = sample_count
             # Turn off calibration mode now that we have a value
             config['calibration_mode'] = False
 
-            from config import save_config
             if save_config(config):
-                print(f"\n✓ Calibration saved: {offset_seconds:+.4f}s")
+                print(f"\n✓ Calibration saved: audio_delay = {corrected_delay:+.4f}s")
                 print("✓ Calibration mode disabled")
                 print("✓ This delay will be applied to future captures")
             else:
