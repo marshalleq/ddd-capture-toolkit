@@ -33,6 +33,206 @@ def release_audio_device_before_capture():
         pass
 
 
+def build_sox_command_with_device(output_filename, device_info):
+    """Build sox command using pre-cached device info (no subprocess calls).
+
+    This is the fast version - assumes device_info was already obtained from
+    prepare_audio_device() during the preparation phase.
+    """
+    device = device_info['device_id']
+    sample_rate = str(device_info.get('sample_rate', 78125))
+    bit_depth = str(device_info.get('bit_depth', 24))
+    channels = '2'
+
+    # Determine driver based on platform
+    if sys.platform == 'win32':
+        driver = 'waveaudio'
+    elif sys.platform == 'darwin':
+        driver = 'coreaudio'
+    else:
+        driver = 'alsa'
+
+    # Find sox with ALSA support on Linux
+    sox_cmd = 'sox'
+    if sys.platform == 'linux' and driver == 'alsa':
+        system_sox = '/usr/bin/sox'
+        if os.path.exists(system_sox):
+            sox_cmd = system_sox
+
+    if sys.platform == 'win32':
+        return [
+            sox_cmd,
+            '-t', driver,
+            '-r', sample_rate,
+            '-b', bit_depth,
+            device,
+            output_filename,
+            'remix', '1', '2'
+        ]
+    else:
+        return [
+            sox_cmd,
+            '-t', driver,
+            '-r', sample_rate,
+            '-b', bit_depth,
+            '-c', channels,
+            device,
+            '--buffer', '8192',
+            output_filename,
+            'remix', '1', '2'
+        ]
+
+
+def prepare_capture_resources(audio_output_path):
+    """
+    Pre-prepare all capture resources BEFORE user interaction.
+
+    This does all the slow work (device detection, PipeWire release)
+    so that when the user presses Enter, capture can start immediately.
+
+    Returns (sox_command, device_info) or (None, error_message).
+    """
+    # 1. Clean up existing processes
+    cleanup_existing_processes()
+
+    # 2. Detect audio device (without verification - sox will fail fast if device doesn't work)
+    from config import get_audio_device, release_audio_device_linux
+
+    device_info = get_audio_device()
+    if not device_info:
+        return None, "No Clockgen audio device detected. Check USB connection."
+
+    device = device_info['device_id']
+    sample_rate = device_info.get('sample_rate', 78125)
+    bit_depth = device_info.get('bit_depth', 24)
+    device_channels = device_info.get('channels', 2)
+
+    # 3. Release device from PipeWire/PulseAudio (do this BEFORE any verification)
+    print(f"Releasing audio device from system audio server...")
+    if release_audio_device_linux(device):
+        time.sleep(0.3)  # Brief pause for release to complete
+
+    print(f"Audio device ready: {device_info.get('device_name', device)} ({device})")
+    print(f"   Sample rate: {sample_rate} Hz, Bit depth: {bit_depth}, Channels: {device_channels}")
+
+    # 4. Build sox command with cached device info (instant, no subprocess)
+    sox_command = build_sox_command_with_device(audio_output_path, device_info)
+
+    return sox_command, device_info
+
+
+def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_command):
+    """
+    Fast version of shared_capture_process - assumes resources pre-prepared.
+
+    Key differences from shared_capture_process():
+    - No cleanup (already done in prepare_capture_resources)
+    - No audio device release (already done in prepare_capture_resources)
+    - Reduced DomesdayDuplicator startup wait (0.3s instead of 1.0s)
+    """
+    # Clean up any stale stop request file
+    stop_request_file = '/tmp/domesday_stop_request'
+    if os.path.exists(stop_request_file):
+        try:
+            os.remove(stop_request_file)
+        except Exception:
+            pass
+
+    stop_event = threading.Event()
+
+    def video_capture_thread():
+        # If audio_delay is negative, video needs to be delayed (audio starts first)
+        if audio_delay < 0:
+            video_delay = abs(audio_delay)
+            time.sleep(video_delay)
+
+        try:
+            clean_env = get_clean_env_for_system_tools()
+            ddd_process = subprocess.Popen(ddd_command,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         text=True, bufsize=1, universal_newlines=True,
+                                         env=clean_env)
+
+            # FAST: Reduced startup check from 1.0s to 0.3s
+            time.sleep(0.3)
+            if ddd_process.poll() is not None:
+                stdout, _ = ddd_process.communicate()
+                print(f"[Video] ERROR: DomesdayDuplicator failed to start!")
+                if stdout:
+                    print(f"[Video] Output: {stdout.strip()}")
+                return
+
+            # Monitor output until stop requested
+            import select
+            while not stop_event.is_set() and ddd_process.poll() is None:
+                ready, _, _ = select.select([ddd_process.stdout], [], [], 0.1)
+                if ready:
+                    line = ddd_process.stdout.readline()
+                    if line:
+                        print(f"[DD] {line.rstrip()}", flush=True)
+                else:
+                    time.sleep(0.1)
+
+            # Stop capture
+            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+                                       capture_output=True, text=True, timeout=10,
+                                       env=clean_env)
+
+            if stop_result.returncode == 0:
+                try:
+                    ddd_process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    ddd_process.terminate()
+                    try:
+                        ddd_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        ddd_process.kill()
+                        ddd_process.wait()
+            else:
+                ddd_process.terminate()
+                ddd_process.wait()
+
+        except Exception as e:
+            print(f"[Video] Exception: {e}")
+
+    def audio_capture_thread():
+        # If audio_delay is positive, audio needs to be delayed (video starts first)
+        if audio_delay > 0:
+            time.sleep(audio_delay)
+
+        # FAST: Skip release_audio_device_before_capture() - already done in prepare_capture_resources
+        sox_process = subprocess.Popen(sox_command)
+
+        while not stop_event.is_set() and sox_process.poll() is None:
+            if stop_event.wait(timeout=60):
+                break
+
+        # Use SIGINT (like Ctrl+C) for graceful sox shutdown instead of SIGTERM
+        import signal
+        sox_process.send_signal(signal.SIGINT)
+        sox_process.wait()
+
+    # Start both threads
+    video_thread = threading.Thread(target=video_capture_thread)
+    audio_thread = threading.Thread(target=audio_capture_thread)
+    video_thread.start()
+    audio_thread.start()
+
+    # Wait for stop condition
+    if capture_duration is not None:
+        print(f"Capturing for {capture_duration} seconds...")
+        time.sleep(capture_duration)
+    else:
+        print(f"\033[92mCAPTURING - Press Enter to stop...\033[0m")
+        input()
+
+    # Signal threads to stop
+    stop_event.set()
+    video_thread.join()
+    audio_thread.join()
+    print("Capture stopped.")
+
+
 def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_command=None):
     """
     A shared function to start video and audio capture in parallel threads.
@@ -152,15 +352,17 @@ def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_comma
         release_audio_device_before_capture()
         # Start SOX with direct console output (preserves VU meters)
         sox_process = subprocess.Popen(sox_command)
-        
+
         # Monitor SOX process status without interfering with its output
         start_time = time.time()
         while not stop_event.is_set() and sox_process.poll() is None:
             # Wait for stop event or check every 60 seconds
             if stop_event.wait(timeout=60):
                 break  # Stop event was set
-        
-        sox_process.terminate()
+
+        # Use SIGINT (like Ctrl+C) for graceful sox shutdown instead of SIGTERM
+        import signal
+        sox_process.send_signal(signal.SIGINT)
         sox_process.wait()
 
     # Create and start the threads
@@ -2319,13 +2521,13 @@ def prompt_for_capture_name(target_folder=None):
 def start_capture_and_record():
     """
     Starts audio recording with calibrated delay, then immediately starts video capture.
-    This architecture allows audio to start before, after, or simultaneously with video.
+
+    Uses pre-preparation to minimize startup time after user presses Enter:
+    - All device detection and preparation happens BEFORE the prompt
+    - Capture starts instantly when user presses Enter
     """
-    print("--- Domesday Capture Automation (Audio-First Architecture) ---")
-    
-    # Clean up any existing processes that might interfere
-    cleanup_existing_processes()
-    
+    print("--- Domesday Capture (Fast Start) ---")
+
     # Read configuration
     config = load_config()
     calibration_mode = config.get('calibration_mode', False)
@@ -2340,7 +2542,7 @@ def start_capture_and_record():
         # Fixed name for calibration captures
         capture_name = "calibration"
         print("\n" + "="*50)
-        print("⚠️  CALIBRATION MODE ACTIVE")
+        print("CALIBRATION MODE ACTIVE")
         print("Audio delay disabled (0.000s) for offset measurement")
         print(f"Using fixed project name: {capture_name}")
         print("="*50 + "\n")
@@ -2392,23 +2594,32 @@ def start_capture_and_record():
         audio_delay = config.get('audio_delay', 0.000)  # Default to 0.000 if not set
         print(f"Using configured audio delay: {audio_delay:.3f}s")
 
-    # Construct output file path for both video and audio
+    # Construct output file paths
     video_output_path = os.path.join(capture_folder, f"{capture_name}.lds")
     audio_output_path = os.path.join(capture_folder, f"{capture_name}.flac")
 
-    # Get sox command
-    sox_command = get_sox_command(audio_output_path)
+    # PRE-PREPARE: Do all slow operations NOW (before user presses Enter)
+    print("\nPreparing capture resources...")
+    sox_command, result = prepare_capture_resources(audio_output_path)
+    if sox_command is None:
+        print(f"Error preparing capture: {result}")
+        return
 
-    # Use the new separate directory and filename parameters for DomesdayDuplicator
-    # Note: DomesdayDuplicator automatically adds .lds extension, so we pass just the base name
-    ddd_command = ['DomesdayDuplicator', '--start-capture', '--headless', 
+    # Build DDD command (instant, no subprocess calls)
+    ddd_command = ['DomesdayDuplicator', '--start-capture', '--headless',
                   '--capture-directory', capture_folder, '--output-file', capture_name]
-    
-    print(f"Video will be saved to: {video_output_path}")
+
+    print(f"\nVideo will be saved to: {video_output_path}")
     print(f"Audio will be saved to: {audio_output_path}")
 
-    # Run the shared capture process with the specific DDD command
-    shared_capture_process(sox_command, audio_delay, capture_duration=None, ddd_command=ddd_command)
+    # FAST START: User presses Enter and capture starts immediately
+    print("\n" + "="*50)
+    print("  READY - Press Enter to start capture")
+    print("="*50)
+    input()
+
+    # Start capture immediately (resources already prepared)
+    shared_capture_process_fast(sox_command, audio_delay, capture_duration=None, ddd_command=ddd_command)
 
 
 def offer_wav_conversion(flac_file=None, wav_file=None):
