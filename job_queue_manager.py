@@ -67,6 +67,9 @@ class QueuedJob:
     total_frames: int = 0
     current_frame: int = 0
     current_fps: float = 0.0
+
+    # Location tracking for per-disk concurrency limits
+    source_location: str = ""  # Pool/disk name for input file (e.g., "hdd1bpool", "nvme2tb")
     
     def to_dict(self):
         """Convert to dictionary for JSON serialisation"""
@@ -91,7 +94,10 @@ class QueuedJob:
         data.setdefault('total_frames', 0)
         data.setdefault('current_frame', 0)
         data.setdefault('current_fps', 0.0)
-        
+
+        # Handle missing location field for backward compatibility
+        data.setdefault('source_location', '')
+
         return cls(**data)
 
 class JobQueueManager:
@@ -100,6 +106,7 @@ class JobQueueManager:
     def __init__(self, queue_file="config/job_queue.json", max_concurrent_jobs=2):
         self.queue_file = queue_file
         self.max_concurrent_jobs = max_concurrent_jobs
+        self.per_location_limits: Dict[str, int] = {}  # Per-disk concurrency limits
         self.jobs: List[QueuedJob] = []
         self.running_jobs: Dict[str, threading.Thread] = {}
         self.job_processes: Dict[str, subprocess.Popen] = {}  # Track active processes
@@ -122,7 +129,49 @@ class JobQueueManager:
         
         # Load existing queue after logger is set up
         self.load_queue()
-    
+
+    def get_location_from_path(self, file_path: str) -> str:
+        """
+        Determine which location/pool a file path belongs to.
+
+        Parses mount points to map paths like:
+        - /mnt/hdd1bpool/captures/... -> "hdd1bpool"
+        - /mnt/nvme2tb/captures/... -> "nvme2tb"
+        - /mnt/intel1tb/captures/... -> "intel1tb"
+
+        Returns empty string if path doesn't match /mnt/X/ pattern.
+        """
+        if not file_path:
+            return ""
+
+        # Handle /mnt/LOCATION/... pattern
+        if file_path.startswith('/mnt/'):
+            parts = file_path.split('/')
+            if len(parts) >= 3:
+                return parts[2]  # /mnt/LOCATION/...
+
+        return ""
+
+    def get_location_limit(self, location: str) -> int:
+        """Get max concurrent jobs for a location (default: no specific limit)"""
+        if not location:
+            return self.max_concurrent_jobs  # No limit for unknown locations
+        return self.per_location_limits.get(location, self.max_concurrent_jobs)
+
+    def set_location_limit(self, location: str, limit: int):
+        """Set max concurrent jobs for a specific location"""
+        if limit <= 0:
+            # Remove limit (use global)
+            self.per_location_limits.pop(location, None)
+        else:
+            self.per_location_limits[location] = limit
+        self.save_queue()
+        self.logger.info(f"Set location limit for {location}: {limit}")
+
+    def get_all_location_limits(self) -> Dict[str, int]:
+        """Get all configured per-location limits"""
+        return self.per_location_limits.copy()
+
     def start_processor(self):
         """Start the background job processor"""
         if self.processor_thread and self.processor_thread.is_alive():
@@ -140,21 +189,23 @@ class JobQueueManager:
             self.processor_thread.join(timeout=5)
         self.logger.info("Job processor stopped")
     
-    def add_job(self, job_type: str, input_file: str, output_file: str, 
+    def add_job(self, job_type: str, input_file: str, output_file: str,
                 parameters: Dict[str, Any] = None, priority: int = 1) -> str:
         """Add a new job to the queue"""
         if parameters is None:
             parameters = {}
-        
+
         job_id = f"{job_type}_{int(time.time())}_{len(self.jobs)}"
-        
+        source_location = self.get_location_from_path(input_file)
+
         job = QueuedJob(
             job_id=job_id,
             job_type=job_type,
             input_file=input_file,
             output_file=output_file,
             parameters=parameters,
-            priority=priority
+            priority=priority,
+            source_location=source_location
         )
         
         with self.lock:
@@ -178,7 +229,8 @@ class JobQueueManager:
             if self.lock.acquire(timeout=timeout):
                 try:
                     job_id = f"{job_type}_{int(time.time())}_{len(self.jobs)}"
-                    
+                    source_location = self.get_location_from_path(input_file)
+
                     job = QueuedJob(
                         job_id=job_id,
                         job_type=job_type,
@@ -186,7 +238,8 @@ class JobQueueManager:
                         output_file=output_file,
                         parameters=parameters,
                         priority=priority,
-                        project_name=project_name
+                        project_name=project_name,
+                        source_location=source_location
                     )
                     
                     self.jobs.append(job)
@@ -337,33 +390,52 @@ class JobQueueManager:
             try:
                 # Check if we can start more jobs
                 with self.lock:
-                    running_count = len([j for j in self.jobs if j.status == JobStatus.RUNNING])
+                    running_jobs = [j for j in self.jobs if j.status == JobStatus.RUNNING]
+                    running_count = len(running_jobs)
                     available_slots = self.max_concurrent_jobs - running_count
-                    
+
                     if available_slots > 0:
-                        # Find next queued job with highest priority
+                        # Count running jobs per location for per-disk limits
+                        jobs_per_location = {}
+                        for job in running_jobs:
+                            loc = job.source_location or self.get_location_from_path(job.input_file)
+                            if loc:
+                                jobs_per_location[loc] = jobs_per_location.get(loc, 0) + 1
+
+                        # Find next queued job that respects both global and per-location limits
                         next_job = None
                         for job in self.jobs:
-                            if job.status == JobStatus.QUEUED:
-                                next_job = job
-                                break
-                        
+                            if job.status != JobStatus.QUEUED:
+                                continue
+
+                            # Check per-location limit if configured
+                            loc = job.source_location or self.get_location_from_path(job.input_file)
+                            if loc and loc in self.per_location_limits:
+                                loc_limit = self.per_location_limits[loc]
+                                loc_running = jobs_per_location.get(loc, 0)
+                                if loc_running >= loc_limit:
+                                    # Skip this job - location is at capacity
+                                    continue
+
+                            next_job = job
+                            break
+
                         if next_job:
                             # Start the job
                             next_job.status = JobStatus.RUNNING
                             next_job.started_at = datetime.now()
                             self.save_queue()
-                            
+
                             # Start job in separate thread
                             job_thread = threading.Thread(
-                                target=self._execute_job, 
+                                target=self._execute_job,
                                 args=(next_job,),
                                 daemon=True
                             )
                             job_thread.start()
                             self.running_jobs[next_job.job_id] = job_thread
-                            
-                            self.logger.info(f"Started job {next_job.job_id}")
+
+                            self.logger.info(f"Started job {next_job.job_id} (location: {next_job.source_location or 'unknown'})")
                 
                 # Clean up completed threads
                 completed_jobs = []
@@ -467,24 +539,24 @@ class JobQueueManager:
                 '--tf', 'vhs',
                 '-t', '3',
                 '--ts', job.parameters.get('tape_speed', 'SP'),
-                '--no_resample',
-                '--recheck_phase',
-                '--ire0_adjust'
             ]
-            
+
             # Add video standard
             if job.parameters.get('video_standard', 'pal').lower() == 'pal':
                 cmd.append('--pal')
             else:
                 cmd.append('--ntsc')
 
-            # Add per-project decode flags (e.g., --skip_chroma for B&W sources)
+            # Add per-project decode flags (includes defaults like --no_resample, --recheck_phase, --ire0_adjust)
             if PROJECT_FLAGS_AVAILABLE and job.project_name:
                 flags_manager = ProjectFlagsManager()
                 cli_flags = flags_manager.get_cli_flags(job.project_name, 'decode')
                 if cli_flags:
                     cmd.extend(cli_flags)
                     self.logger.info(f"Added project decode flags: {' '.join(cli_flags)}")
+            else:
+                # Fallback if project flags not available - use hardcoded defaults
+                cmd.extend(['--no_resample', '--recheck_phase', '--ire0_adjust'])
 
             # Check for segment configuration (for testing partial decodes)
             # segment_start_frame is used later for progress calculation
@@ -1406,12 +1478,36 @@ class JobQueueManager:
             ffmpeg_cmd.extend(['-c:v', 'copy'])
             
             if audio_exists:
-                # Encode audio as FLAC for archival quality
-                ffmpeg_cmd.extend(['-c:a', 'flac'])
-                
+                # Check for audio flags
+                resample_48k = False
+                output_wav = False
+                if PROJECT_FLAGS_AVAILABLE and job.project_name:
+                    try:
+                        flags_manager = ProjectFlagsManager()
+                        audio_flags = flags_manager.get_project_flags(job.project_name, 'audio')
+                        resample_48k = audio_flags.get('resample_48k', False)
+                        output_wav = audio_flags.get('output_wav', False)
+                        if resample_48k:
+                            self.logger.info(f"Audio flag: Resampling to 48kHz for editor compatibility")
+                        if output_wav:
+                            self.logger.info(f"Audio flag: Output as 24-bit WAV instead of FLAC")
+                    except Exception as e:
+                        self.logger.warning(f"Could not load audio flags: {e}")
+
+                # Apply resampling if enabled
+                if resample_48k:
+                    ffmpeg_cmd.extend(['-ar', '48000'])
+
+                # Encode audio as WAV or FLAC (24-bit)
+                if output_wav:
+                    ffmpeg_cmd.extend(['-c:a', 'pcm_s24le'])  # 24-bit WAV
+                else:
+                    ffmpeg_cmd.extend(['-c:a', 'flac'])  # FLAC (24-bit by default)
+                    ffmpeg_cmd.extend(['-sample_fmt', 's32'])  # Ensure 24-bit depth for FLAC
+
                 # Map video stream from input 0
                 ffmpeg_cmd.extend(['-map', '0:v:0'])
-                
+
                 # Map audio stream from input 1
                 ffmpeg_cmd.extend(['-map', '1:a:0'])
             else:
@@ -1762,12 +1858,13 @@ class JobQueueManager:
         try:
             data = {
                 "max_concurrent_jobs": self.max_concurrent_jobs,
+                "per_location_limits": self.per_location_limits,
                 "jobs": [job.to_dict() for job in self.jobs]
             }
-            
+
             with open(self.queue_file, 'w') as f:
                 json.dump(data, f, indent=2, default=str)
-                
+
         except Exception as e:
             self.logger.error(f"Error saving queue: {e}")
     
@@ -1776,12 +1873,13 @@ class JobQueueManager:
         try:
             data = {
                 "max_concurrent_jobs": self.max_concurrent_jobs,
+                "per_location_limits": self.per_location_limits,
                 "jobs": [job.to_dict() for job in jobs_list]
             }
-            
+
             with open(self.queue_file, 'w') as f:
                 json.dump(data, f, indent=2, default=str)
-                
+
         except Exception as e:
             self.logger.error(f"Error saving queue data: {e}")
     
@@ -1814,6 +1912,7 @@ class JobQueueManager:
                     data = json.load(f)
                 
                 self.max_concurrent_jobs = data.get("max_concurrent_jobs", 2)
+                self.per_location_limits = data.get("per_location_limits", {})
                 self.jobs = [QueuedJob.from_dict(job_data) for job_data in data.get("jobs", [])]
                 
                 # Improved auto-restart logic: only mark truly orphaned jobs as failed
@@ -1933,14 +2032,14 @@ class JobQueueManager:
     
     def _clean_job_progress(self, job_id: str) -> bool:
         """Clean stuck progress displays for failed jobs
-        
+
         This method resets progress and error messages for failed jobs to clear
         stuck progress displays in the UI. It's intended for jobs that have
         failed but still show progress from their last run.
-        
+
         Args:
             job_id: The ID of the job to clean
-            
+
         Returns:
             bool: True if job was found and cleaned, False otherwise
         """
@@ -1948,40 +2047,48 @@ class JobQueueManager:
             with self.lock:
                 for job in self.jobs:
                     if job.job_id == job_id:
-                        # Clean failed or cancelled jobs only - do NOT clean truly running jobs
-                        # as that would interfere with the ability to stop them properly
-                        if (job.status == JobStatus.FAILED or 
-                            job.status == JobStatus.CANCELLED):
-                            
+                        # Check if this is a truly running job with an active process
+                        has_active_process = job_id in self.job_processes
+
+                        # Clean failed, cancelled, or stuck "running" jobs without active processes
+                        if (job.status == JobStatus.FAILED or
+                            job.status == JobStatus.CANCELLED or
+                            (job.status == JobStatus.RUNNING and not has_active_process)):
+
+                            # If it was stuck in RUNNING without a process, mark it as failed
+                            if job.status == JobStatus.RUNNING and not has_active_process:
+                                job.status = JobStatus.FAILED
+                                self.logger.info(f"Marking stuck RUNNING job {job_id} as FAILED (no active process)")
+
                             # Reset progress and timing fields
                             job.progress = 0.0
                             job.current_frame = 0
                             job.total_frames = 0
                             job.current_fps = 0.0
-                            
+
                             # Mark job as cleaned so progress extraction knows to hide progress bars
                             if not hasattr(job, 'parameters'):
                                 job.parameters = {}
                             job.parameters['_progress_cleaned'] = True
-                            
+
                             # Update error message to indicate cleanup
                             if job.error_message and not job.error_message.endswith(" (cleaned)"):
                                 job.error_message += " (cleaned)"
                             elif not job.error_message:
                                 job.error_message = "Progress cleaned"
-                            
+
                             # Save changes
                             self.save_queue()
-                            
+
                             self.logger.info(f"Cleaned stuck progress for job {job_id} (status: {job.status.value})")
                             return True
                         else:
-                            self.logger.warning(f"Cannot clean running job {job_id}")
+                            self.logger.warning(f"Cannot clean actively running job {job_id}")
                             return False
-                
+
                 self.logger.warning(f"Job {job_id} not found for cleaning")
                 return False
-                
+
         except Exception as e:
             self.logger.error(f"Error cleaning job progress for {job_id}: {e}")
             return False

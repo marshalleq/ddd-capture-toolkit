@@ -10,75 +10,103 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 # Flag definitions for vhs-decode (decode step)
+# Note: vhs-decode does NOT support --reverse. Field order reversal must be done
+# during export using the 'fix_reverse' export flag (which uses ld-dropout-correct).
+# Flags with 'default': True are enabled by default and can be disabled per-project.
 DECODE_FLAGS = {
-    'reverse': {
-        'cli_flag': '--reverse',
-        'label': 'Reverse field order',
-        'description': 'Reverse field order during decode (use if video has wrong field order)'
-    },
-    'skip_chroma': {
-        'cli_flag': '--skip_chroma',
-        'label': 'Skip chroma',
-        'description': 'Skip chroma decoding (for B&W sources)'
-    },
     'no_resample': {
         'cli_flag': '--no_resample',
         'label': 'No resample',
-        'description': 'Disable resampling (already enabled by default in workflow)'
+        'description': 'Disable resampling',
+        'default': True
     },
     'recheck_phase': {
         'cli_flag': '--recheck_phase',
         'label': 'Recheck phase',
-        'description': 'Recheck phase on every frame (already enabled by default)'
+        'description': 'Recheck phase on every frame',
+        'default': True
     },
     'ire0_adjust': {
         'cli_flag': '--ire0_adjust',
         'label': 'IRE0 adjust',
-        'description': 'Adjust black level to IRE 0 (already enabled by default)'
+        'description': 'Adjust black level to IRE 0',
+        'default': True
+    },
+    'skip_chroma': {
+        'cli_flag': '--skip_chroma',
+        'label': 'Skip chroma',
+        'description': 'Skip chroma decoding (for B&W sources)',
+        'default': False
     },
     'high_boost': {
         'cli_flag': '--high_boost',
         'label': 'High boost',
-        'description': 'Apply high frequency boost filter'
+        'description': 'Apply high frequency boost filter',
+        'default': False
     },
     'nodd': {
         'cli_flag': '--nodd',
         'label': 'No dropout detect',
-        'description': 'Disable dropout detection'
+        'description': 'Disable dropout detection',
+        'default': False
+    },
+}
+
+# Flag definitions for audio processing (final mux step)
+# Controls how audio is processed when muxing video and audio together.
+AUDIO_FLAGS = {
+    'resample_48k': {
+        'cli_flag': None,  # Internal flag, not a CLI passthrough
+        'label': 'Resample to 48kHz',
+        'description': 'Resample audio to 48kHz for DaVinci Resolve/editor compatibility',
+        'default': True
+    },
+    'output_wav': {
+        'cli_flag': None,  # Internal flag, not a CLI passthrough
+        'label': 'Output as WAV',
+        'description': 'Output 24-bit WAV instead of FLAC',
+        'default': True
     },
 }
 
 # Flag definitions for tbc-video-export (export step)
+# All export flags default to False (off).
 EXPORT_FLAGS = {
     'luma_only': {
         'cli_flag': '--luma-only',
         'label': 'Luma only',
-        'description': 'Output luma (B&W) video only, skip chroma processing'
+        'description': 'Output luma (B&W) video only, skip chroma processing',
+        'default': False
     },
     'letterbox': {
         'cli_flag': '--letterbox',
         'label': 'Letterbox',
-        'description': 'Add letterboxing to output'
+        'description': 'Add letterboxing to output',
+        'default': False
     },
     'fix_reverse': {
         'cli_flag': '--reverse',
         'label': 'Fix field order (already decoded)',
-        'description': 'Fix field order on already-decoded TBC (creates temp files, slower)'
+        'description': 'Fix field order on already-decoded TBC (creates temp files, slower)',
+        'default': False
     },
     'bw': {
         'cli_flag': '--bw',
         'label': 'Force B&W',
-        'description': 'Force black & white output'
+        'description': 'Force black & white output',
+        'default': False
     },
     'no_dropout_correct': {
         'cli_flag': '--no-dropout-correct',
         'label': 'No dropout correction',
-        'description': 'Disable dropout correction'
+        'description': 'Disable dropout correction',
+        'default': False
     },
     'oftest': {
         'cli_flag': '--oftest',
         'label': 'Odd field first',
-        'description': 'Odd field first (TFF) output'
+        'description': 'Odd field first (TFF) output',
+        'default': False
     },
 }
 
@@ -132,6 +160,8 @@ class ProjectFlagsManager:
             return DECODE_FLAGS
         elif flag_type == 'export':
             return EXPORT_FLAGS
+        elif flag_type == 'audio':
+            return AUDIO_FLAGS
         else:
             raise ValueError(f"Unknown flag type: {flag_type}")
 
@@ -144,21 +174,30 @@ class ProjectFlagsManager:
             flag_type: 'decode' or 'export'
 
         Returns:
-            Dictionary of flag_key -> enabled status
+            Dictionary of flag_key -> enabled status (considering defaults)
         """
         flag_defs = self._get_flag_defs(flag_type)
         project_data = self.flags_data.get('projects', {}).get(project_name, {})
         type_flags = project_data.get(flag_type, {})
 
-        # Return all flags with their current state (default False if not set)
+        # Return all flags with their effective state (explicit setting or default)
         result = {}
-        for flag_key in flag_defs:
-            result[flag_key] = type_flags.get(flag_key, False)
+        for flag_key, flag_def in flag_defs.items():
+            default_value = flag_def.get('default', False)
+            # If explicitly set in config, use that; otherwise use default
+            if flag_key in type_flags:
+                result[flag_key] = type_flags[flag_key]
+            else:
+                result[flag_key] = default_value
         return result
 
     def set_project_flags(self, project_name: str, flags: Dict[str, bool], flag_type: str = 'export') -> None:
         """
         Set multiple flags for a project at once.
+
+        Only stores flags that differ from their default values.
+        - For default=False flags: stores True if enabled
+        - For default=True flags: stores False if disabled
 
         Args:
             project_name: Name of the project
@@ -173,13 +212,20 @@ class ProjectFlagsManager:
         if project_name not in self.flags_data['projects']:
             self.flags_data['projects'][project_name] = {}
 
-        # Build the new flags dict with only enabled flags
-        enabled_flags = {k: True for k, v in flags.items() if v and k in flag_defs}
+        # Build the new flags dict with only non-default values
+        non_default_flags = {}
+        for flag_key, enabled in flags.items():
+            if flag_key not in flag_defs:
+                continue
+            default_value = flag_defs[flag_key].get('default', False)
+            # Only store if different from default
+            if enabled != default_value:
+                non_default_flags[flag_key] = enabled
 
-        if enabled_flags:
-            self.flags_data['projects'][project_name][flag_type] = enabled_flags
+        if non_default_flags:
+            self.flags_data['projects'][project_name][flag_type] = non_default_flags
         else:
-            # Remove flag type entry if no flags enabled
+            # Remove flag type entry if all flags are at defaults
             self.flags_data['projects'][project_name].pop(flag_type, None)
             # Clean up empty project entries
             if not self.flags_data['projects'][project_name]:
@@ -189,26 +235,36 @@ class ProjectFlagsManager:
 
     def has_any_flags(self, project_name: str, flag_type: str = None) -> bool:
         """
-        Check if project has any flags enabled.
+        Check if project has any flags that differ from defaults.
+
+        This returns True only when flags have been explicitly changed from their
+        default values. Flags at their default state do not count.
 
         Args:
             project_name: Name of the project
-            flag_type: 'decode', 'export', or None for any type
+            flag_type: 'decode', 'export', 'audio', or None for any type
 
         Returns:
-            True if any flags are enabled
+            True if any flags differ from their defaults
         """
         project_data = self.flags_data.get('projects', {}).get(project_name, {})
 
         if flag_type:
+            # Check only the specified type - if there's any stored data, it means non-default
             return bool(project_data.get(flag_type, {}))
         else:
-            # Check both types
-            return bool(project_data.get('decode', {})) or bool(project_data.get('export', {}))
+            # Check all types - stored data means non-default
+            return (bool(project_data.get('decode', {})) or
+                    bool(project_data.get('export', {})) or
+                    bool(project_data.get('audio', {})))
 
     def get_cli_flags(self, project_name: str, flag_type: str = 'export') -> List[str]:
         """
         Get list of CLI flag strings for a project.
+
+        Returns all flags that should be enabled, considering:
+        - Default-on flags (unless explicitly disabled)
+        - Explicitly enabled flags
 
         Args:
             project_name: Name of the project
@@ -222,14 +278,23 @@ class ProjectFlagsManager:
         type_flags = project_data.get(flag_type, {})
 
         cli_flags = []
-        for flag_key, enabled in type_flags.items():
-            if enabled and flag_key in flag_defs:
-                cli_flags.append(flag_defs[flag_key]['cli_flag'])
+        for flag_key, flag_def in flag_defs.items():
+            default_value = flag_def.get('default', False)
+            # Check explicit setting, fall back to default
+            if flag_key in type_flags:
+                enabled = type_flags[flag_key]
+            else:
+                enabled = default_value
+
+            if enabled:
+                cli_flags.append(flag_def['cli_flag'])
         return cli_flags
 
     def get_enabled_flag_labels(self, project_name: str, flag_type: str = 'export') -> List[str]:
         """
         Get list of human-readable labels for enabled flags.
+
+        Returns labels for all enabled flags, considering defaults.
 
         Args:
             project_name: Name of the project
@@ -243,9 +308,16 @@ class ProjectFlagsManager:
         type_flags = project_data.get(flag_type, {})
 
         labels = []
-        for flag_key, enabled in type_flags.items():
-            if enabled and flag_key in flag_defs:
-                labels.append(flag_defs[flag_key]['label'])
+        for flag_key, flag_def in flag_defs.items():
+            default_value = flag_def.get('default', False)
+            # Check explicit setting, fall back to default
+            if flag_key in type_flags:
+                enabled = type_flags[flag_key]
+            else:
+                enabled = default_value
+
+            if enabled:
+                labels.append(flag_def['label'])
         return labels
 
 
@@ -254,12 +326,14 @@ def get_flag_definitions(flag_type: str = 'export') -> Dict:
     Get available flag definitions.
 
     Args:
-        flag_type: 'decode' or 'export'
+        flag_type: 'decode', 'export', or 'audio'
 
     Returns:
         Dictionary of flag definitions
     """
     if flag_type == 'decode':
         return DECODE_FLAGS.copy()
+    elif flag_type == 'audio':
+        return AUDIO_FLAGS.copy()
     else:
         return EXPORT_FLAGS.copy()

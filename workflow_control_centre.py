@@ -40,7 +40,7 @@ try:
     from directory_manager import DirectoryManager
     from job_queue_manager import get_job_queue_manager
     from project_status_display import ProjectStatusDisplay, DisplayConfig
-    from project_flags import ProjectFlagsManager, DECODE_FLAGS, EXPORT_FLAGS, get_flag_definitions
+    from project_flags import ProjectFlagsManager, DECODE_FLAGS, EXPORT_FLAGS, AUDIO_FLAGS, get_flag_definitions
     from segment_config import load_segment_config, save_segment_config, toggle_segment_enabled, clear_segment_config, has_segment_config
     COMPONENTS_AVAILABLE = True
     SEGMENT_AVAILABLE = True
@@ -976,14 +976,16 @@ class WorkflowControlCentre:
         pages = [
             {'type': 'decode', 'title': 'DECODE FLAGS', 'subtitle': 'vhs-decode options'},
             {'type': 'export', 'title': 'EXPORT FLAGS', 'subtitle': 'tbc-video-export options'},
+            {'type': 'audio', 'title': 'AUDIO FLAGS', 'subtitle': 'final mux audio options'},
             {'type': 'segment', 'title': 'SEGMENT CONFIG', 'subtitle': 'test range for decode/export'},
         ]
         current_page = 0
 
-        # Load flags for both types
+        # Load flags for all types
         decode_flags = flags_manager.get_project_flags(project.name, 'decode')
         export_flags = flags_manager.get_project_flags(project.name, 'export')
-        current_flags = {'decode': decode_flags, 'export': export_flags}
+        audio_flags = flags_manager.get_project_flags(project.name, 'audio')
+        current_flags = {'decode': decode_flags, 'export': export_flags, 'audio': audio_flags}
 
         # Segment presets
         segment_presets = [
@@ -1192,6 +1194,7 @@ class WorkflowControlCentre:
             for idx, flag_key in enumerate(flag_keys):
                 flag_def = flag_defs[flag_key]
                 is_enabled = page_flags.get(flag_key, False)
+                is_default_on = flag_def.get('default', False)
                 is_selected = (idx == selected_idx)
 
                 # Selection indicator
@@ -1200,11 +1203,17 @@ class WorkflowControlCentre:
                 else:
                     indicator = Text(" ")
 
-                # Checkbox with color
+                # Checkbox with color - show differently for default-on flags
                 if is_enabled:
-                    checkbox = Text("[X]", style="bold green")
+                    if is_default_on:
+                        checkbox = Text("[X]", style="cyan")  # Default-on, currently on
+                    else:
+                        checkbox = Text("[X]", style="bold green")  # Explicitly enabled
                 else:
-                    checkbox = Text("[ ]", style="dim")
+                    if is_default_on:
+                        checkbox = Text("[ ]", style="bold yellow")  # Default-on but disabled!
+                    else:
+                        checkbox = Text("[ ]", style="dim")  # Default-off, currently off
 
                 # Flag name - highlight if selected
                 if is_selected:
@@ -1215,40 +1224,107 @@ class WorkflowControlCentre:
                 # CLI option
                 cli_opt = flag_def['cli_flag']
 
-                # Description
-                desc = flag_def['description']
+                # Description - add default indicator
+                desc = Text()
+                desc.append(flag_def['description'])
+                if is_default_on:
+                    desc.append(" (default: on)", style="cyan")
 
                 table.add_row(indicator, checkbox, flag_name, cli_opt, desc)
 
             console.print(table)
             console.print()
 
-            # Summary for current page
-            enabled_labels = [flag_defs[k]['label'] for k in flag_keys if page_flags.get(k, False)]
-            if enabled_labels:
-                summary = Text()
-                summary.append("Enabled: ", style="bold white")
-                summary.append(", ".join(enabled_labels), style="bold green")
-            else:
-                summary = Text("No flags enabled on this page", style="dim")
+            # Summary for current page - separate defaults from custom
+            default_on_labels = []
+            custom_on_labels = []
+            custom_off_labels = []  # Default-on flags that were disabled
+            for k in flag_keys:
+                is_enabled = page_flags.get(k, False)
+                is_default_on = flag_defs[k].get('default', False)
+                if is_enabled:
+                    if is_default_on:
+                        default_on_labels.append(flag_defs[k]['label'])
+                    else:
+                        custom_on_labels.append(flag_defs[k]['label'])
+                elif is_default_on:
+                    # Default was disabled
+                    custom_off_labels.append(flag_defs[k]['label'])
+
+            summary = Text()
+            if default_on_labels:
+                summary.append("Defaults: ", style="cyan")
+                summary.append(", ".join(default_on_labels), style="cyan")
+            if custom_on_labels:
+                if default_on_labels:
+                    summary.append("  |  ", style="dim")
+                summary.append("Custom: ", style="bold green")
+                summary.append(", ".join(custom_on_labels), style="bold green")
+            if custom_off_labels:
+                if default_on_labels or custom_on_labels:
+                    summary.append("  |  ", style="dim")
+                summary.append("Disabled: ", style="bold yellow")
+                summary.append(", ".join(custom_off_labels), style="yellow")
+            if not default_on_labels and not custom_on_labels and not custom_off_labels:
+                summary.append("No flags enabled on this page", style="dim")
 
             console.print(Panel(summary, title=f"{page['type'].title()} Summary", box=ROUNDED))
 
-            # Overall summary
-            all_decode = [DECODE_FLAGS[k]['label'] for k in current_flags['decode'] if current_flags['decode'].get(k)]
-            all_export = [EXPORT_FLAGS[k]['label'] for k in current_flags['export'] if current_flags['export'].get(k)]
+            # Overall summary - show only non-default (custom) settings
+            custom_decode = []
+            disabled_decode = []
+            for k in current_flags['decode']:
+                is_enabled = current_flags['decode'].get(k, False)
+                is_default_on = DECODE_FLAGS.get(k, {}).get('default', False)
+                if is_enabled and not is_default_on:
+                    custom_decode.append(DECODE_FLAGS[k]['label'])
+                elif not is_enabled and is_default_on:
+                    disabled_decode.append(DECODE_FLAGS[k]['label'])
 
-            if all_decode or all_export:
+            custom_export = []
+            disabled_export = []
+            for k in current_flags['export']:
+                is_enabled = current_flags['export'].get(k, False)
+                is_default_on = EXPORT_FLAGS.get(k, {}).get('default', False)
+                if is_enabled and not is_default_on:
+                    custom_export.append(EXPORT_FLAGS[k]['label'])
+                elif not is_enabled and is_default_on:
+                    disabled_export.append(EXPORT_FLAGS[k]['label'])
+
+            custom_audio = []
+            disabled_audio = []
+            for k in current_flags['audio']:
+                is_enabled = current_flags['audio'].get(k, False)
+                is_default_on = AUDIO_FLAGS.get(k, {}).get('default', False)
+                if is_enabled and not is_default_on:
+                    custom_audio.append(AUDIO_FLAGS[k]['label'])
+                elif not is_enabled and is_default_on:
+                    disabled_audio.append(AUDIO_FLAGS[k]['label'])
+
+            has_changes = (custom_decode or custom_export or custom_audio or
+                          disabled_decode or disabled_export or disabled_audio)
+            if has_changes:
                 overall = Text()
-                if all_decode:
-                    overall.append("Decode: ", style="bold cyan")
-                    overall.append(", ".join(all_decode), style="green")
-                if all_decode and all_export:
-                    overall.append("  |  ", style="dim")
-                if all_export:
-                    overall.append("Export: ", style="bold cyan")
-                    overall.append(", ".join(all_export), style="green")
-                console.print(Panel(overall, title="All Flags", box=ROUNDED, style="dim"))
+                parts = []
+                if custom_decode:
+                    parts.append(("Decode+: ", ", ".join(custom_decode), "green"))
+                if disabled_decode:
+                    parts.append(("Decode-: ", ", ".join(disabled_decode), "yellow"))
+                if custom_export:
+                    parts.append(("Export+: ", ", ".join(custom_export), "green"))
+                if disabled_export:
+                    parts.append(("Export-: ", ", ".join(disabled_export), "yellow"))
+                if custom_audio:
+                    parts.append(("Audio+: ", ", ".join(custom_audio), "green"))
+                if disabled_audio:
+                    parts.append(("Audio-: ", ", ".join(disabled_audio), "yellow"))
+
+                for i, (label, values, color) in enumerate(parts):
+                    if i > 0:
+                        overall.append("  |  ", style="dim")
+                    overall.append(label, style=f"bold {color}")
+                    overall.append(values, style=color)
+                console.print(Panel(overall, title="Non-Default Settings", box=ROUNDED, style="dim"))
 
         # Setup terminal for single keypress reading
         fd = sys.stdin.fileno()
@@ -1404,19 +1480,23 @@ class WorkflowControlCentre:
                         current_flags[page_type][flag_key] = not current_flags[page_type].get(flag_key, False)
 
                     elif key in ('\r', '\n'):  # Enter - save all
-                        # Save both decode and export flags
+                        # Save all flag types
                         flags_manager.set_project_flags(project.name, current_flags['decode'], 'decode')
                         flags_manager.set_project_flags(project.name, current_flags['export'], 'export')
+                        flags_manager.set_project_flags(project.name, current_flags['audio'], 'audio')
 
                         # Build summary message
                         decode_labels = flags_manager.get_enabled_flag_labels(project.name, 'decode')
                         export_labels = flags_manager.get_enabled_flag_labels(project.name, 'export')
+                        audio_labels = flags_manager.get_enabled_flag_labels(project.name, 'audio')
 
                         parts = []
                         if decode_labels:
                             parts.append(f"Decode: {', '.join(decode_labels)}")
                         if export_labels:
                             parts.append(f"Export: {', '.join(export_labels)}")
+                        if audio_labels:
+                            parts.append(f"Audio: {', '.join(audio_labels)}")
 
                         if parts:
                             self.message = f"Flags saved for {project.name} - {'; '.join(parts)}"
@@ -2075,9 +2155,12 @@ class WorkflowControlCentre:
                             if job_project == project.name:
                                 all_matching_jobs.append(job)
                                 job_status = str(job.status).lower()
-                                # Target failed jobs or jobs with progress but not running
-                                if ('failed' in job_status or 
-                                    (hasattr(job, 'progress') and job.progress > 0 and 'running' not in job_status)):
+                                # Target failed jobs, cancelled jobs, or stuck running jobs
+                                # (the job manager will verify if running jobs are truly stuck)
+                                if ('failed' in job_status or
+                                    'cancelled' in job_status or
+                                    'running' in job_status or
+                                    (hasattr(job, 'progress') and job.progress > 0)):
                                     target_jobs.append(job)
                 
                 if target_jobs:

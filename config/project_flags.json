@@ -2,19 +2,36 @@
   "version": 1,
   "projects": {
     "Ultrasound": {
-      "luma_only": true,
       "decode": {
         "skip_chroma": true
+      },
+      "export": {
+        "luma_only": true
       }
     },
     "Andy180": {
       "export": {
-        "reverse": true
+        "fix_reverse": true
       }
     },
     "Berlin-1980": {
       "export": {
-        "reverse": true
+        "fix_reverse": true
+      }
+    },
+    "Dominican_Republic_Oct_1992": {
+      "export": {
+        "fix_reverse": true
+      }
+    },
+    "Inside_Hong_Kong_1987": {
+      "export": {
+        "fix_reverse": true
+      }
+    },
+    "HongKong_Fixed_Audio": {
+      "audio": {
+        "output_wav": true
       }
     }
   }
