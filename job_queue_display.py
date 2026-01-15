@@ -233,7 +233,15 @@ class JobQueueDisplay:
         # Add side panel content
         settings_text = Text("Queue Settings", style="bold magenta")
         settings_content = Text()
-        settings_content.append(f"Max Concurrent Jobs: {self.job_manager.max_concurrent_jobs}\n", style="cyan")
+        settings_content.append(f"Max Concurrent: {self.job_manager.max_concurrent_jobs}\n", style="cyan")
+
+        # Show per-location limits if configured
+        location_limits = self.job_manager.get_all_location_limits()
+        if location_limits:
+            settings_content.append("Per-location:\n", style="cyan")
+            for loc, limit in sorted(location_limits.items()):
+                settings_content.append(f"  {loc}: {limit}\n", style="dim cyan")
+
         settings_content.append(f"Auto-refresh: {'On' if self.auto_refresh else 'Off'}\n", style="yellow")
         settings_content.append(f"Show Completed: {'On' if self.show_completed else 'Off'}\n", style="blue")
         settings_content.append(f"\nLast Updated:\n{datetime.now().strftime('%H:%M:%S')}", style="dim")
@@ -247,32 +255,44 @@ class JobQueueDisplay:
         clear_screen()
         print("JOB QUEUE SETTINGS")
         print("=" * 30)
-        
+
         status = self.job_manager.get_queue_status()
         print(f"Current max concurrent jobs: {status['max_concurrent']}")
         print(f"Processor status: {'Running' if status['processor_running'] else 'Stopped'}")
         print(f"Jobs in queue: {status['total_jobs']}")
+
+        # Show per-location limits
+        location_limits = self.job_manager.get_all_location_limits()
+        if location_limits:
+            print(f"\nPer-location limits:")
+            for loc, limit in sorted(location_limits.items()):
+                print(f"  {loc}: {limit} max concurrent")
+        else:
+            print(f"\nPer-location limits: None configured (using global limit)")
         print()
-        
+
         print("SETTINGS MENU:")
-        print("1. Change max concurrent jobs")
-        print("2. Start/stop job processor")
-        print("3. Clean up old jobs")
-        print("4. View detailed job information")
+        print("1. Change max concurrent jobs (global)")
+        print("2. Configure per-location limits")
+        print("3. Start/stop job processor")
+        print("4. Clean up old jobs")
+        print("5. View detailed job information")
         print("e. Return to display")
 
-        choice = input("\\nSelect option (1-4/e): ").strip().lower()
+        choice = input("\nSelect option (1-5/e): ").strip().lower()
 
         if choice == '1':
             self._change_max_concurrent()
         elif choice == '2':
-            self._toggle_processor()
+            self._configure_location_limits()
         elif choice == '3':
-            self._cleanup_old_jobs()
+            self._toggle_processor()
         elif choice == '4':
+            self._cleanup_old_jobs()
+        elif choice == '5':
             self._show_job_details()
-        
-        input("\\nPress Enter to continue...")
+
+        input("\nPress Enter to continue...")
     
     def _change_max_concurrent(self):
         """Change max concurrent jobs setting"""
@@ -290,7 +310,66 @@ class JobQueueDisplay:
             
         except ValueError:
             print("Invalid number entered")
-    
+
+    def _configure_location_limits(self):
+        """Configure per-location job limits"""
+        print("\nPER-LOCATION LIMITS")
+        print("-" * 30)
+        print("Set max concurrent jobs per disk/location.")
+        print("Jobs from locations with limits will be throttled")
+        print("even if global slots are available.")
+        print()
+
+        # Show current limits
+        location_limits = self.job_manager.get_all_location_limits()
+        if location_limits:
+            print("Current limits:")
+            for loc, limit in sorted(location_limits.items()):
+                print(f"  {loc}: {limit}")
+        else:
+            print("No per-location limits configured.")
+
+        # Show known locations from queued/running jobs
+        known_locations = set()
+        for job in self.job_manager.get_jobs():
+            loc = job.source_location or self.job_manager.get_location_from_path(job.input_file)
+            if loc:
+                known_locations.add(loc)
+
+        if known_locations:
+            print(f"\nKnown locations from jobs: {', '.join(sorted(known_locations))}")
+
+        print("\nOptions:")
+        print("  Enter 'LOCATION LIMIT' to set a limit (e.g., 'hdd1bpool 3')")
+        print("  Enter 'LOCATION 0' to remove a limit")
+        print("  Enter blank to cancel")
+
+        user_input = input("\n> ").strip()
+        if not user_input:
+            return
+
+        try:
+            parts = user_input.split()
+            if len(parts) != 2:
+                print("Invalid format. Use: LOCATION LIMIT (e.g., 'hdd1bpool 3')")
+                return
+
+            location = parts[0]
+            limit = int(parts[1])
+
+            if limit < 0:
+                print("Limit must be 0 or greater")
+                return
+
+            self.job_manager.set_location_limit(location, limit)
+            if limit == 0:
+                print(f"Removed limit for {location}")
+            else:
+                print(f"Set {location} limit to {limit} concurrent jobs")
+
+        except ValueError:
+            print("Invalid limit - must be a number")
+
     def _toggle_processor(self):
         """Start or stop the job processor"""
         if self.job_manager.stop_processing:

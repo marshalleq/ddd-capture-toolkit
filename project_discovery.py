@@ -80,7 +80,8 @@ class ProjectDiscovery:
             key = f"{project.name}_{project.source_directory}"
             unique_projects[key] = project
             
-        self.projects = list(unique_projects.values())
+        # Sort alphabetically by project name for stable ordering
+        self.projects = sorted(unique_projects.values(), key=lambda p: p.name.lower())
         return self.projects
     
     def _scan_directory(self, directory: str) -> List[Project]:
