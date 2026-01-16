@@ -45,6 +45,47 @@ class JobStatus(Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+
+# Job scheduling categories based on I/O characteristics
+# Heavy I/O jobs saturate disk bandwidth and should not run concurrently on same storage
+HEAVY_IO_JOBS = {"tbc-export", "final-mux"}
+# Light jobs are algorithm-bound with low I/O, can run many in parallel
+LIGHT_JOBS = {"vhs-decode", "lds-compress", "audio-align"}
+
+# Storage type classification for scheduling rules
+# Maps location names to storage type
+STORAGE_TYPES = {
+    "hdd1bpool": "hdd",
+    "intel1tb": "ssd",
+    "nvme2tb": "ssd",  # Treat NVMe same as SSD for scheduling
+}
+
+# Scheduling limits per storage type
+# Format: {storage_type: {scenario: {job_category: max_concurrent}}}
+# Based on benchmark data:
+#   - HDD: 4 decodes @ 4.0 FPS each = 16 FPS total throughput
+#   - SSD: decode uses ~9% disk utilization each
+SCHEDULING_RULES = {
+    "hdd": {
+        # HDD: 4 parallel decodes gives best total throughput (~16 FPS)
+        # When heavy I/O job running: allow 2 light jobs
+        "heavy_running": {"light": 2, "heavy": 0},
+        # When no heavy I/O: 4 light jobs, 1 heavy
+        "normal": {"light": 4, "heavy": 1},
+    },
+    "ssd": {
+        # SSDs handle concurrent I/O much better (~9% util per decode)
+        "heavy_running": {"light": 4, "heavy": 0},
+        "normal": {"light": 8, "heavy": 1},
+    },
+    # Default for unknown storage (conservative, same as HDD)
+    "default": {
+        "heavy_running": {"light": 2, "heavy": 0},
+        "normal": {"light": 4, "heavy": 1},
+    },
+}
+
+
 @dataclass
 class QueuedJob:
     """Represents a job in the queue with metadata"""
@@ -171,6 +212,92 @@ class JobQueueManager:
     def get_all_location_limits(self) -> Dict[str, int]:
         """Get all configured per-location limits"""
         return self.per_location_limits.copy()
+
+    def get_storage_type(self, location: str) -> str:
+        """Get storage type (hdd/ssd) for a location"""
+        return STORAGE_TYPES.get(location, "default")
+
+    def get_job_category(self, job_type: str) -> str:
+        """Get job category (heavy/light) for scheduling"""
+        if job_type in HEAVY_IO_JOBS:
+            return "heavy"
+        return "light"
+
+    def can_schedule_job(self, job: 'QueuedJob', running_jobs: List['QueuedJob']) -> bool:
+        """
+        Determine if a job can be scheduled based on storage-aware rules.
+
+        Rules:
+        - Heavy I/O jobs (export, final-mux) block other heavy jobs on same storage
+        - Light jobs (decode, compress, align) can run with limits
+        - Different storage types have different limits (HDD more constrained than SSD)
+        """
+        location = job.source_location or self.get_location_from_path(job.input_file)
+        if not location:
+            # Unknown location - use global limit
+            return len(running_jobs) < self.max_concurrent_jobs
+
+        storage_type = self.get_storage_type(location)
+        job_category = self.get_job_category(job.job_type)
+        rules = SCHEDULING_RULES.get(storage_type, SCHEDULING_RULES["default"])
+
+        # Count running jobs on same location by category
+        location_jobs = [j for j in running_jobs
+                        if (j.source_location or self.get_location_from_path(j.input_file)) == location]
+
+        heavy_running = sum(1 for j in location_jobs if self.get_job_category(j.job_type) == "heavy")
+        light_running = sum(1 for j in location_jobs if self.get_job_category(j.job_type) == "light")
+
+        # Select scenario based on whether heavy I/O is running
+        scenario = "heavy_running" if heavy_running > 0 else "normal"
+        limits = rules[scenario]
+
+        # Check if we can add this job
+        if job_category == "heavy":
+            return heavy_running < limits["heavy"]
+        else:
+            return light_running < limits["light"]
+
+    def get_scheduling_status(self) -> Dict[str, Any]:
+        """Get current scheduling status for display/debugging"""
+        with self.lock:
+            running_jobs = [j for j in self.jobs if j.status == JobStatus.RUNNING]
+            queued_jobs = [j for j in self.jobs if j.status == JobStatus.QUEUED]
+
+        # Group by location
+        status = {}
+        locations = set()
+        for job in running_jobs + queued_jobs:
+            loc = job.source_location or self.get_location_from_path(job.input_file)
+            if loc:
+                locations.add(loc)
+
+        for loc in locations:
+            loc_running = [j for j in running_jobs
+                         if (j.source_location or self.get_location_from_path(j.input_file)) == loc]
+            loc_queued = [j for j in queued_jobs
+                        if (j.source_location or self.get_location_from_path(j.input_file)) == loc]
+
+            heavy_running = sum(1 for j in loc_running if self.get_job_category(j.job_type) == "heavy")
+            light_running = sum(1 for j in loc_running if self.get_job_category(j.job_type) == "light")
+
+            storage_type = self.get_storage_type(loc)
+            scenario = "heavy_running" if heavy_running > 0 else "normal"
+            rules = SCHEDULING_RULES.get(storage_type, SCHEDULING_RULES["default"])
+            limits = rules[scenario]
+
+            status[loc] = {
+                "storage_type": storage_type,
+                "scenario": scenario,
+                "heavy_running": heavy_running,
+                "light_running": light_running,
+                "heavy_limit": limits["heavy"],
+                "light_limit": limits["light"],
+                "queued_count": len(loc_queued),
+                "running_jobs": [{"id": j.job_id, "type": j.job_type} for j in loc_running],
+            }
+
+        return status
 
     def start_processor(self):
         """Start the background job processor"""
@@ -385,7 +512,7 @@ class JobQueueManager:
         self.logger.info(f"Set max concurrent jobs to {self.max_concurrent_jobs}")
     
     def _process_jobs(self):
-        """Background job processor thread"""
+        """Background job processor thread with storage-aware scheduling"""
         while not self.stop_processing:
             try:
                 # Check if we can start more jobs
@@ -394,48 +521,46 @@ class JobQueueManager:
                     running_count = len(running_jobs)
                     available_slots = self.max_concurrent_jobs - running_count
 
-                    if available_slots > 0:
-                        # Count running jobs per location for per-disk limits
-                        jobs_per_location = {}
-                        for job in running_jobs:
-                            loc = job.source_location or self.get_location_from_path(job.input_file)
-                            if loc:
-                                jobs_per_location[loc] = jobs_per_location.get(loc, 0) + 1
-
-                        # Find next queued job that respects both global and per-location limits
+                    # Try to start multiple jobs if slots available
+                    jobs_started = 0
+                    while available_slots > 0:
+                        # Find next queued job that can be scheduled
+                        # Use storage-aware scheduling rules
                         next_job = None
                         for job in self.jobs:
                             if job.status != JobStatus.QUEUED:
                                 continue
 
-                            # Check per-location limit if configured
-                            loc = job.source_location or self.get_location_from_path(job.input_file)
-                            if loc and loc in self.per_location_limits:
-                                loc_limit = self.per_location_limits[loc]
-                                loc_running = jobs_per_location.get(loc, 0)
-                                if loc_running >= loc_limit:
-                                    # Skip this job - location is at capacity
-                                    continue
+                            # Use smart scheduling based on job type and storage
+                            if self.can_schedule_job(job, running_jobs):
+                                next_job = job
+                                break
 
-                            next_job = job
-                            break
+                        if not next_job:
+                            break  # No eligible jobs
 
-                        if next_job:
-                            # Start the job
-                            next_job.status = JobStatus.RUNNING
-                            next_job.started_at = datetime.now()
-                            self.save_queue()
+                        # Start the job
+                        next_job.status = JobStatus.RUNNING
+                        next_job.started_at = datetime.now()
+                        running_jobs.append(next_job)  # Add to running list for next iteration
+                        available_slots -= 1
+                        jobs_started += 1
 
-                            # Start job in separate thread
-                            job_thread = threading.Thread(
-                                target=self._execute_job,
-                                args=(next_job,),
-                                daemon=True
-                            )
-                            job_thread.start()
-                            self.running_jobs[next_job.job_id] = job_thread
+                        # Start job in separate thread
+                        job_thread = threading.Thread(
+                            target=self._execute_job,
+                            args=(next_job,),
+                            daemon=True
+                        )
+                        job_thread.start()
+                        self.running_jobs[next_job.job_id] = job_thread
 
-                            self.logger.info(f"Started job {next_job.job_id} (location: {next_job.source_location or 'unknown'})")
+                        loc = next_job.source_location or self.get_location_from_path(next_job.input_file)
+                        category = self.get_job_category(next_job.job_type)
+                        self.logger.info(f"Started job {next_job.job_id} ({next_job.job_type}/{category}) on {loc or 'unknown'}")
+
+                    if jobs_started > 0:
+                        self.save_queue()
                 
                 # Clean up completed threads
                 completed_jobs = []
