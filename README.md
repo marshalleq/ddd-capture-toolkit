@@ -75,7 +75,7 @@ Even with synchronised clocks, the two capture processes start at slightly diffe
 
 - Precision timing measurement between audio and video start points unique to your hardware
 - Automatic application of the calculated offset during final muxing
-- Automated 1kHz test tone analysis for calibration captures (in alpha state - not needed, use timing measurement option)
+- Automated timecode-based calibration: record a generated audio/video timecode pattern to VHS, play it back through the Domesday Duplicator, and analyse the offset between audio and video (alpha)
 
 #### 3. VhsDecodeAutoAudioAlign (Speed Compensation)
 
