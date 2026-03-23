@@ -235,7 +235,7 @@ For dropped fields (tape damage), corresponding audio is skipped to maintain syn
 
 **macOS** - Requires Xcode CLI tools, uses conda-forge
 
-**Windows** - WSL recommended, some tools need manual setup
+**Windows** - Runs natively via Git Bash (MSYS2). Install [Git for Windows](https://git-scm.com/downloads/win) and [Miniconda for Windows](https://docs.conda.io/en/latest/miniconda.html), then run setup from Git Bash. WSL also works (uses Linux codepath automatically) but native is preferred for USB hardware access
 
 ## Troubleshooting
 

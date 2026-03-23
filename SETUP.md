@@ -7,6 +7,16 @@ This guide will get you up and running with the DDD Capture Toolkit in under 10 
 1. **Miniconda/Anaconda** - Download from: https://docs.conda.io/en/latest/miniconda.html
 2. **Git** - Most systems have this pre-installed
 
+### Windows-Specific Prerequisites
+
+On Windows, the toolkit runs natively via a bash terminal (no WSL required):
+
+1. **Git for Windows** - Download from: https://git-scm.com/downloads/win
+   - This includes **Git Bash**, an MSYS2-based terminal that provides the bash shell needed to run the setup and toolkit scripts
+2. **Miniconda for Windows** - Download the Windows installer from: https://docs.conda.io/en/latest/miniconda.html
+
+Once both are installed, open **Git Bash** and run the setup commands from there. The setup script will automatically detect Windows and use the appropriate environment configuration.
+
 ## Quick Setup (3 steps)
 
 ```bash
