@@ -76,6 +76,9 @@ tools/*.AppImage
 # Build artifacts (performance mode compilation)
 build/
 
+# Benchmarks
+benchmarks/
+
 # AI tool configurations
 CLAUDE.md
 .claude/
