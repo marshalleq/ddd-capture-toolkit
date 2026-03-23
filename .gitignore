@@ -75,3 +75,14 @@ tools/*.AppImage
 
 # Build artifacts (performance mode compilation)
 build/
+
+# AI tool configurations
+CLAUDE.md
+.claude/
+.cursor/
+.aider*
+.copilot/
+.github/copilot/
+.codeium/
+.continue/
+.windsurf/
