@@ -1,6 +1,0 @@
-timestamp,cpu_percent,mem_used_mb,mem_available_mb,sda_read_mbs,sda_write_mbs,sda_util,sdb_read_mbs,sdb_write_mbs,sdb_util,sdc_read_mbs,sdc_write_mbs,sdc_util,sdd_read_mbs,sdd_write_mbs,sdd_util,sde_read_mbs,sde_write_mbs,sde_util,nvme0n1_read_mbs,nvme0n1_write_mbs,nvme0n1_util,nvme2n1_read_mbs,nvme2n1_write_mbs,nvme2n1_util,nvme1n1_read_mbs,nvme1n1_write_mbs,nvme1n1_util
-2026-01-15 17:08:53,1.1,104736,21590,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-2026-01-15 17:08:54,1.1,104738,21589,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-2026-01-15 17:08:55,1.1,104739,21588,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-2026-01-15 17:08:56,1.7,104747,21580,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-2026-01-15 17:08:58,2.5,104746,21581,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
