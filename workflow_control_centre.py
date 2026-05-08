@@ -5,6 +5,7 @@ Unified workflow management with project matrix A-G, selection system, and rich 
 """
 
 import os
+import re
 import sys
 import time
 import select
@@ -265,11 +266,11 @@ class WorkflowControlCentre:
                                     self.show_details()
                                     tty.setcbreak(sys.stdin.fileno())
                                     live.start()
-                                elif len(cmd) == 2 and cmd[0].isdigit() and cmd[1] == 'x':
+                                elif (flags_match := re.match(r'^(\d+)x$', cmd)):
                                     # Show flags dialog - temporarily stop live display
                                     live.stop()
                                     termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-                                    self.show_flags_dialog(int(cmd[0]))
+                                    self.show_flags_dialog(int(flags_match.group(1)))
                                     tty.setcbreak(sys.stdin.fileno())
                                     live.start()
                                 else:
@@ -702,24 +703,27 @@ class WorkflowControlCentre:
     
     def handle_command(self, cmd):
         """Handle user command input"""
-        # Coordinate system commands (1D, 2M, etc.)
+        # Coordinate system commands (1D, 2M, 11D, 23M, etc.)
         # Also supports format modifiers for decode: 1dp (PAL), 1dn (NTSC)
         # Also supports flags: 1x (flags for project 1)
-        if len(cmd) == 2 and cmd[0].isdigit() and cmd[1] in "dmaefx":
-            project_num = int(cmd[0])
-            step_letter = cmd[1]
+        coord_match = re.match(r'^(\d+)([dmaefx])$', cmd)
+        coord_format_match = re.match(r'^(\d+)d([pn])$', cmd)
+        job_match = re.match(r'^j(\d+)$', cmd)
+        if coord_match:
+            project_num = int(coord_match.group(1))
+            step_letter = coord_match.group(2)
             if step_letter == 'x':
                 self.show_flags_dialog(project_num)
             else:
                 self.handle_coordinate_command(project_num, step_letter)
-        elif len(cmd) == 3 and cmd[0].isdigit() and cmd[1] == 'd' and cmd[2] in "pn":
+        elif coord_format_match:
             # Decode with format specifier: 1dp = PAL, 1dn = NTSC
-            project_num = int(cmd[0])
-            format_override = 'pal' if cmd[2] == 'p' else 'ntsc'
+            project_num = int(coord_format_match.group(1))
+            format_override = 'pal' if coord_format_match.group(2) == 'p' else 'ntsc'
             self.handle_coordinate_command(project_num, 'd', video_format=format_override)
-        
-        # Project selection (1-7)
-        elif cmd in "1234567":
+
+        # Project selection (any positive integer)
+        elif cmd.isdigit() and int(cmd) >= 1:
             idx = int(cmd) - 1
             if idx < len(self.current_projects):
                 self.selected_project_idx = idx
@@ -728,45 +732,43 @@ class WorkflowControlCentre:
                 self.message = f"Selected Project {cmd}: {project.name}"
             else:
                 self.message = f"No project at position {cmd}"
-        
-        # Job selection (J1-J9)
-        elif cmd.startswith('j') and len(cmd) == 2 and cmd[1] in "123456789":
-            idx = int(cmd[1]) - 1
-            if idx < len(self.current_jobs):
+
+        # Job selection (J1, J2, ..., J10, J11, ...)
+        elif job_match:
+            job_num = int(job_match.group(1))
+            if 1 <= job_num <= len(self.current_jobs):
+                idx = job_num - 1
                 self.selected_job_idx = idx
                 self.selected_project_idx = None  # Clear project selection
                 job = self.current_jobs[idx]
-                self.message = f"Selected Job J{cmd[1]}: {job.get('project_name', 'Unknown')}"
+                self.message = f"Selected Job J{job_num}: {job.get('project_name', 'Unknown')}"
             else:
-                self.message = f"No job at position J{cmd[1]}"
-        
-        # Force command (force 1e, force 2d, etc.)
-        elif cmd.startswith('force ') and len(cmd) >= 8:
+                self.message = f"No job at position J{job_num}"
+
+        # Force command (force 1e, force 11e, etc.)
+        elif cmd.startswith('force '):
             force_cmd = cmd[6:].strip()
-            if len(force_cmd) == 2 and force_cmd[0].isdigit() and force_cmd[1] in "dmaef":
-                project_num = int(force_cmd[0])
-                step_letter = force_cmd[1]
-                self.handle_force_command(project_num, step_letter)
+            force_match = re.match(r'^(\d+)([dmaef])$', force_cmd)
+            if force_match:
+                self.handle_force_command(int(force_match.group(1)), force_match.group(2))
             else:
                 self.message = f"Invalid force command format. Use: force 1e, force 2d, etc."
-        
+
         # Clean command to reset stuck progress displays
-        elif cmd.startswith('clean ') and len(cmd) >= 8:
+        elif cmd.startswith('clean '):
             clean_cmd = cmd[6:].strip()
-            if len(clean_cmd) == 2 and clean_cmd[0].isdigit() and clean_cmd[1] in "dmaef":
-                project_num = int(clean_cmd[0])
-                step_letter = clean_cmd[1]
-                self.handle_clean_command(project_num, step_letter)
+            clean_match = re.match(r'^(\d+)([dmaef])$', clean_cmd)
+            if clean_match:
+                self.handle_clean_command(int(clean_match.group(1)), clean_match.group(2))
             else:
                 self.message = f"Invalid clean command format. Use: clean 1e, clean 2d, etc."
-        
-        # Stop command (stop 1e, stop 2d, etc.)
-        elif cmd.startswith('stop ') and len(cmd) >= 7:
+
+        # Stop command (stop 1e, stop 11e, etc.)
+        elif cmd.startswith('stop '):
             stop_cmd = cmd[5:].strip()
-            if len(stop_cmd) == 2 and stop_cmd[0].isdigit() and stop_cmd[1] in "dmaef":
-                project_num = int(stop_cmd[0])
-                step_letter = stop_cmd[1]
-                self.handle_stop_command(project_num, step_letter)
+            stop_match = re.match(r'^(\d+)([dmaef])$', stop_cmd)
+            if stop_match:
+                self.handle_stop_command(int(stop_match.group(1)), stop_match.group(2))
             else:
                 self.message = f"Invalid stop command format. Use: stop 1e, stop 2d, etc."
         

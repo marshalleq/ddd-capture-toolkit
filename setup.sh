@@ -475,6 +475,17 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
     echo ""
     log_info "=== Performance Mode: Building from Source ==="
 
+    # Initialize git submodules required for source builds
+    if [[ ! -d ".git" ]]; then
+        log_error "Performance mode requires a git checkout (.git not found). Aborting."
+        exit 1
+    fi
+    log_info "Initializing git submodules required for source builds..."
+    git submodule update --init --recursive || {
+        log_error "Failed to initialize git submodules. Performance mode requires submodules."
+        exit 1
+    }
+
     # Remove AppImage if it exists (performance mode uses compiled tools instead)
     APPIMAGE_PATH="tools/tbc-video-export.AppImage"
     if [[ -f "$APPIMAGE_PATH" ]]; then
@@ -692,7 +703,7 @@ echo "=============================================="
 CONDA_ENV_PATH=$(conda env list | awk '/^ddd-capture-toolkit[[:space:]]/ {print $2}' | head -n1)
 
 # vhs-decode version
-if [[ "$INSTALL_MODE" == "performance" ]] && [[ -d "external/vhs-decode" ]]; then
+if [[ "$INSTALL_MODE" == "performance" ]] && [[ -e "external/vhs-decode/.git" ]]; then
     # Performance mode: get version from git
     VHS_DECODE_VER=$(cd external/vhs-decode && git describe --tags --always 2>/dev/null)
     VHS_DECODE_DATE=$(cd external/vhs-decode && git log -1 --format="%ci" 2>/dev/null | cut -d' ' -f1)
@@ -712,7 +723,7 @@ else
 fi
 
 # Show other available vhs-decode versions (performance mode only)
-if [[ "$INSTALL_MODE" == "performance" ]] && [[ -d "external/vhs-decode" ]]; then
+if [[ "$INSTALL_MODE" == "performance" ]] && [[ -e "external/vhs-decode/.git" ]]; then
     cd external/vhs-decode
     git fetch --tags origin 2>/dev/null || true
     OTHER_VERSIONS=$(git tag -l --sort=-creatordate 2>/dev/null | grep -E '^v?[0-9]+\.[0-9]+' | head -n5 | tr '\n' ', ' | sed 's/, $//')
