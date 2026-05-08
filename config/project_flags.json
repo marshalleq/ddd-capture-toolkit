@@ -33,6 +33,11 @@
       "audio": {
         "output_wav": true
       }
+    },
+    "Dominican_Republic_Oct_1992_NTSC": {
+      "export": {
+        "fix_reverse": true
+      }
     }
   }
 }
