@@ -91,4 +91,13 @@ If you have issues:
 
 This approach uses pre-compiled binaries optimised for broad compatibility. While this might be slightly slower than custom compilation for your specific CPU, the difference is minimal for most users, and the setup simplicity is worth the trade-off.
 
-For maximum performance on specific systems, you can still compile from source using the detailed instructions in build.txt.
+For maximum performance, run setup with `--performance` to compile everything from source with CPU-native optimisations (typically a 10–30% improvement, takes 30–60 minutes):
+
+```bash
+./setup.sh --performance                              # compile from source
+./setup.sh --performance --jobs 4                     # limit parallel build jobs
+./setup.sh --performance --vhs-decode-version 0.3.8.1 # pin a vhs-decode version
+./setup.sh --performance --vhs-decode-version latest  # bleeding edge
+```
+
+Alternatively, you can compile from source manually using the detailed instructions in build.txt.
