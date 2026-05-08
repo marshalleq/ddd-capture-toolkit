@@ -198,14 +198,17 @@ class ProjectDiscovery:
         # Categorize by extension and naming patterns
         if file_ext == '.ldf':
             # .ldf is compressed LDS - check if we have an uncompressed .lds
-            # If .lds exists, .ldf is compress output; otherwise it's the capture file
+            # If .lds exists, .ldf is compress output; otherwise treat .ldf as
+            # both the capture file and the compress output (either captured
+            # directly to .ldf, or .lds was deleted post-compression).
             lds_path = filepath.replace('.ldf', '.lds')
             if os.path.exists(lds_path):
                 # Both exist - .ldf is the compress output
                 project.output_files['compress'] = filepath
             else:
-                # Only .ldf exists - it's the capture file (pre-compressed source)
+                # Only .ldf exists
                 project.capture_files['video'] = filepath
+                project.output_files['compress'] = filepath
         elif file_ext in self.RF_EXTENSIONS:
             project.capture_files['video'] = filepath
         elif file_ext in self.AUDIO_EXTENSIONS and not filename.endswith('_aligned.wav'):
