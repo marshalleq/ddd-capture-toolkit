@@ -132,3 +132,29 @@ The `_execute_tbc_export_job()` function looks for tbc-video-export in this orde
 ### Ignored Files (.gitignore)
 - `tools/*.AppImage` - Downloaded AppImages
 - `build/` - Compilation artifacts (ffmpeg source, build directories)
+
+---
+
+## Known Issues / Follow-Ups: Easy vs Performance Mode Confusion
+
+The two modes share state in unintended ways, which has produced misleading version reporting and silent-failure bugs. These are open follow-ups to investigate:
+
+1. **`conda run -n ddd-capture-toolkit pip` resolves to the user-local pip, not the conda env's pip.**
+   When setup's version reporter (and likely other call sites) runs `conda run -n <env> pip show vhs-decode`, the resolved `pip` is `~/.local/bin/pip` (Python 3.14, user site-packages) rather than the conda env's `pip` (Python 3.10). It reports whatever's in `~/.local/lib/python3.14/site-packages` even when the conda env contains a different version. Needs a fix that forces use of the env's pip explicitly (e.g., `conda run -n <env> python -m pip` after verifying that resolves correctly, or invoking `$CONDA_ENV_PATH/bin/pip` directly).
+
+2. **`setuptools_scm` falls back to `0.0.0` when building vhs-decode from the submodule.**
+   `external/vhs-decode/pyproject.toml` declares `dynamic = ["version"]` with `setuptools_scm`. The submodule has a gitlink `.git` *file* (not directory) — `setuptools_scm` apparently fails to follow it during the build, so the installed package metadata ends up as `vhs_decode-0.0.0` even though `v0.3.9` is checked out. Cosmetic only (the binary is fully functional and native-optimized), but produces confusing version output. The setup.sh reporter now uses `git describe` directly to side-step this, but the dist-info itself is still wrong.
+
+3. **Leftover state from one mode shadows the other.**
+   - Easy mode's PyPI install lands in `~/.local/bin/vhs-decode` and `~/.local/lib/.../site-packages/`. Performance mode does not clean these up, so they remain on `PATH` and can shadow the conda env's binary.
+   - Performance mode populates `external/vhs-decode/` (submodule + build artifacts). Easy mode does not clean these up either.
+   - Switching modes should explicitly clean the *other* mode's artifacts to prevent confusion. Today the only cleanup is removing the AppImage when entering performance mode (setup.sh ~line 480).
+
+4. **Git submodule `.git` is a gitlink file, not a directory.**
+   Multiple `[[ -d "external/<sub>/.git" ]]` checks have existed in setup.sh and silently fell through to wrong branches because submodule `.git` is a file. All known sites now use `-e`, but any future checks need to use `-e` (or check for the parent directory's existence + non-emptiness). Worth a code-search pass.
+
+5. **`log_warning` / `log_error` previously wrote to stdout.**
+   Fixed to stderr in `build-scripts/common/conda-setup.sh`, but the original bug let warning text be captured by `$(...)` command substitution and used as a "version tag", causing a silent build failure. If any other shell helpers in the project still log to stdout, they're at risk of the same trap.
+
+6. **End-of-setup version reporter doesn't verify what's actually installed.**
+   The reporter today inspects the *source tree* (git describe in `external/vhs-decode/`) for performance mode and *some pip view* for easy mode, but doesn't confirm those agree with the conda env's `bin/vhs-decode` or the dist-info that pip actually resolved to. A more robust reporter would inspect the conda env's installed metadata directly (`$CONDA_ENV_PATH/lib/pythonX.Y/site-packages/vhs_decode-*.dist-info/METADATA`) and cross-check against the source.
