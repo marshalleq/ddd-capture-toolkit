@@ -259,22 +259,39 @@ class ProgressDisplayUtils:
                             remaining_frames = total_frames - current_frame
                             eta_seconds = int(remaining_frames / fps)
                 
+                # For LDS compress jobs, current_fps is bytes/sec, total_frames
+                # and current_frame are bytes (output file size). Units cancel
+                # in the ETA calculation, so the same shape works.
+                elif step_type == "lds-compress":
+                    if hasattr(job, 'current_fps') and hasattr(job, 'total_frames'):
+                        fps = getattr(job, 'current_fps', 0)  # bytes/sec
+                        total_frames = getattr(job, 'total_frames', 0)  # expected bytes
+                        current_frame = getattr(job, 'current_frame', 0)  # current bytes
+
+                        if fps > 0 and total_frames > 0 and current_frame > 0:
+                            remaining_bytes = total_frames - current_frame
+                            eta_seconds = int(remaining_bytes / fps)
+
                 # For VHS decode jobs, calculate from JSON metadata and progress
                 elif step_type == "vhs-decode":
                     total_frames = ProgressDisplayUtils._get_total_frames_for_job(job)
-                    
+
                     if total_frames > 0:
                         current_frame = int((progress_percentage / 100.0) * total_frames)
-                        
+
                         if current_frame > 0 and runtime_seconds > 0:
                             # Calculate processing FPS
                             fps = current_frame / runtime_seconds
-                            
+
                             # Calculate ETA (only after 30 seconds for stability)
                             if runtime_seconds > 30 and fps > 0:
                                 remaining_frames = total_frames - current_frame
                                 eta_seconds = int(remaining_frames / fps)
-                
+
+                # Track which job type this is so the formatter can render the
+                # rate field with the right unit (frames/sec vs MB/s).
+                rate_unit_label = "MB/s" if step_type == "lds-compress" else "fps"
+
                 # Fallback ETA calculation using progress rate
                 if eta_seconds is None and runtime_seconds > 30 and progress_percentage > 0:
                     progress_rate = progress_percentage / runtime_seconds
@@ -292,7 +309,8 @@ class ProgressDisplayUtils:
                     'runtime_seconds': runtime_seconds,
                     'current_frame': current_frame,
                     'total_frames': total_frames,
-                    'status_message': status_message
+                    'status_message': status_message,
+                    'rate_unit_label': rate_unit_label
                 }
         
         debug_log(f"No matching RUNNING job found for project='{project_name}', step_type='{step_type}'")
@@ -370,12 +388,16 @@ class ProgressDisplayUtils:
 
         fps = progress_info.get('fps')
         eta_seconds = progress_info.get('eta_seconds')
+        rate_unit = progress_info.get('rate_unit_label', 'fps')
 
         # Build progress text components
         text_parts = [f"{percentage:.1f}%"]
 
         if fps and fps > 0:
-            text_parts.append(f"{fps:.1f}fps")
+            if rate_unit == 'MB/s':
+                text_parts.append(f"{fps / (1024 * 1024):.1f}MB/s")
+            else:
+                text_parts.append(f"{fps:.1f}{rate_unit}")
 
         if eta_seconds and eta_seconds > 0:
             eta_text = ProgressDisplayUtils.format_time(eta_seconds)

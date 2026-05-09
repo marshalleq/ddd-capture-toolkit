@@ -173,8 +173,12 @@ class JobQueueDisplay:
                 
                 if progress_info:
                     if progress_info.get('fps', 0) > 0:
-                        fps_text = f"{progress_info['fps']:.1f}"
-                    
+                        # For lds-compress the "fps" field is bytes/sec - format as MB/s
+                        if job.job_type == "lds-compress":
+                            fps_text = f"{progress_info['fps'] / (1024 * 1024):.1f} MB/s"
+                        else:
+                            fps_text = f"{progress_info['fps']:.1f}"
+
                     if progress_info.get('eta_seconds', 0) > 0:
                         eta_text = self._format_time(progress_info['eta_seconds'])
             
