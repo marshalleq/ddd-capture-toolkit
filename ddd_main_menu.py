@@ -7389,9 +7389,9 @@ def display_performance_settings_menu():
 
         # Import config functions
         sys.path.append('.')
-        from config import get_ffmpeg_thread_count, get_compress_use_gpu
+        from config import get_ffmpeg_threads, get_compress_use_gpu
 
-        current_threads = get_ffmpeg_thread_count()
+        current_threads = get_ffmpeg_threads()
         gpu_compress = get_compress_use_gpu()
 
         print("\nPERFORMANCE SETTINGS")
@@ -7471,9 +7471,9 @@ def configure_ffmpeg_threads():
     
     # Import config functions
     sys.path.append('.')
-    from config import get_ffmpeg_thread_count, set_ffmpeg_thread_count
+    from config import get_ffmpeg_threads, set_ffmpeg_threads
     
-    current_threads = get_ffmpeg_thread_count()
+    current_threads = get_ffmpeg_threads()
     
     print(f"Current setting: {current_threads} threads")
     print()
@@ -7523,7 +7523,7 @@ def configure_ffmpeg_threads():
             confirm = input("\nApply this change? (Y/n): ").strip().lower()
             
             if confirm not in ['n', 'no']:
-                if set_ffmpeg_thread_count(thread_count):
+                if set_ffmpeg_threads(thread_count):
                     print(f"\n✓ SUCCESS: FFmpeg thread count set to {thread_count}")
                     print(f"   Changes will take effect for new muxing operations")
                 else:
@@ -7553,9 +7553,9 @@ def view_performance_status():
     
     # Import config functions
     sys.path.append('.')
-    from config import get_ffmpeg_thread_count
+    from config import get_ffmpeg_threads
     
-    current_threads = get_ffmpeg_thread_count()
+    current_threads = get_ffmpeg_threads()
     
     print("CURRENT PERFORMANCE SETTINGS:")
     print("=" * 40)
@@ -7641,13 +7641,13 @@ def reset_performance_defaults():
     
     # Import config functions
     sys.path.append('.')
-    from config import set_ffmpeg_thread_count
+    from config import set_ffmpeg_threads
     
     confirm = input("Reset performance settings to defaults? (y/N): ").strip().lower()
     
     if confirm in ['y', 'yes']:
         try:
-            if set_ffmpeg_thread_count(4):
+            if set_ffmpeg_threads(4):
                 print("\n✓ Performance settings reset to defaults successfully!")
                 print("\nDefault settings applied:")
                 print("• FFmpeg Thread Count: 4 threads")
