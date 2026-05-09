@@ -1788,6 +1788,11 @@ class JobQueueManager:
             compression_level = job.parameters.get('compression_level', 11)
             show_progress = job.parameters.get('show_progress', True)
             overwrite = job.parameters.get('overwrite', False)
+            gpu = job.parameters.get('gpu', False)
+            # GPU mode (ld-compress -a) caps at level 11; clamp here so we don't
+            # pass an invalid level if the parameter ever exceeds the cap.
+            if gpu and compression_level > 11:
+                compression_level = 11
 
             # Check if output already exists
             if os.path.exists(job.output_file) and not overwrite:
@@ -1825,15 +1830,20 @@ class JobQueueManager:
                 job.error_message = "ld-compress script not found in external/vhs-decode/scripts/ or PATH"
                 return False
 
-            # Build the ld-compress command
-            cmd = [ld_compress_cmd, '-c', '-l', str(compression_level)]
+            # Build the ld-compress command. -a (GPU) and -c (CPU) are mutually
+            # exclusive modes in ld-compress; -a must come before -l so the level
+            # validator runs in GPU mode (which caps at 11). GPU output is
+            # <base>.flac.ldf and is renamed to <base>.ldf below to keep the rest
+            # of the toolkit's naming consistent.
+            mode_flag = '-a' if gpu else '-c'
+            cmd = [ld_compress_cmd, mode_flag, '-l', str(compression_level)]
 
             if show_progress:
                 cmd.append('-p')
 
             cmd.append(job.input_file)
 
-            self.logger.info(f"Running ld-compress: {' '.join(cmd)}")
+            self.logger.info(f"Running ld-compress ({'GPU' if gpu else 'CPU'} mode): {' '.join(cmd)}")
 
             # Update progress
             with self.lock:
@@ -1925,23 +1935,28 @@ class JobQueueManager:
                 del self.job_processes[job.job_id]
 
             # Check if output file was created
-            # ld-compress creates the .ldf file in the current working directory
+            # ld-compress writes to the current working directory.
+            # CPU mode produces <base>.ldf; GPU mode (-a) produces <base>.flac.ldf.
             expected_output = job.output_file
 
-            # Also check for the file based on input filename pattern
+            # Build candidate paths in priority order. We rename to the expected
+            # path so the rest of the toolkit sees the standard .ldf extension.
             input_basename = os.path.basename(job.input_file)
+            candidate_outputs = []
             if input_basename.endswith('.lds'):
-                alt_output = os.path.join(output_dir, input_basename.replace('.lds', '.ldf'))
-            else:
-                alt_output = None
+                base = input_basename[:-4]  # strip .lds
+                candidate_outputs.append(os.path.join(output_dir, base + '.ldf'))
+                candidate_outputs.append(os.path.join(output_dir, base + '.flac.ldf'))
 
             output_exists = os.path.exists(expected_output)
-            if not output_exists and alt_output and os.path.exists(alt_output):
-                # Move to expected output location if needed
-                if alt_output != expected_output:
-                    import shutil
-                    shutil.move(alt_output, expected_output)
-                output_exists = True
+            if not output_exists:
+                for candidate in candidate_outputs:
+                    if candidate != expected_output and os.path.exists(candidate):
+                        import shutil
+                        shutil.move(candidate, expected_output)
+                        self.logger.info(f"Renamed {os.path.basename(candidate)} -> {os.path.basename(expected_output)}")
+                        output_exists = True
+                        break
 
             self.logger.info(f"ld-compress completed with return code: {return_code}")
 
