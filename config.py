@@ -44,7 +44,9 @@ DEFAULT_CONFIG = {
     },
     "performance_settings": {
         "ffmpeg_threads": 4,  # Limit FFmpeg threads to keep UI responsive
-        "ffmpeg_threads_description": "Number of threads FFmpeg uses (0=auto, 1-16=specific). Lower values reduce CPU load during final muxing to keep UI responsive. Recommended: 4-6 threads for most systems."
+        "ffmpeg_threads_description": "Number of threads FFmpeg uses (0=auto, 1-16=specific). Lower values reduce CPU load during final muxing to keep UI responsive. Recommended: 4-6 threads for most systems.",
+        "compress_use_gpu": False,  # Use ld-compress -a (flaldf/OpenCL) instead of -c (CPU FLAC)
+        "compress_use_gpu_description": "Whether the compress step uses GPU acceleration via flaldf. Requires flaldf binary and an OpenCL runtime - see docs/gpu-compression.md."
     }
 }
 
@@ -258,6 +260,36 @@ def set_ffmpeg_threads(thread_count):
     except Exception as e:
         print(f"Error setting FFmpeg thread count: {e}")
         return False
+
+def get_compress_use_gpu():
+    """
+    Whether the compress step should use GPU acceleration (flaldf/OpenCL).
+    Returns bool. Defaults to False so existing setups are unaffected.
+    """
+    config = load_config()
+    perf_settings = config.get('performance_settings', {})
+    return bool(perf_settings.get('compress_use_gpu', False))
+
+
+def set_compress_use_gpu(enabled):
+    """
+    Enable or disable GPU acceleration for the compress step.
+    Returns True if saved successfully.
+    """
+    if not isinstance(enabled, bool):
+        print(f"Error: compress_use_gpu must be bool (got {type(enabled).__name__})")
+        return False
+
+    config = load_config()
+    if 'performance_settings' not in config:
+        config['performance_settings'] = {}
+    config['performance_settings']['compress_use_gpu'] = enabled
+
+    if save_config(config):
+        print(f"Compress GPU acceleration: {'enabled' if enabled else 'disabled'}")
+        return True
+    return False
+
 
 def get_performance_summary():
     """

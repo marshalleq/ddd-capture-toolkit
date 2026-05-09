@@ -1944,10 +1944,16 @@ class WorkflowControlCentre:
                 # Generate output filename (.lds -> .ldf)
                 ldf_file = lds_file.replace('.lds', '.ldf')
 
+                # Read global GPU compress setting
+                from config import get_compress_use_gpu
+                gpu_enabled = get_compress_use_gpu()
+
+                # GPU mode caps level at 11; CPU caps at 12. Use 11 either way.
                 parameters = {
-                    'compression_level': 11,  # Default high compression
+                    'compression_level': 11,
                     'show_progress': True,
-                    'overwrite': force_overwrite
+                    'overwrite': force_overwrite,
+                    'gpu': gpu_enabled,
                 }
 
                 job_id = job_manager.add_job_nonblocking(
