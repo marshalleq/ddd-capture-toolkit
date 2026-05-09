@@ -1871,14 +1871,34 @@ class JobQueueManager:
 
             self.logger.info(f"Started ld-compress process with PID: {process.pid}")
 
-            # Monitor process for progress
-            # ld-compress doesn't provide detailed progress, so we use time-based estimation.
-            # RF data typically compresses to ~70% with FLAC level 11.
-            # Estimate ~60 seconds per GB for FLAC compression at high compression level.
+            # Real progress comes from polling the output file's size on disk.
+            # CPU mode writes <base>.ldf directly; GPU mode writes <base>.flac.ldf
+            # and we rename it after the process exits. Watch both.
+            input_basename = os.path.basename(job.input_file)
+            output_candidates = []
+            if input_basename.endswith('.lds'):
+                base = input_basename[:-4]
+                output_candidates = [
+                    os.path.join(output_dir, base + '.ldf'),
+                    os.path.join(output_dir, base + '.flac.ldf'),
+                ]
+
+            # Estimated final output size: ~72% of input is typical for FLAC level 11
+            # on RF data. Used to convert bytes-on-disk into a percentage.
+            EXPECTED_RATIO = 0.72
+            expected_output_bytes = int(input_size * EXPECTED_RATIO)
+
+            # Stash bytes in the existing per-job progress fields. They are
+            # documented as type-dependent (frames for decode/export, bytes here).
+            with self.lock:
+                job.total_frames = expected_output_bytes
+                job.current_frame = 0
+                job.current_fps = 0.0
+
             last_progress_update = time.time()
             start_time = time.time()
-            estimated_duration = max(60.0, (input_size / (1024**3)) * 60.0)
-            self.logger.info(f"Estimated compression duration: {estimated_duration:.0f} seconds ({input_size_gb:.1f} GB input)")
+            last_output_bytes = 0
+            last_sample_time = start_time
 
             import select
 
@@ -1898,21 +1918,47 @@ class JobQueueManager:
                 except Exception as e:
                     self.logger.debug(f"Error reading ld-compress output: {e}")
 
-                # Update progress based on elapsed time
+                # Update progress from output file size every ~1s
                 current_time = time.time()
-                if current_time - last_progress_update > 2.0:
+                if current_time - last_progress_update > 1.0:
                     try:
-                        elapsed = current_time - start_time
-                        # Use time-based progress (5% to 90%)
-                        time_progress = 5.0 + (elapsed / estimated_duration) * 85.0
+                        # Find whichever output file currently exists
+                        current_output_bytes = 0
+                        for candidate in output_candidates:
+                            if os.path.exists(candidate):
+                                current_output_bytes = os.path.getsize(candidate)
+                                break
+
+                        # Compute throughput as bytes-per-second over the last interval
+                        dt = current_time - last_sample_time
+                        bytes_per_sec = ((current_output_bytes - last_output_bytes) / dt) if dt > 0 else 0.0
+
+                        # Real percentage. Cap at 99 until the process exits so we
+                        # don't claim 100% before the rename / verify steps run.
+                        if expected_output_bytes > 0:
+                            real_progress = (current_output_bytes / expected_output_bytes) * 100.0
+                            real_progress = min(real_progress, 99.0)
+                        else:
+                            real_progress = 0.0
 
                         with self.lock:
-                            job.progress = min(max(5.0, time_progress), 90.0)
+                            job.progress = real_progress
+                            job.current_frame = current_output_bytes
+                            job.current_fps = bytes_per_sec
                             self._save_queue_async()
 
-                        # Log progress every ~10 seconds
+                        last_output_bytes = current_output_bytes
+                        last_sample_time = current_time
+
+                        elapsed = current_time - start_time
                         if int(elapsed) % 10 == 0:
-                            self.logger.debug(f"Compress progress: {job.progress:.1f}% (elapsed: {elapsed:.0f}s)")
+                            mbps = bytes_per_sec / (1024 * 1024)
+                            self.logger.debug(
+                                f"Compress progress: {real_progress:.1f}% "
+                                f"({current_output_bytes / (1024**3):.2f} GB / "
+                                f"~{expected_output_bytes / (1024**3):.2f} GB est) "
+                                f"@ {mbps:.1f} MB/s, elapsed {elapsed:.0f}s"
+                            )
                     except Exception as e:
                         self.logger.debug(f"Error updating progress: {e}")
                     last_progress_update = current_time
