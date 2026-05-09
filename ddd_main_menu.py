@@ -7386,13 +7386,14 @@ def display_performance_settings_menu():
     while True:
         clear_screen()
         display_header()
-        
+
         # Import config functions
         sys.path.append('.')
-        from config import get_ffmpeg_thread_count
-        
+        from config import get_ffmpeg_thread_count, get_compress_use_gpu
+
         current_threads = get_ffmpeg_thread_count()
-        
+        gpu_compress = get_compress_use_gpu()
+
         print("\nPERFORMANCE SETTINGS")
         print("=" * 25)
         print("Configure system performance and resource usage settings")
@@ -7401,27 +7402,63 @@ def display_performance_settings_menu():
         print("=" * 20)
         print(f"FFmpeg Thread Count: {current_threads} threads")
         print(f"   (Controls CPU usage for video muxing operations)")
+        print(f"Compress GPU Acceleration: {'ON' if gpu_compress else 'OFF'}")
+        print(f"   (ld-compress -a / flaldf - requires OpenCL runtime; see docs/gpu-compression.md)")
         print()
         print("PERFORMANCE OPTIONS:")
         print("=" * 25)
         print("1. Configure FFmpeg Thread Count")
-        print("2. View Performance Status")
-        print("3. Reset to Defaults")
+        print("2. Toggle Compress GPU Acceleration")
+        print("3. View Performance Status")
+        print("4. Reset to Defaults")
         print("e. Return to Settings Menu")
 
-        selection = input("\nSelect option (1-3/e): ").strip().lower()
+        selection = input("\nSelect option (1-4/e): ").strip().lower()
 
         if selection == '1':
             configure_ffmpeg_threads()
         elif selection == '2':
-            view_performance_status()
+            toggle_compress_gpu()
         elif selection == '3':
+            view_performance_status()
+        elif selection == '4':
             reset_performance_defaults()
         elif selection == 'e':
             break  # Return to settings menu
         else:
-            print("Invalid selection. Please enter 1-3 or e.")
+            print("Invalid selection. Please enter 1-4 or e.")
             time.sleep(1)
+
+
+def toggle_compress_gpu():
+    """Toggle the global GPU acceleration setting for the compress step."""
+    clear_screen()
+    display_header()
+    print("\nCOMPRESS GPU ACCELERATION")
+    print("=" * 35)
+
+    sys.path.append('.')
+    from config import get_compress_use_gpu, set_compress_use_gpu
+
+    current = get_compress_use_gpu()
+    print(f"Current setting: {'ON' if current else 'OFF'}")
+    print()
+    print("When ON, the compress step (.lds -> .ldf) uses ld-compress -a (flaldf,")
+    print("OpenCL/CUDA accelerated). Typically 5-10x faster on capable GPUs.")
+    print()
+    print("Prerequisites (see docs/gpu-compression.md for details):")
+    print("  - flaldf binary on PATH (verify with: which flaldf)")
+    print("  - OpenCL runtime for your GPU vendor (verify with: clinfo -l)")
+    print("  - GPU driver loaded (verify with: nvidia-smi -L / rocminfo)")
+    print()
+
+    choice = input(f"{'Disable' if current else 'Enable'} GPU compression? (y/N): ").strip().lower()
+    if choice in ('y', 'yes'):
+        set_compress_use_gpu(not current)
+        time.sleep(1)
+    else:
+        print("No changes made.")
+        time.sleep(1)
 
 def configure_ffmpeg_threads():
     """Configure FFmpeg thread count setting"""
