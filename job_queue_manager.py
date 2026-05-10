@@ -1431,6 +1431,11 @@ class JobQueueManager:
                 start_time = time.time()
                 last_output_size = 0
 
+                # Track throughput: bytes/sec over the most recent sample window.
+                # The job's current_fps field is documented as type-dependent; for
+                # audio-align we use it for write-rate (analogous to compress).
+                last_sample_time = start_time
+
                 # Read output without blocking the main interface
                 while True:
                     return_code = process.poll()
@@ -1460,13 +1465,23 @@ class JobQueueManager:
                                 progress = min((output_size / input_file_size) * 100, 95.0)
                                 progress = max(progress, 5.0)  # Minimum 5%
 
+                                # Throughput over the last sample window
+                                now = time.time()
+                                dt = now - last_sample_time
+                                bytes_per_sec = ((output_size - last_output_size) / dt) if dt > 0 else 0.0
+
                                 with self.lock:
                                     job.progress = progress
                                     job.current_frame = output_size
-                                    # Don't set current_fps - audio alignment isn't frame-based
+                                    job.current_fps = bytes_per_sec  # bytes/sec, rendered as MB/s
 
                                 last_output_size = output_size
-                                self.logger.debug(f"Alignment progress: {progress:.1f}% ({output_size / (1024*1024):.1f} MB)")
+                                last_sample_time = now
+                                self.logger.debug(
+                                    f"Alignment progress: {progress:.1f}% "
+                                    f"({output_size / (1024*1024):.1f} MB) @ "
+                                    f"{bytes_per_sec / (1024*1024):.1f} MB/s"
+                                )
                         except Exception as e:
                             self.logger.debug(f"Error monitoring output file: {e}")
 
