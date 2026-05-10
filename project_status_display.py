@@ -194,10 +194,14 @@ class ProjectStatusDisplay:
                         progress_bar = ProgressDisplayUtils.create_progress_bar(
                             progress_info['percentage'], width=11)  # Fit column width
                         
-                        # Format FPS if available
+                        # Format rate (FPS or MB/s depending on job type) if available
                         fps_text = ""
                         if progress_info.get('fps') and progress_info['fps'] > 0:
-                            fps_text = f" {progress_info['fps']:.1f}fps"
+                            rate_unit = progress_info.get('rate_unit_label', 'fps')
+                            if rate_unit == 'MB/s':
+                                fps_text = f" {progress_info['fps'] / (1024 * 1024):.1f}MB/s"
+                            else:
+                                fps_text = f" {progress_info['fps']:.1f}{rate_unit}"
                         
                         # Calculate ETA if we have enough data
                         eta_text = ""
@@ -220,12 +224,17 @@ class ProjectStatusDisplay:
                         percentage_line = f"{progress_info['percentage']:.1f}%"
                         line2 = Text(percentage_line, style="cyan")
                         
-                        # Third line: FPS if available
+                        # Third line: rate (FPS or MB/s depending on job type) if available
+                        rate_unit = progress_info.get('rate_unit_label', 'fps')
                         if progress_info.get('fps') and progress_info['fps'] > 0:
-                            fps_line = f"{progress_info['fps']:.1f}fps"
-                            line3 = Text(fps_line, style="bright_green")
+                            if rate_unit == 'MB/s':
+                                rate_line = f"{progress_info['fps'] / (1024 * 1024):.1f}MB/s"
+                            else:
+                                rate_line = f"{progress_info['fps']:.1f}{rate_unit}"
+                            line3 = Text(rate_line, style="bright_green")
                         else:
-                            line3 = Text("--fps", style="dim")
+                            placeholder = f"--{rate_unit}" if rate_unit != 'MB/s' else "--MB/s"
+                            line3 = Text(placeholder, style="dim")
                         
                         # Fourth line: ETA if available, otherwise show placeholder
                         if eta_text:
