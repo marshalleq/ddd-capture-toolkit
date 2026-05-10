@@ -173,8 +173,9 @@ class JobQueueDisplay:
                 
                 if progress_info:
                     if progress_info.get('fps', 0) > 0:
-                        # For lds-compress the "fps" field is bytes/sec - format as MB/s
-                        if job.job_type == "lds-compress":
+                        # For byte-rate jobs (lds-compress, audio-align) the "fps"
+                        # field is bytes/sec - format as MB/s
+                        if job.job_type in ("lds-compress", "audio-align"):
                             fps_text = f"{progress_info['fps'] / (1024 * 1024):.1f} MB/s"
                         else:
                             fps_text = f"{progress_info['fps']:.1f}"
