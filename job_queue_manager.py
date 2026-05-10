@@ -1938,9 +1938,13 @@ class JobQueueManager:
                     os.path.join(output_dir, base + '.flac.ldf'),
                 ]
 
-            # Estimated final output size: ~72% of input is typical for FLAC level 11
-            # on RF data. Used to convert bytes-on-disk into a percentage.
-            EXPECTED_RATIO = 0.72
+            # Estimated final output size as a fraction of input. Used to convert
+            # bytes-on-disk into a percentage. The ld-decode wiki cites ~0.70 for
+            # FLAC level 11 on RF, but observed reality on this toolkit's captures
+            # is closer to 0.80-0.86 (varies with RF noise floor and content).
+            # Bias the default toward the high end so progress doesn't hit the cap
+            # too early; the dynamic-expansion logic below handles outliers.
+            EXPECTED_RATIO = 0.85
             expected_output_bytes = int(input_size * EXPECTED_RATIO)
 
             # Stash bytes in the existing per-job progress fields. They are
@@ -1987,6 +1991,15 @@ class JobQueueManager:
                         # Compute throughput as bytes-per-second over the last interval
                         dt = current_time - last_sample_time
                         bytes_per_sec = ((current_output_bytes - last_output_bytes) / dt) if dt > 0 else 0.0
+
+                        # If the file is compressing worse than our default ratio,
+                        # extend the estimate so progress keeps moving instead of
+                        # parking at 99%. We push the estimate to current+10% so
+                        # the percentage drops a bit but resumes climbing.
+                        if expected_output_bytes > 0 and current_output_bytes > expected_output_bytes:
+                            expected_output_bytes = int(current_output_bytes * 1.10)
+                            with self.lock:
+                                job.total_frames = expected_output_bytes
 
                         # Real percentage. Cap at 99 until the process exits so we
                         # don't claim 100% before the rename / verify steps run.
