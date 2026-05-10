@@ -248,13 +248,14 @@ class ProgressDisplayUtils:
                 total_frames = 0
                 eta_seconds = None
                 
-                # For TBC export jobs, use real-time FPS if available
-                if step_type == "tbc-export":
+                # For TBC export and final-mux jobs, use real-time FPS if available.
+                # Both are ffmpeg-driven and report frame=N fps=NN on stderr.
+                if step_type in ("tbc-export", "final-mux"):
                     if hasattr(job, 'current_fps') and hasattr(job, 'total_frames'):
                         fps = getattr(job, 'current_fps', 0)
                         total_frames = getattr(job, 'total_frames', 0)
                         current_frame = getattr(job, 'current_frame', 0)
-                        
+
                         if fps > 0 and total_frames > 0 and current_frame > 0:
                             remaining_frames = total_frames - current_frame
                             eta_seconds = int(remaining_frames / fps)
