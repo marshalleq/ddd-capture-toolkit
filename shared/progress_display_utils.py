@@ -259,10 +259,10 @@ class ProgressDisplayUtils:
                             remaining_frames = total_frames - current_frame
                             eta_seconds = int(remaining_frames / fps)
                 
-                # For LDS compress jobs, current_fps is bytes/sec, total_frames
-                # and current_frame are bytes (output file size). Units cancel
-                # in the ETA calculation, so the same shape works.
-                elif step_type == "lds-compress":
+                # For LDS compress and audio-align jobs, current_fps is bytes/sec,
+                # total_frames and current_frame are bytes (output file size).
+                # Units cancel in the ETA calculation, so the same shape works.
+                elif step_type in ("lds-compress", "audio-align"):
                     if hasattr(job, 'current_fps') and hasattr(job, 'total_frames'):
                         fps = getattr(job, 'current_fps', 0)  # bytes/sec
                         total_frames = getattr(job, 'total_frames', 0)  # expected bytes
@@ -290,7 +290,7 @@ class ProgressDisplayUtils:
 
                 # Track which job type this is so the formatter can render the
                 # rate field with the right unit (frames/sec vs MB/s).
-                rate_unit_label = "MB/s" if step_type == "lds-compress" else "fps"
+                rate_unit_label = "MB/s" if step_type in ("lds-compress", "audio-align") else "fps"
 
                 # Fallback ETA calculation using progress rate
                 if eta_seconds is None and runtime_seconds > 30 and progress_percentage > 0:
