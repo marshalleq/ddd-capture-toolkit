@@ -1680,37 +1680,77 @@ class JobQueueManager:
             self.job_processes[job.job_id] = process
 
             self.logger.info(f"Started FFmpeg process with PID: {process.pid}")
-            
+
+            # Probe the input video for total frame count so we can compute a real
+            # percentage and ETA. ffprobe is fast (~50ms) and one-shot.
+            total_frames = 0
+            try:
+                probe_cmd = [
+                    'ffprobe', '-v', 'error',
+                    '-select_streams', 'v:0',
+                    '-count_packets',
+                    '-show_entries', 'stream=nb_read_packets',
+                    '-of', 'csv=p=0',
+                    video_file
+                ]
+                probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=15)
+                if probe_result.returncode == 0:
+                    probe_str = probe_result.stdout.strip()
+                    if probe_str.isdigit():
+                        total_frames = int(probe_str)
+                        self.logger.info(f"Final mux: input has {total_frames} video packets/frames")
+            except Exception as e:
+                self.logger.debug(f"ffprobe for total frames failed: {e}")
+
+            with self.lock:
+                job.total_frames = total_frames
+                job.current_frame = 0
+                job.current_fps = 0.0
+
             # Monitor FFmpeg output for progress
+            import re as _re_mux
             stderr_lines = []
-            
+            mux_start_time = time.time()
+
             while True:
                 return_code = process.poll()
-                
+
                 # Read stderr output from FFmpeg
                 try:
                     stderr_line = process.stderr.readline()
                     if stderr_line:
                         stderr_lines.append(stderr_line.strip())
                         self.logger.debug(f"FFmpeg stderr: {stderr_line.strip()}")
-                        
-                        # Look for progress indicators in FFmpeg output
-                        if 'time=' in stderr_line or 'frame=' in stderr_line:
-                            # Update progress occasionally
-                            current_time = time.time()
+
+                        # Parse FFmpeg's "frame=N fps=NN" progress lines
+                        frame_match = _re_mux.search(r'frame=\s*(\d+)', stderr_line)
+                        if frame_match:
+                            new_frame = int(frame_match.group(1))
+                            fps_match = _re_mux.search(r'fps=\s*([0-9.]+)', stderr_line)
+                            new_fps = float(fps_match.group(1)) if fps_match else 0.0
+
                             try:
                                 with self.lock:
-                                    job.progress = min(job.progress + 2.0, 85.0)
+                                    job.current_frame = new_frame
+                                    job.current_fps = new_fps
+                                    if total_frames > 0:
+                                        # Cap at 99% until process exits + size validation
+                                        job.progress = min((new_frame / total_frames) * 100.0, 99.0)
+                                    else:
+                                        # No total known: hold at a safe placeholder
+                                        # rather than the old 2%-per-line guess.
+                                        if job.progress < 5.0:
+                                            job.progress = 5.0
                             except Exception:
-                                pass  # Continue if we can't update progress
-                
+                                pass
+
                 except Exception as e:
                     self.logger.debug(f"Error reading FFmpeg output: {e}")
-                
+
                 # Check if process has finished
                 if return_code is not None:
                     break
-                
+
                 # Small delay to avoid busy waiting
                 time.sleep(0.1)
             
