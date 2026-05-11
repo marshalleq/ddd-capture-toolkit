@@ -11,7 +11,7 @@ from typing import List, Dict, Optional, Set
 from dataclasses import dataclass
 
 try:
-    from rich.console import Console
+    from rich.console import Console, Group
     from rich.table import Table
     from rich.text import Text
     from rich.live import Live
@@ -29,7 +29,7 @@ except ImportError:
 from project_discovery import Project, ProjectDiscovery
 from workflow_analyzer import WorkflowAnalyzer, WorkflowStep, StepStatus, WorkflowStatus
 from job_queue_manager import JobQueueManager
-from shared.progress_display_utils import ProgressDisplayUtils
+from shared.progress_display_utils import ProgressDisplayUtils, AutoSizingProgressBar
 from project_flags import ProjectFlagsManager
 
 @dataclass
@@ -189,70 +189,48 @@ class ProjectStatusDisplay:
                     if progress_info:
                         if debug_enabled:
                             self._debug_log(f"Creating progress display with {progress_info.get('percentage', 0)}% progress")
-                        
-                        # Show progress bar for any running job, even at 0%
-                        progress_bar = ProgressDisplayUtils.create_progress_bar(
-                            progress_info['percentage'], width=11)  # Fit column width
-                        
-                        # Format rate (FPS or MB/s depending on job type) if available
-                        fps_text = ""
-                        if progress_info.get('fps') and progress_info['fps'] > 0:
-                            rate_unit = progress_info.get('rate_unit_label', 'fps')
-                            if rate_unit == 'MB/s':
-                                fps_text = f" {progress_info['fps'] / (1024 * 1024):.1f}MB/s"
-                            else:
-                                fps_text = f" {progress_info['fps']:.1f}{rate_unit}"
-                        
-                        # Calculate ETA if we have enough data
-                        eta_text = ""
-                        if (progress_info.get('fps') and progress_info['fps'] > 0 and 
-                            progress_info.get('percentage', 0) > 0):
-                            remaining_percent = 100 - progress_info['percentage']
-                            if progress_info.get('runtime_seconds', 0) > 30:  # Only show ETA after 30 seconds
-                                eta_seconds = (remaining_percent / progress_info['percentage']) * progress_info['runtime_seconds']
-                                if eta_seconds > 0:
-                                    eta_text = f"ETA {ProgressDisplayUtils.format_time(int(eta_seconds))}"
-                        
-                        # For new jobs with no progress yet, show "Starting..." in ETA line
-                        if not eta_text and progress_info.get('runtime_seconds', 0) < 30:
-                            eta_text = "Starting..."
-                        
-                        # Assemble multi-line cell (4 lines total for better info display)
-                        line1 = Text(progress_bar, style="green")
-                        
-                        # Second line: percentage
-                        percentage_line = f"{progress_info['percentage']:.1f}%"
-                        line2 = Text(percentage_line, style="cyan")
-                        
-                        # Third line: rate (FPS or MB/s depending on job type) if available
+
+                        # Auto-sizing bar fills whatever width Rich allocates
+                        # to the cell, so it stays in sync with the percentage
+                        # text even when the window is narrow.
+                        bar = AutoSizingProgressBar(progress_info['percentage'])
+
+                        # Percentage line
+                        percentage_line = Text(
+                            f"{progress_info['percentage']:.1f}%",
+                            style="cyan", no_wrap=True, overflow="crop",
+                        )
+
+                        # Rate line (FPS or MB/s depending on job type)
                         rate_unit = progress_info.get('rate_unit_label', 'fps')
                         if progress_info.get('fps') and progress_info['fps'] > 0:
                             if rate_unit == 'MB/s':
-                                rate_line = f"{progress_info['fps'] / (1024 * 1024):.1f}MB/s"
+                                rate_str = f"{progress_info['fps'] / (1024 * 1024):.1f}MB/s"
                             else:
-                                rate_line = f"{progress_info['fps']:.1f}{rate_unit}"
-                            line3 = Text(rate_line, style="bright_green")
+                                rate_str = f"{progress_info['fps']:.1f}{rate_unit}"
+                            rate_line = Text(rate_str, style="bright_green", no_wrap=True, overflow="crop")
                         else:
                             placeholder = f"--{rate_unit}" if rate_unit != 'MB/s' else "--MB/s"
-                            line3 = Text(placeholder, style="dim")
-                        
-                        # Fourth line: ETA if available, otherwise show placeholder
+                            rate_line = Text(placeholder, style="dim", no_wrap=True, overflow="crop")
+
+                        # ETA line
+                        eta_text = ""
+                        if (progress_info.get('fps') and progress_info['fps'] > 0 and
+                            progress_info.get('percentage', 0) > 0):
+                            remaining_percent = 100 - progress_info['percentage']
+                            if progress_info.get('runtime_seconds', 0) > 30:
+                                eta_seconds = (remaining_percent / progress_info['percentage']) * progress_info['runtime_seconds']
+                                if eta_seconds > 0:
+                                    eta_text = f"ETA {ProgressDisplayUtils.format_time(int(eta_seconds))}"
+                        if not eta_text and progress_info.get('runtime_seconds', 0) < 30:
+                            eta_text = "Starting..."
+
                         if eta_text:
-                            line4 = Text(eta_text, style="yellow")
+                            eta_line = Text(eta_text, style="yellow", no_wrap=True, overflow="crop")
                         else:
-                            line4 = Text("ETA: --:--", style="dim")  # Show placeholder for ETA
-                        
-                        # Create multi-line text with consistent spacing (4 lines)
-                        multiline_text = Text()
-                        multiline_text.append_text(line1)
-                        multiline_text.append("\n")
-                        multiline_text.append_text(line2) 
-                        multiline_text.append("\n")
-                        multiline_text.append_text(line3)
-                        multiline_text.append("\n")
-                        multiline_text.append_text(line4)
-                        
-                        return multiline_text
+                            eta_line = Text("ETA: --:--", style="dim", no_wrap=True, overflow="crop")
+
+                        return Group(bar, percentage_line, rate_line, eta_line)
                         
                 except Exception as e:
                     if debug_enabled:
