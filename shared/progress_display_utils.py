@@ -12,6 +12,66 @@ import sys
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, List
 
+try:
+    from rich.text import Text
+    from rich.measure import Measurement
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+
+
+class AutoSizingProgressBar:
+    """Rich renderable that draws a fill-style progress bar matching the
+    cell width allocated at render time.
+
+    The previous fixed-width bar string would wrap when a Rich Table column
+    auto-shrank in narrow windows, causing the first wrapped line (which is
+    almost entirely the filled portion) to look much fuller than the actual
+    progress. This renderable instead sizes itself to options.max_width, so
+    it always reflects the real percentage at any column width.
+
+    Uses Unicode 1/8-block partial characters (▏▎▍▌▋▊▉█) so each cell can
+    represent 8 fill levels, giving 8x the resolution of whole-block bars.
+    """
+
+    # Index 0 = no partial fill, 1..7 = increasing fractional fill from left.
+    # U+258F LEFT ONE EIGHTH BLOCK ... U+2589 LEFT SEVEN EIGHTHS BLOCK
+    _EIGHTHS = ("", "▏", "▎", "▍", "▌", "▋", "▊", "▉")
+
+    def __init__(
+        self,
+        percentage: float,
+        filled_char: str = "█",  # full block
+        empty_char: str = "░",   # light shade
+        style: str = "green",
+    ):
+        if percentage < 0:
+            percentage = 0.0
+        elif percentage > 100:
+            percentage = 100.0
+        self.percentage = percentage
+        self.filled_char = filled_char
+        self.empty_char = empty_char
+        self.style = style
+
+    def __rich_console__(self, console, options):
+        width = max(options.max_width, 1)
+        fill = (self.percentage / 100.0) * width
+        whole = int(fill)
+        partial_idx = int((fill - whole) * 8)
+
+        if whole >= width:
+            bar = self.filled_char * width
+        else:
+            partial_char = self._EIGHTHS[partial_idx]
+            empty_count = width - whole - (1 if partial_char else 0)
+            bar = self.filled_char * whole + partial_char + self.empty_char * empty_count
+
+        yield Text(bar, style=self.style, no_wrap=True, overflow="crop")
+
+    def __rich_measure__(self, console, options):
+        return Measurement(1, options.max_width)
+
 # Import job queue components for progress extraction
 try:
     from job_queue_manager import get_job_queue_manager, JobStatus, QueuedJob
