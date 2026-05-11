@@ -2739,6 +2739,7 @@ def capture_new_video(return_to_calibration=False):
             print("  *** CALIBRATION MODE: ON ***")
             print("  Audio delay disabled (0.000s)")
             print("  Project name fixed to 'calibration'")
+            print("  Output written to project temp/ (not the configured capture directory)")
             print()
             print("  Turn calibration mode OFF for normal captures.")
             print()
