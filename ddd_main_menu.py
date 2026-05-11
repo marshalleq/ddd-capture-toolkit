@@ -3943,23 +3943,43 @@ def analyze_v2_calibration_video(video_file, audio_file):
     print("  Scanning video for visual timecodes (first cycle only)...")
     video_tc_map = {}  # timecode -> video_frame_position
     first_cycle_frames = int(62 * fps)  # 62 second cycle
+    frames_to_read = min(total_frames, first_cycle_frames)
 
-    for frame_num in range(0, min(total_frames, first_cycle_frames)):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-        ret, frame = cap.read()
-        if not ret:
-            continue
+    # Read frames via ffmpeg pipe instead of cv2.VideoCapture.read().
+    # OpenCV's swscaler refuses 10-bit interlaced YUV -> progressive BGR,
+    # which is exactly what tbc-video-export FFV1 captures produce. Piping
+    # through ffmpeg with `yadif` deinterlacing avoids the issue entirely
+    # and is also faster (sequential stream, no per-frame seek).
+    cap.release()  # cv2 only needed for metadata above
 
-        try:
-            result, confidence, status = decoder.decode_frame_with_validation(frame)
-            if status == 'OK' and isinstance(result, int) and result < 800:
-                if result not in video_tc_map:
-                    video_tc_map[result] = frame_num
-        except:
-            pass
+    ffmpeg_cmd = [
+        'ffmpeg', '-hide_banner', '-loglevel', 'error',
+        '-i', video_file,
+        '-vf', 'yadif=0:-1:0',          # deinterlace, one output frame per input frame
+        '-frames:v', str(frames_to_read),
+        '-pix_fmt', 'bgr24',
+        '-f', 'rawvideo', '-',
+    ]
+    frame_bytes = width * height * 3
+    proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        for frame_num in range(frames_to_read):
+            data = proc.stdout.read(frame_bytes)
+            if len(data) < frame_bytes:
+                break
+            frame = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
+            try:
+                result, confidence, status = decoder.decode_frame_with_validation(frame)
+                if status == 'OK' and isinstance(result, int) and result < 800:
+                    if result not in video_tc_map:
+                        video_tc_map[result] = frame_num
+            except:
+                pass
+    finally:
+        proc.stdout.close()
+        proc.wait()
 
     print(f"  Found {len(video_tc_map)} unique visual timecodes")
-    cap.release()
 
     if len(video_tc_map) < 10:
         print("ERROR: Insufficient visual timecodes decoded from video")
