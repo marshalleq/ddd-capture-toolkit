@@ -2532,8 +2532,13 @@ def start_capture_and_record():
     config = load_config()
     calibration_mode = config.get('calibration_mode', False)
 
-    # Use configured capture directory for actual captures (not temp folder)
-    capture_folder = get_capture_folder()
+    # Calibration captures always go to the project temp folder so that
+    # analyze_v2_calibration() can find them. Normal captures use the
+    # user-configured capture directory.
+    if calibration_mode:
+        capture_folder = get_temp_folder()
+    else:
+        capture_folder = get_capture_folder()
     if not os.path.exists(capture_folder):
         os.makedirs(capture_folder)
         print(f"Created capture folder: {capture_folder}")
@@ -2545,6 +2550,7 @@ def start_capture_and_record():
         print("CALIBRATION MODE ACTIVE")
         print("Audio delay disabled (0.000s) for offset measurement")
         print(f"Using fixed project name: {capture_name}")
+        print(f"Output folder (temp): {capture_folder}")
         print("="*50 + "\n")
 
         # Check for existing calibration files (all stages of workflow)
