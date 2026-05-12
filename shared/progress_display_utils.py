@@ -605,12 +605,17 @@ def extract_specific_job_progress_info(job_manager, project_name: str, step_type
     if fps and fps > 0 and total_frames > 0 and current_frame > 0:
         remaining_frames = total_frames - current_frame
         eta_seconds = int(remaining_frames / fps)
-    
+
+    # For byte-rate jobs the `fps` field carries bytes/sec, so the cell
+    # renderer needs to format it as MB/s rather than frames/sec.
+    rate_unit_label = "MB/s" if step_type in ("lds-compress", "audio-align") else "fps"
+
     return {
         'percentage': progress_percentage,
         'fps': fps,
         'eta_seconds': eta_seconds,
         'runtime_seconds': runtime_seconds,
         'current_frame': current_frame,
-        'total_frames': total_frames
+        'total_frames': total_frames,
+        'rate_unit_label': rate_unit_label,
     }

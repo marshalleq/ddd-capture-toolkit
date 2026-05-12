@@ -2755,13 +2755,17 @@ def capture_new_video(return_to_calibration=False):
             print("  2. Turn Calibration Mode OFF")
         else:
             print("  2. Turn Calibration Mode ON")
+        if sys.platform == 'linux':
+            print("  3. Free compressed RAM (zram)  — recommended before long captures")
+            print("  4. Drain disk swap              — recommended before long captures")
         print()
         if return_to_calibration:
             print("  e. Return to Calibration Menu")
         else:
             print("  e. Return to Main Menu")
 
-        selection = input("\nSelect option (1-2/e): ").strip().lower()
+        prompt_range = "1-4/e" if sys.platform == 'linux' else "1-2/e"
+        selection = input(f"\nSelect option ({prompt_range}): ").strip().lower()
 
         if selection == '1':
             # Start capture
@@ -2775,11 +2779,206 @@ def capture_new_video(return_to_calibration=False):
         elif selection == '2':
             # Toggle calibration mode - menu refreshes to show new state
             toggle_calibration_mode()
+        elif selection == '3' and sys.platform == 'linux':
+            drain_zram_only()
+        elif selection == '4' and sys.platform == 'linux':
+            drain_disk_swap_only()
         elif selection == 'e':
             break
         else:
             print("Invalid selection.")
             time.sleep(1)
+
+
+def _get_swap_devices():
+    """Return list of (path, type_label) for active swap devices.
+
+    type_label is 'zram' for /dev/zramN entries, 'disk' for anything else.
+    """
+    devices = []
+    try:
+        with open('/proc/swaps') as f:
+            next(f, None)  # skip header
+            for line in f:
+                parts = line.split()
+                if not parts:
+                    continue
+                path = parts[0]
+                kind = 'zram' if path.startswith('/dev/zram') else 'disk'
+                devices.append((path, kind))
+    except Exception:
+        pass
+    return devices
+
+
+def _print_swap_state(label):
+    print(f"{label}:")
+    try:
+        out = subprocess.check_output(['cat', '/proc/swaps'], text=True)
+        for line in out.strip().split('\n'):
+            print(f"  {line}")
+    except Exception:
+        pass
+
+
+def _drain_swap_devices(devices, label):
+    """Helper: swapoff then swapon each given device path. Requires sudo."""
+    if not devices:
+        print(f"No {label} swap devices are currently active. Nothing to do.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print(f"\nDraining {label} swap (you may be prompted for your sudo password)...")
+    # Build a single shell command so sudo only prompts once.
+    cmds = []
+    for path, _ in devices:
+        cmds.append(f"swapoff '{path}'")
+        cmds.append(f"swapon '{path}'")
+    combined = ' && '.join(cmds)
+    try:
+        result = subprocess.run(['sudo', 'sh', '-c', combined], check=False)
+        if result.returncode != 0:
+            print(f"\nCommand returned non-zero exit code: {result.returncode}")
+            print("Swap may not have been fully drained.")
+            input("\nPress Enter to return to menu...")
+            return
+    except Exception as e:
+        print(f"\nError running command: {e}")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print()
+    _print_swap_state(f"New state after draining {label}")
+    print()
+    print("Tip: start the capture now while the cache is fresh.")
+    input("\nPress Enter to return to menu...")
+
+
+def drain_zram_only():
+    """Drain Linux zram (compressed RAM swap) back to uncompressed RAM.
+
+    Why this helps DDD captures:
+    On Fedora and many other Linux distros, the kernel routes "cold" memory
+    pages to /dev/zram0, where they live compressed inside RAM. After the
+    desktop session has been up for hours (Firefox, KDE PIM, etc.) this
+    accumulates to hundreds of MB. The kernel must decompress those pages
+    on demand whenever something touches them - which adds scheduler
+    latency that can starve the DDD USB read thread and the sox audio
+    capture, producing "Sequence number mismatch / buffer underflow".
+
+    Draining zram via swapoff/swapon forces all compressed pages back into
+    uncompressed RAM (you typically have plenty), and zram starts empty
+    again. Combined with vm.swappiness=10 it re-accumulates much more
+    slowly, so a single drain before a long capture usually keeps the
+    system clean for the duration.
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nFREE COMPRESSED RAM (zram)")
+    print("=" * 50)
+    print("Drains compressed memory pages from /dev/zram* back into")
+    print("uncompressed RAM, then re-enables zram empty.")
+    print()
+    print("Why it helps:")
+    print("  Long captures (DDD + sox) need predictable scheduling.")
+    print("  When zram fills up, the kernel pays a decompression cost")
+    print("  on every page fault, which can stall the USB read thread")
+    print("  long enough to drop FX3 packets ('Sequence number mismatch')")
+    print("  or trigger 'sox WARN alsa: over-run'.")
+    print()
+    print("When to use:")
+    print("  - Before any capture longer than ~30 minutes")
+    print("  - Whenever the system has been up for several hours")
+    print("  - After heavy desktop / browser use")
+    print()
+    print("Safety:")
+    print("  - Requires sudo (you will be prompted for password)")
+    print("  - Takes ~10-60 seconds depending on how much is compressed")
+    print("  - Non-destructive: pages move from zram to RAM, nothing is lost")
+    print()
+    _print_swap_state("Current swap state")
+    print()
+
+    zram_devices = [d for d in _get_swap_devices() if d[1] == 'zram']
+    if not zram_devices:
+        print("No active zram devices found. Nothing to drain.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    confirm = input("Proceed? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    _drain_swap_devices(zram_devices, 'zram')
+
+
+def drain_disk_swap_only():
+    """Drain Linux disk swap (e.g. NVMe swap partition) back to RAM.
+
+    Why this helps DDD captures:
+    Disk swap lives on real storage - typically the NVMe partition. Pages
+    that get pushed there must be read back over the storage bus every
+    time something touches them, which competes for I/O bandwidth and
+    queue depth with the capture's writes (especially relevant when the
+    capture destination is on the same physical disk, but even on a
+    separate USB SSD it adds scheduler latency).
+
+    On systems with zram, disk swap is typically only used as overflow
+    once zram fills, so it's often nearly empty - but if you've had
+    sustained memory pressure (large decode jobs, many browser tabs)
+    pages can spill onto it and stay there even after RAM clears up.
+    Draining forces them back into uncompressed RAM.
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nDRAIN DISK SWAP")
+    print("=" * 50)
+    print("Drains swap pages from any disk-backed swap partition")
+    print("(e.g. /dev/nvme0n1p3) back into uncompressed RAM,")
+    print("then re-enables the swap partition empty.")
+    print()
+    print("Why it helps:")
+    print("  Disk swap activity competes with the capture for I/O")
+    print("  and storage queue depth, and accessing swapped-out")
+    print("  pages adds disk read latency to the scheduler path.")
+    print("  Even small amounts of swap-in/swap-out activity during")
+    print("  a long capture can produce the same scheduler stalls")
+    print("  that cause FX3 sequence drops and sox over-runs.")
+    print()
+    print("When to use:")
+    print("  - Before any capture longer than ~30 minutes")
+    print("  - After running heavy decode/export/compress jobs")
+    print("  - Whenever 'cat /proc/swaps' shows non-zero use on a")
+    print("    disk partition")
+    print()
+    print("Safety:")
+    print("  - Requires sudo (you will be prompted for password)")
+    print("  - Takes a few seconds to a minute depending on usage")
+    print("  - Non-destructive: pages move from disk back to RAM")
+    print()
+    _print_swap_state("Current swap state")
+    print()
+
+    disk_devices = [d for d in _get_swap_devices() if d[1] == 'disk']
+    if not disk_devices:
+        print("No active disk swap devices found. Nothing to drain.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    confirm = input("Proceed? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    _drain_swap_devices(disk_devices, 'disk')
+
 
 def display_robust_timecode_menu():
     """Display the V2 timecode calibration workflow"""
