@@ -2756,15 +2756,17 @@ def capture_new_video(return_to_calibration=False):
         else:
             print("  2. Turn Calibration Mode ON")
         if sys.platform == 'linux':
-            print("  3. Free compressed RAM (zram)  — recommended before long captures")
-            print("  4. Drain disk swap              — recommended before long captures")
+            print("  3. Free compressed RAM (zram)")
+            print("  4. Drain disk swap")
+            print("  5. Apply USB buffer fix       (usbcore.usbfs_memory_mb=1000)")
+            print("  6. Apply swappiness fix       (vm.swappiness=10)")
         print()
         if return_to_calibration:
             print("  e. Return to Calibration Menu")
         else:
             print("  e. Return to Main Menu")
 
-        prompt_range = "1-4/e" if sys.platform == 'linux' else "1-2/e"
+        prompt_range = "1-6/e" if sys.platform == 'linux' else "1-2/e"
         selection = input(f"\nSelect option ({prompt_range}): ").strip().lower()
 
         if selection == '1':
@@ -2783,11 +2785,217 @@ def capture_new_video(return_to_calibration=False):
             drain_zram_only()
         elif selection == '4' and sys.platform == 'linux':
             drain_disk_swap_only()
+        elif selection == '5' and sys.platform == 'linux':
+            apply_usbfs_memory_fix()
+        elif selection == '6' and sys.platform == 'linux':
+            apply_swappiness_fix()
         elif selection == 'e':
             break
         else:
             print("Invalid selection.")
             time.sleep(1)
+
+
+def _read_sysfs(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+
+def _current_sysctl(name):
+    try:
+        return subprocess.check_output(['sysctl', '-n', name], text=True).strip()
+    except Exception:
+        return None
+
+
+def apply_usbfs_memory_fix():
+    """Apply and persist usbcore.usbfs_memory_mb=1000.
+
+    Why this might fix FX3 sequence drops:
+    libusb URB buffer cap. The default of 16 MB gives only ~400 ms of
+    buffering for a 40 MB/s DDD stream; any host stall longer than that
+    causes the FX3 to drop packets ('Sequence number mismatch'). Raising
+    to 1000 MB gives ~25 seconds of headroom, which absorbs anything
+    short of a system freeze. Memory is only allocated when libusb
+    actually queues that many URBs, so the cap is harmless on a 32 GB+
+    system.
+
+    Persistence:
+    usbcore is built into the kernel on Fedora/RHEL, so /etc/modprobe.d/
+    is silently ignored. The correct mechanism is the kernel command line,
+    which on Fedora is managed by `grubby`. Live change takes effect
+    immediately; the grubby change ensures the value sticks across reboots.
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nAPPLY USB BUFFER FIX")
+    print("=" * 50)
+    print("Setting: usbcore.usbfs_memory_mb = 1000")
+    print()
+    print("Why this might help:")
+    print("  The FX3 chip in the DDD streams ~40 MB/s. libusb queues")
+    print("  pre-allocated 'URB' buffers for the kernel to drop incoming")
+    print("  data into. The default cap on total URB memory is 16 MB,")
+    print("  which is only ~400 ms of headroom - any host-side stall")
+    print("  longer than that fills the queue and the FX3 must drop")
+    print("  packets, surfacing as 'Sequence number mismatch'. Raising")
+    print("  the cap to 1000 MB gives ~25 seconds of headroom.")
+    print()
+    print("This option:")
+    print("  1) Live: writes 1000 to")
+    print("     /sys/module/usbcore/parameters/usbfs_memory_mb")
+    print("     (effective immediately, no reboot)")
+    print("  2) Persistent: adds 'usbcore.usbfs_memory_mb=1000' to the")
+    print("     kernel command line via grubby")
+    print("     (usbcore is built into the kernel on this system, so")
+    print("      /etc/modprobe.d/usbcore.conf does NOT work - kernel")
+    print("      cmdline is the only mechanism that survives a reboot)")
+    print()
+    print("Requires sudo. Linux only.")
+    print()
+
+    usbfs_now = _read_sysfs('/sys/module/usbcore/parameters/usbfs_memory_mb')
+    status = "OK" if usbfs_now == '1000' else f"(currently {usbfs_now}, will become 1000)"
+    print(f"Current value: usbcore.usbfs_memory_mb = {usbfs_now or '?'}  {status}")
+    print()
+
+    have_grubby = bool(shutil.which('grubby'))
+    if not have_grubby:
+        print("Note: 'grubby' is not installed. The live setting will still")
+        print("apply, but the kernel cmdline change can't be made automatically.")
+        print("To persist manually, edit GRUB_CMDLINE_LINUX in /etc/default/grub")
+        print("to include 'usbcore.usbfs_memory_mb=1000' and regenerate grub.cfg.")
+        print()
+
+    confirm = input("Apply now? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print()
+    print("Applying live (you may be prompted for your sudo password)...")
+    r = subprocess.run(
+        ['sudo', 'sh', '-c', 'echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb'],
+        check=False,
+    )
+    if r.returncode == 0:
+        print("  [OK]   usbcore.usbfs_memory_mb = 1000 (live)")
+    else:
+        print(f"  [FAIL] live write returned exit {r.returncode}")
+
+    print()
+    print("Persisting across reboots...")
+    if have_grubby:
+        r = subprocess.run(
+            ['sudo', 'grubby', '--update-kernel=ALL',
+             '--args=usbcore.usbfs_memory_mb=1000'],
+            check=False,
+        )
+        if r.returncode == 0:
+            print("  [OK]   kernel cmdline updated (takes effect next reboot)")
+        else:
+            print(f"  [FAIL] grubby returned exit {r.returncode}")
+    else:
+        print("  [SKIP] kernel cmdline (grubby not found)")
+
+    print()
+    usbfs_after = _read_sysfs('/sys/module/usbcore/parameters/usbfs_memory_mb')
+    print(f"Verification: usbcore.usbfs_memory_mb = {usbfs_after or '?'}")
+    print()
+    print("Done. Live setting is active now. To validate the fix, start a")
+    print("capture in the same session. Reboot then re-run to confirm the")
+    print("kernel cmdline change persisted.")
+    input("\nPress Enter to return to menu...")
+
+
+def apply_swappiness_fix():
+    """Apply and persist vm.swappiness=10.
+
+    Why this might fix capture stalls:
+    Default swappiness is 60, which aggressively migrates cold memory
+    pages to swap (which on most modern distros means zram - compressed
+    RAM). Decompression on page fault adds scheduler latency that can
+    stall the USB read thread enough to fill the URB queue and cause
+    FX3 packet drops. Lowering swappiness to 10 leaves cold pages in
+    uncompressed RAM unless the system is genuinely memory-pressured.
+
+    Persistence:
+    /etc/sysctl.d/ is read at every boot, so a file there reliably
+    re-applies the setting. The default Fedora install reads files
+    matching /etc/sysctl.d/*.conf via systemd-sysctl.service.
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nAPPLY SWAPPINESS FIX")
+    print("=" * 50)
+    print("Setting: vm.swappiness = 10")
+    print()
+    print("Why this might help:")
+    print("  Default swappiness (60) aggressively pages cold memory to")
+    print("  zram (compressed RAM swap on modern distros). Reading those")
+    print("  pages back requires decompression, which adds scheduler")
+    print("  latency that can stall the DDD USB read thread long enough")
+    print("  to fill the URB queue and drop FX3 packets. Swappiness 10")
+    print("  leaves cold pages in real RAM unless the system is genuinely")
+    print("  running out of memory.")
+    print()
+    print("This option:")
+    print("  1) Live: runs `sysctl vm.swappiness=10`")
+    print("     (effective immediately, no reboot)")
+    print("  2) Persistent: writes /etc/sysctl.d/99-swappiness.conf")
+    print("     (systemd-sysctl re-applies on every boot)")
+    print()
+    print("Requires sudo. Linux only.")
+    print()
+
+    swap_now = _current_sysctl('vm.swappiness')
+    status = "OK" if swap_now == '10' else f"(currently {swap_now}, will become 10)"
+    print(f"Current value: vm.swappiness = {swap_now or '?'}  {status}")
+    print()
+
+    confirm = input("Apply now? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print()
+    print("Applying live (you may be prompted for your sudo password)...")
+    r = subprocess.run(['sudo', 'sysctl', 'vm.swappiness=10'], check=False,
+                       stdout=subprocess.DEVNULL)
+    if r.returncode == 0:
+        print("  [OK]   vm.swappiness = 10 (live)")
+    else:
+        print(f"  [FAIL] sysctl returned exit {r.returncode}")
+
+    print()
+    print("Persisting across reboots...")
+    r = subprocess.run(
+        ['sudo', 'sh', '-c',
+         "echo 'vm.swappiness=10' > /etc/sysctl.d/99-swappiness.conf"],
+        check=False,
+    )
+    if r.returncode == 0:
+        print("  [OK]   /etc/sysctl.d/99-swappiness.conf written")
+    else:
+        print(f"  [FAIL] writing sysctl.d returned exit {r.returncode}")
+
+    print()
+    swap_after = _current_sysctl('vm.swappiness')
+    print(f"Verification: vm.swappiness = {swap_after or '?'}")
+    print()
+    print("Done. Live setting is active now. To validate the fix, start a")
+    print("capture in the same session. Reboot then re-run to confirm the")
+    print("/etc/sysctl.d/ file persisted.")
+    input("\nPress Enter to return to menu...")
 
 
 def _get_swap_devices():
