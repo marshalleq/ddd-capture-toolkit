@@ -2758,15 +2758,17 @@ def capture_new_video(return_to_calibration=False):
         if sys.platform == 'linux':
             print("  3. Free compressed RAM (zram)")
             print("  4. Drain disk swap")
-            print("  5. Apply USB buffer fix       (usbcore.usbfs_memory_mb=1000)")
-            print("  6. Apply swappiness fix       (vm.swappiness=10)")
+            print("  5. Apply USB buffer fix       (usbcore.usbfs_memory_mb=1000) [persistent]")
+            print("  6. Apply swappiness fix       (vm.swappiness=10)             [persistent]")
+            print("  7. Apply dirty-page bg fix    (vm.dirty_background_ratio=1)  [live only]")
+            print("  8. Apply dirty-page hard fix  (vm.dirty_ratio=2)             [live only]")
         print()
         if return_to_calibration:
             print("  e. Return to Calibration Menu")
         else:
             print("  e. Return to Main Menu")
 
-        prompt_range = "1-6/e" if sys.platform == 'linux' else "1-2/e"
+        prompt_range = "1-8/e" if sys.platform == 'linux' else "1-2/e"
         selection = input(f"\nSelect option ({prompt_range}): ").strip().lower()
 
         if selection == '1':
@@ -2789,11 +2791,184 @@ def capture_new_video(return_to_calibration=False):
             apply_usbfs_memory_fix()
         elif selection == '6' and sys.platform == 'linux':
             apply_swappiness_fix()
+        elif selection == '7' and sys.platform == 'linux':
+            apply_dirty_background_fix()
+        elif selection == '8' and sys.platform == 'linux':
+            apply_dirty_ratio_fix()
         elif selection == 'e':
             break
         else:
             print("Invalid selection.")
             time.sleep(1)
+
+
+def apply_dirty_background_fix():
+    """Set vm.dirty_background_ratio=1 (live only, no persistence).
+
+    Why this might fix multi-hour capture failures:
+    By default the kernel waits until 10% of available memory (~3 GB on
+    31 GB RAM) is dirty before background flusher threads start writing
+    pages out. That means the kernel may let a large backlog of capture
+    data accumulate in RAM, then drain it to the external SSD in one
+    big burst that the drive can't absorb quickly (especially once the
+    SLC cache is exhausted, ~144 GB into the capture). The big-burst
+    drain can stall write() calls for many seconds, which eventually
+    overflows the URB queue and the FX3 drops packets.
+
+    Lowering to 1% (~310 MB) makes the kernel start streaming small
+    flushes continuously, so the SSD never has to absorb a big burst.
+
+    Pair with option 8 (vm.dirty_ratio=2) for full effect: without the
+    matching hard cap, the kernel still allows up to dirty_ratio % of
+    memory before forcing synchronous writeback.
+
+    Live only - reverts on reboot (deliberate for testing). When the
+    right combination is confirmed, I can add a 'make persistent'
+    option that writes /etc/sysctl.d/99-dirty-*.conf.
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nAPPLY DIRTY-PAGE BACKGROUND FLUSH THRESHOLD")
+    print("=" * 50)
+    print("Setting: vm.dirty_background_ratio = 1")
+    print()
+    print("Why this might help (paired with option 8):")
+    print("  Default is 10% of RAM (~3 GB on 31 GB). The kernel lets")
+    print("  that much capture data accumulate before background flush")
+    print("  starts. When it does flush, it tries to drain everything")
+    print("  to the external SSD at once - and after the SLC cache is")
+    print("  exhausted (~1 hour into a capture, ~144 GB written) the")
+    print("  SSD can't absorb that burst, stalling write() for seconds.")
+    print("  Long enough to overflow the URB buffer and drop FX3 packets.")
+    print()
+    print("  Lowering to 1% (~310 MB) makes background flush trigger")
+    print("  early and often, streaming small batches that the SSD can")
+    print("  absorb without ever stalling.")
+    print()
+    print("Pair with option 8 for full effect.")
+    print()
+    print("This option:")
+    print("  - Live: runs `sysctl vm.dirty_background_ratio=1`")
+    print("  - Does NOT persist across reboot (deliberate for testing)")
+    print()
+
+    current = _current_sysctl('vm.dirty_background_ratio')
+    status = "OK" if current == '1' else f"(currently {current}, will become 1)"
+    print(f"Current value: vm.dirty_background_ratio = {current or '?'}  {status}")
+    print()
+
+    confirm = input("Apply now? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print()
+    print("Applying live (you may be prompted for your sudo password)...")
+    r = subprocess.run(
+        ['sudo', 'sysctl', 'vm.dirty_background_ratio=1'],
+        check=False, stdout=subprocess.DEVNULL,
+    )
+    if r.returncode == 0:
+        print("  [OK]   vm.dirty_background_ratio = 1 (live)")
+    else:
+        print(f"  [FAIL] sysctl returned exit {r.returncode}")
+
+    print()
+    after = _current_sysctl('vm.dirty_background_ratio')
+    print(f"Verification: vm.dirty_background_ratio = {after or '?'}")
+    print()
+    print("Reminder: also apply option 8 (vm.dirty_ratio=2) for full effect.")
+    input("\nPress Enter to return to menu...")
+
+
+def apply_dirty_ratio_fix():
+    """Set vm.dirty_ratio=2 (live only, no persistence).
+
+    Why this might fix multi-hour capture failures:
+    This is the hard cap above which write() calls are forced to do
+    synchronous writeback themselves. Default is 20% of available
+    memory (~6 GB), which means processes (including DDD writing the
+    .lds file) can pile up that much dirty data before being throttled.
+    When it does hit, the resulting flush burst is huge.
+
+    Lowering to 2% (~620 MB) means even worst-case bursts stay small
+    enough for the SSD to drain without multi-second stalls.
+
+    Note: the kernel requires dirty_background_ratio < dirty_ratio.
+    Setting dirty_ratio=2 alone (with dirty_background_ratio still at 10)
+    is logically inconsistent - background flush would never trigger
+    before the hard limit. Apply option 7 first or together for
+    coherent behaviour.
+
+    Live only - reverts on reboot (deliberate for testing).
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nAPPLY DIRTY-PAGE HARD LIMIT")
+    print("=" * 50)
+    print("Setting: vm.dirty_ratio = 2")
+    print()
+    print("Why this might help (paired with option 7):")
+    print("  Default is 20% of RAM (~6 GB on 31 GB). That's the hard")
+    print("  cap above which write() calls are forced to do synchronous")
+    print("  writeback. When it hits, the drain burst can be huge and")
+    print("  block writes for many seconds while the external SSD")
+    print("  struggles to absorb it.")
+    print()
+    print("  Lowering to 2% (~620 MB) keeps worst-case bursts small")
+    print("  enough that the SSD can drain them without stalling.")
+    print()
+    print("Important: the kernel requires dirty_background_ratio <")
+    print("dirty_ratio. If you set this without also setting option 7")
+    print("(background_ratio=1), the kernel's behavior is inconsistent:")
+    print("background flush would never trigger before the hard limit.")
+    print("Apply option 7 first, or both together.")
+    print()
+    print("This option:")
+    print("  - Live: runs `sysctl vm.dirty_ratio=2`")
+    print("  - Does NOT persist across reboot (deliberate for testing)")
+    print()
+
+    current = _current_sysctl('vm.dirty_ratio')
+    bg_current = _current_sysctl('vm.dirty_background_ratio')
+    status = "OK" if current == '2' else f"(currently {current}, will become 2)"
+    print(f"Current value: vm.dirty_ratio            = {current or '?'}  {status}")
+    print(f"For reference: vm.dirty_background_ratio = {bg_current or '?'}")
+    if bg_current and bg_current != '1':
+        print()
+        print("WARNING: dirty_background_ratio is not 1. Apply option 7 too,")
+        print("or this setting will produce inconsistent flushing behavior.")
+    print()
+
+    confirm = input("Apply now? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print()
+    print("Applying live (you may be prompted for your sudo password)...")
+    r = subprocess.run(
+        ['sudo', 'sysctl', 'vm.dirty_ratio=2'],
+        check=False, stdout=subprocess.DEVNULL,
+    )
+    if r.returncode == 0:
+        print("  [OK]   vm.dirty_ratio = 2 (live)")
+    else:
+        print(f"  [FAIL] sysctl returned exit {r.returncode}")
+
+    print()
+    after = _current_sysctl('vm.dirty_ratio')
+    print(f"Verification: vm.dirty_ratio = {after or '?'}")
+    print()
+    print("Reminder: also apply option 7 (vm.dirty_background_ratio=1) for")
+    print("coherent flushing behavior.")
+    input("\nPress Enter to return to menu...")
 
 
 def _read_sysfs(path):
