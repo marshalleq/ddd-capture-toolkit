@@ -2762,13 +2762,15 @@ def capture_new_video(return_to_calibration=False):
             print("  6. Apply swappiness fix       (vm.swappiness=10)             [persistent]")
             print("  7. Apply dirty-page bg fix    (vm.dirty_background_ratio=1)  [live only]")
             print("  8. Apply dirty-page hard fix  (vm.dirty_ratio=2)             [live only]")
+            print("  9. Drop kernel caches         (page/dentry/inode cache)      [live only]")
+            print(" 10. Compact memory             (defragment physical RAM)      [live only]")
         print()
         if return_to_calibration:
             print("  e. Return to Calibration Menu")
         else:
             print("  e. Return to Main Menu")
 
-        prompt_range = "1-8/e" if sys.platform == 'linux' else "1-2/e"
+        prompt_range = "1-10/e" if sys.platform == 'linux' else "1-2/e"
         selection = input(f"\nSelect option ({prompt_range}): ").strip().lower()
 
         if selection == '1':
@@ -2795,11 +2797,234 @@ def capture_new_video(return_to_calibration=False):
             apply_dirty_background_fix()
         elif selection == '8' and sys.platform == 'linux':
             apply_dirty_ratio_fix()
+        elif selection == '9' and sys.platform == 'linux':
+            drop_kernel_caches()
+        elif selection == '10' and sys.platform == 'linux':
+            compact_memory_now()
         elif selection == 'e':
             break
         else:
             print("Invalid selection.")
             time.sleep(1)
+
+
+def drop_kernel_caches():
+    """Drop kernel page cache, dentries, and inode caches (live only).
+
+    Why this might help capture reliability:
+    After hours of file activity (decode jobs, browser cache, KDE PIM,
+    indexing) the kernel's page cache grows to fill most of available
+    memory with "reclaimable but not free" pages. Allocator activity
+    under that condition can be slower, and reclaim cycles can briefly
+    stall the page allocator - which can add scheduler latency to the
+    USB read thread doing 40 MB/s of DDD writes.
+
+    Dropping caches forces the kernel to reclaim everything reclaimable
+    immediately, in a controlled moment, rather than reactively under
+    pressure during the capture. The kernel will rebuild caches as
+    needed afterwards. Nothing is lost.
+
+    `sync` is run first so dirty pages get written out instead of
+    discarded.
+
+    Live only - the kernel will naturally rebuild caches as files are
+    accessed afterwards.
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nDROP KERNEL CACHES")
+    print("=" * 50)
+    print("Runs: sync && echo 3 > /proc/sys/vm/drop_caches")
+    print()
+    print("What this does:")
+    print("  - sync: flushes any dirty pages to disk first (no data loss)")
+    print("  - drop_caches=3: reclaims all of:")
+    print("      * page cache (file contents cached in RAM)")
+    print("      * dentries (directory entry cache)")
+    print("      * inodes (file metadata cache)")
+    print("  Only reclaimable cached data is freed. Anything actually in")
+    print("  use stays.")
+    print()
+    print("Why this might help DDD captures:")
+    print("  After hours of file activity, the page cache fills most of")
+    print("  available memory with reclaimable pages. Allocator pressure")
+    print("  during the capture can cause reclaim cycles that briefly")
+    print("  stall the page allocator, which adds scheduler latency to")
+    print("  the USB read thread. Dropping caches up front means the")
+    print("  capture starts with plenty of free pages, no on-demand")
+    print("  reclaim needed.")
+    print()
+    print("This option:")
+    print("  - Live only: kernel rebuilds caches naturally afterwards")
+    print("  - First read of cached files may be slightly slower")
+    print("    afterwards (briefly, while caches refill)")
+    print()
+
+    # Show what's currently in cache
+    try:
+        with open('/proc/meminfo') as f:
+            meminfo = f.read()
+        cached = None
+        buffers = None
+        sreclaim = None
+        for line in meminfo.split('\n'):
+            if line.startswith('Cached:'):
+                cached = line.split()[1]
+            elif line.startswith('Buffers:'):
+                buffers = line.split()[1]
+            elif line.startswith('SReclaimable:'):
+                sreclaim = line.split()[1]
+        print(f"Current reclaimable cache:")
+        if cached: print(f"  Cached:        {int(cached)//1024:>6} MB  (file contents)")
+        if buffers: print(f"  Buffers:       {int(buffers)//1024:>6} MB  (block device buffers)")
+        if sreclaim: print(f"  SReclaimable:  {int(sreclaim)//1024:>6} MB  (slab caches)")
+    except Exception:
+        pass
+    print()
+
+    confirm = input("Apply now? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print()
+    print("Running (you may be prompted for your sudo password)...")
+    r = subprocess.run(
+        ['sudo', 'sh', '-c', 'sync && echo 3 > /proc/sys/vm/drop_caches'],
+        check=False,
+    )
+    if r.returncode == 0:
+        print("  [OK]   caches dropped")
+    else:
+        print(f"  [FAIL] command returned exit {r.returncode}")
+
+    # Show post-drop state
+    try:
+        with open('/proc/meminfo') as f:
+            meminfo = f.read()
+        cached = None
+        buffers = None
+        sreclaim = None
+        for line in meminfo.split('\n'):
+            if line.startswith('Cached:'):
+                cached = line.split()[1]
+            elif line.startswith('Buffers:'):
+                buffers = line.split()[1]
+            elif line.startswith('SReclaimable:'):
+                sreclaim = line.split()[1]
+        print()
+        print("Post-drop state:")
+        if cached: print(f"  Cached:        {int(cached)//1024:>6} MB")
+        if buffers: print(f"  Buffers:       {int(buffers)//1024:>6} MB")
+        if sreclaim: print(f"  SReclaimable:  {int(sreclaim)//1024:>6} MB")
+    except Exception:
+        pass
+    input("\nPress Enter to return to menu...")
+
+
+def compact_memory_now():
+    """Trigger immediate kernel memory compaction (live only).
+
+    Why this might help capture reliability:
+    Physical RAM can become fragmented after hours of allocation and
+    free cycles - free memory is scattered across many small regions
+    rather than large contiguous blocks. The kernel allocator can
+    still hand out single pages but struggles with larger contiguous
+    requests (e.g. 2 MB huge pages, large URB DMA buffers).
+    Allocation failures or compaction-on-demand can pause the kernel
+    briefly while it tries to find or assemble contiguous regions.
+
+    Forcing immediate compaction triggers the kernel to defragment
+    physical RAM in a controlled moment - reorganising allocations to
+    free up large contiguous blocks. After this, large allocations
+    (including USB DMA buffers and URBs) succeed faster.
+
+    Live only - fragmentation rebuilds gradually as memory churns.
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nCOMPACT PHYSICAL MEMORY")
+    print("=" * 50)
+    print("Runs: echo 1 > /proc/sys/vm/compact_memory")
+    print()
+    print("What this does:")
+    print("  Triggers the kernel to immediately defragment physical RAM.")
+    print("  The allocator reorganises used pages so that free pages")
+    print("  cluster into larger contiguous blocks. No data is lost or")
+    print("  moved between processes - this is purely physical-page-")
+    print("  level rearrangement.")
+    print()
+    print("Why this might help DDD captures:")
+    print("  After hours of allocation churn, free memory becomes")
+    print("  fragmented - lots of small holes rather than big contiguous")
+    print("  blocks. USB DMA buffers and large URBs require contiguous")
+    print("  pages, so when libusb queues a new URB the allocator may")
+    print("  have to do compaction-on-demand, which can briefly stall.")
+    print("  Doing compaction up front means subsequent allocations")
+    print("  during the capture are fast.")
+    print()
+    print("This option:")
+    print("  - Live only: fragmentation rebuilds gradually as memory")
+    print("    churns; safe to re-run before each capture")
+    print("  - May briefly use significant CPU during the compaction")
+    print("    pass itself (a few seconds), so do this BEFORE starting")
+    print("    the capture, not during one")
+    print()
+
+    # Show fragmentation hint from /proc/buddyinfo
+    try:
+        with open('/proc/buddyinfo') as f:
+            print("Current free-page distribution (Normal zone, by order):")
+            for line in f:
+                if 'Normal' in line:
+                    parts = line.split()
+                    # Last 11 columns are counts for order 0..10
+                    orders = parts[-11:]
+                    print(f"  {' '.join(orders)}")
+                    print("  (left = small 4 KB blocks, right = large 4 MB blocks)")
+                    print("  Few entries on the right means high fragmentation")
+                    break
+    except Exception:
+        pass
+    print()
+
+    confirm = input("Apply now? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print()
+    print("Running (you may be prompted for your sudo password)...")
+    print("This may take a few seconds...")
+    r = subprocess.run(
+        ['sudo', 'sh', '-c', 'echo 1 > /proc/sys/vm/compact_memory'],
+        check=False,
+    )
+    if r.returncode == 0:
+        print("  [OK]   compaction triggered")
+    else:
+        print(f"  [FAIL] command returned exit {r.returncode}")
+
+    # Show post-compaction state
+    try:
+        with open('/proc/buddyinfo') as f:
+            print()
+            print("Post-compaction free-page distribution:")
+            for line in f:
+                if 'Normal' in line:
+                    parts = line.split()
+                    orders = parts[-11:]
+                    print(f"  {' '.join(orders)}")
+                    break
+    except Exception:
+        pass
+    input("\nPress Enter to return to menu...")
 
 
 def apply_dirty_background_fix():
