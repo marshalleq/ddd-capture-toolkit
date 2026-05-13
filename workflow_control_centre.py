@@ -543,7 +543,11 @@ class WorkflowControlCentre:
         controls.append("1m,1e,1a,1f", style="bold yellow")
         controls.append(" - Other steps\n", style="white")
         controls.append("stop 1d", style="bold red")
-        controls.append(" - Stop Jobs\n", style="white")
+        controls.append(" - Stop Job (running+queued)\n", style="white")
+        controls.append("stop all", style="bold red")
+        controls.append(" - Stop everything now\n", style="white")
+        controls.append("cancel queue", style="bold red")
+        controls.append(" - Cancel queued, let running finish\n", style="white")
         controls.append("force 1e", style="bold magenta")
         controls.append(" - Force Overwrite\n", style="white")
         controls.append("clean 1e", style="bold bright_blue")
@@ -763,6 +767,13 @@ class WorkflowControlCentre:
             else:
                 self.message = f"Invalid clean command format. Use: clean 1e, clean 2d, etc."
 
+        # Bulk stop / cancel commands. Must match before the generic 'stop '
+        # prefix so 'stop all' doesn't fall into the regex path.
+        elif cmd == 'stop all':
+            self.handle_stop_all()
+        elif cmd == 'cancel queue':
+            self.handle_cancel_queue()
+
         # Stop command (stop 1e, stop 11e, etc.)
         elif cmd.startswith('stop '):
             stop_cmd = cmd[5:].strip()
@@ -770,7 +781,7 @@ class WorkflowControlCentre:
             if stop_match:
                 self.handle_stop_command(int(stop_match.group(1)), stop_match.group(2))
             else:
-                self.message = f"Invalid stop command format. Use: stop 1e, stop 2d, etc."
+                self.message = f"Invalid stop command format. Use: stop 1e, stop 2d, stop all"
         
         # Action commands
         elif cmd == 'x':  # Stop
@@ -2022,17 +2033,18 @@ class WorkflowControlCentre:
             self.message = f"Job manager not available - cannot force {step_name}"
     
     def handle_stop_command(self, project_num, step_letter):
-        """Handle stop commands like 'stop 1e' to terminate running jobs"""
+        """Handle stop commands like 'stop 1e' to cancel both RUNNING and QUEUED
+        jobs for the given project+step. Running jobs are terminated; queued jobs
+        are removed from the queue. All matching jobs are cancelled (not just one)
+        so duplicates from auto-queue / restart races get cleaned up too."""
         project_idx = project_num - 1
-        
-        # Check if project exists
+
         if project_idx >= len(self.current_projects):
             self.message = f"No project at position {project_num}"
             return
-        
+
         project = self.current_projects[project_idx]
-        
-        # Map step letters to job types
+
         step_to_job_type = {
             'd': 'vhs-decode',
             'm': 'lds-compress',
@@ -2040,74 +2052,123 @@ class WorkflowControlCentre:
             'a': 'audio-align',
             'f': 'final-mux'
         }
-        
+
         if step_letter not in step_to_job_type:
             self.message = f"Invalid step letter: {step_letter.upper()}"
             return
-        
+
         job_type = step_to_job_type[step_letter]
         step_name = step_letter.upper()
-        
-        # Find running job for this project and step
-        if self.job_manager:
-            try:
-                # Get current jobs with timeout to avoid blocking UI
-                jobs = self.job_manager.get_jobs_nonblocking(timeout=0.5)
-                
-                if jobs is None:
-                    self.message = f"Warning: Job manager busy - cannot check jobs for stop command"
-                    return
-                
-                # Look for running job matching project and job type
-                running_job = None
-                for job in jobs:
-                    if (hasattr(job, 'project_name') and hasattr(job, 'job_type') and hasattr(job, 'status') and
-                        job.project_name == project.name and 
-                        job.job_type == job_type and 
-                        str(job.status) == 'JobStatus.RUNNING'):
-                        running_job = job
-                        break
-                
-                if running_job:
-                    # Attempt to terminate the job
-                    try:
-                        job_id = getattr(running_job, 'job_id', None)
-                        if job_id:
-                            # Use the job queue manager's terminate method
-                            success = self.job_manager._terminate_job_process(job_id)
-                            
-                            if success:
-                                self.message = f"Stopped {step_name} job for Project {project_num} ({project.name})"
-                            else:
-                                self.message = f"Warning: Could not stop {step_name} job for Project {project_num} - process may have already ended"
-                        else:
-                            self.message = f"Error: Could not identify job ID for {step_name} job"
-                            
-                    except Exception as e:
-                        self.message = f"Error stopping {step_name} job: {str(e)}"
-                        
-                else:
-                    # No running job found - check if there are any jobs for this project/step at all
-                    matching_jobs = []
-                    for job in jobs:
-                        if (hasattr(job, 'project_name') and hasattr(job, 'job_type') and
-                            job.project_name == project.name and 
-                            job.job_type == job_type):
-                            matching_jobs.append(job)
-                    
-                    if matching_jobs:
-                        # Found matching jobs but none are running
-                        statuses = [getattr(job, 'status', 'Unknown') for job in matching_jobs]
-                        self.message = f"No running {step_name} job found for Project {project_num}. Found jobs with status: {', '.join(statuses)}"
-                    else:
-                        # No jobs found at all
-                        self.message = f"No {step_name} job found for Project {project_num} ({project.name})"
-                        
-            except Exception as e:
-                self.message = f"Error checking jobs for stop command: {str(e)}"
-        else:
+
+        if not self.job_manager:
             self.message = f"Job manager not available - cannot stop {step_name} job"
-    
+            return
+
+        try:
+            jobs = self.job_manager.get_jobs_nonblocking(timeout=0.5)
+            if jobs is None:
+                self.message = f"Warning: Job manager busy - cannot check jobs for stop command"
+                return
+
+            ACTIVE = ('JobStatus.RUNNING', 'JobStatus.QUEUED')
+            matching = [
+                job for job in jobs
+                if hasattr(job, 'project_name') and hasattr(job, 'job_type') and hasattr(job, 'status')
+                and job.project_name == project.name
+                and job.job_type == job_type
+                and str(job.status) in ACTIVE
+            ]
+
+            if not matching:
+                all_matching = [
+                    j for j in jobs
+                    if hasattr(j, 'project_name') and hasattr(j, 'job_type')
+                    and j.project_name == project.name and j.job_type == job_type
+                ]
+                if all_matching:
+                    statuses = [str(getattr(j, 'status', 'Unknown')) for j in all_matching]
+                    self.message = f"No active {step_name} job for Project {project_num}. Found: {', '.join(statuses)}"
+                else:
+                    self.message = f"No {step_name} job found for Project {project_num} ({project.name})"
+                return
+
+            stopped = 0
+            cancelled = 0
+            for job in matching:
+                was_running = str(job.status) == 'JobStatus.RUNNING'
+                if self.job_manager.cancel_job(job.job_id):
+                    if was_running:
+                        stopped += 1
+                    else:
+                        cancelled += 1
+
+            parts = []
+            if stopped:
+                parts.append(f"stopped {stopped} running")
+            if cancelled:
+                parts.append(f"cancelled {cancelled} queued")
+            summary = ", ".join(parts) if parts else "no jobs affected"
+            self.message = f"{step_name} for Project {project_num} ({project.name}): {summary}"
+        except Exception as e:
+            self.message = f"Error stopping {step_name} job: {str(e)}"
+
+    def handle_stop_all(self):
+        """Terminate every RUNNING job and cancel every QUEUED job. Used when
+        the queue has run away (auto-queue race, restart leftovers) and the
+        user wants a clean slate immediately."""
+        if not self.job_manager:
+            self.message = "Job manager not available"
+            return
+        try:
+            jobs = self.job_manager.get_jobs_nonblocking(timeout=0.5)
+            if jobs is None:
+                self.message = "Warning: Job manager busy - try again"
+                return
+
+            running_ids = [j.job_id for j in jobs if str(j.status) == 'JobStatus.RUNNING']
+            queued_ids = [j.job_id for j in jobs if str(j.status) == 'JobStatus.QUEUED']
+
+            stopped = 0
+            for jid in running_ids:
+                if self.job_manager.cancel_job(jid):
+                    stopped += 1
+            cancelled = 0
+            for jid in queued_ids:
+                if self.job_manager.cancel_job(jid):
+                    cancelled += 1
+
+            self.message = f"stop all: stopped {stopped} running, cancelled {cancelled} queued"
+        except Exception as e:
+            self.message = f"Error in stop all: {str(e)}"
+
+    def handle_cancel_queue(self):
+        """Cancel every QUEUED job. Running jobs are left alone to finish.
+        Use this to stop auto from feeding more work without disrupting
+        in-flight encodes."""
+        if not self.job_manager:
+            self.message = "Job manager not available"
+            return
+        try:
+            jobs = self.job_manager.get_jobs_nonblocking(timeout=0.5)
+            if jobs is None:
+                self.message = "Warning: Job manager busy - try again"
+                return
+
+            queued_ids = [j.job_id for j in jobs if str(j.status) == 'JobStatus.QUEUED']
+            running_count = sum(1 for j in jobs if str(j.status) == 'JobStatus.RUNNING')
+
+            cancelled = 0
+            for jid in queued_ids:
+                if self.job_manager.cancel_job(jid):
+                    cancelled += 1
+
+            if running_count > 0:
+                self.message = f"cancel queue: cancelled {cancelled} queued, {running_count} running job(s) left to finish"
+            else:
+                self.message = f"cancel queue: cancelled {cancelled} queued"
+        except Exception as e:
+            self.message = f"Error in cancel queue: {str(e)}"
+
     def handle_clean_command(self, project_num, step_letter):
         """Handle clean commands like 'clean 1e' to reset stuck progress displays for failed jobs"""
         project_idx = project_num - 1
@@ -2437,7 +2498,9 @@ class WorkflowControlCentre:
         print("  D - Show details for selected project or job")
         print("  Auto - Queue all ready workflow steps for all projects")
         print("  force 1e - Force overwrite existing output (e.g., force 1e, force 2d)")
-        print("  stop 1e - Stop running job (e.g., stop 1d, stop 2e)")
+        print("  stop 1e - Stop a job for project+step (cancels queued, terminates running)")
+        print("  stop all - Stop everything immediately (terminate running + cancel queued)")
+        print("  cancel queue - Cancel all queued jobs, leave running jobs to finish")
         print("  clean 1e - Reset stuck progress displays for failed jobs")
         print("  H - Show this help")
         print("  Q - Quit the Workflow Control Centre")
