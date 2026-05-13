@@ -899,6 +899,48 @@ class JobQueueManager:
             if job.parameters.get('overwrite', False):
                 cmd.append('--overwrite')
 
+            # Apply per-project segment config (time range) if enabled. tbc-video-export
+            # uses the same -s / -l flags as vhs-decode. We pick PAL or NTSC frame counts
+            # based on the .tbc.json's videoSystem field, since export jobs don't reliably
+            # carry video_standard in their parameters.
+            try:
+                from segment_config import load_segment_config
+                segment_config = load_segment_config(job.project_name) if job.project_name else None
+                if segment_config and segment_config.get('enabled', False):
+                    video_standard = 'pal'
+                    candidate_json = job.input_file + '.json' if not job.input_file.endswith('.json') else job.input_file
+                    if not os.path.exists(candidate_json) and job.input_file.endswith('.tbc'):
+                        candidate_json = job.input_file[:-4] + '.tbc.json'
+                    if os.path.exists(candidate_json):
+                        try:
+                            with open(candidate_json, 'r') as jf:
+                                tbc_meta = json.load(jf)
+                            vs = (tbc_meta.get('videoParameters', {}) or {}).get('system', '')
+                            if isinstance(vs, str) and vs.upper().startswith('NTSC'):
+                                video_standard = 'ntsc'
+                        except Exception as e:
+                            self.logger.debug(f"Could not parse video system from {candidate_json}: {e}")
+
+                    if video_standard == 'pal':
+                        seg_start = segment_config.get('start_frame_pal', 0)
+                        seg_len = segment_config.get('frame_count_pal', 0)
+                    else:
+                        seg_start = segment_config.get('start_frame_ntsc', 0)
+                        seg_len = segment_config.get('frame_count_ntsc', 0)
+
+                    if seg_start >= 0 and seg_len > 0:
+                        cmd.extend(['-s', str(seg_start), '-l', str(seg_len)])
+                        self.logger.info(
+                            f"Export segment mode: start={seg_start}, length={seg_len} ({video_standard.upper()})"
+                        )
+                        with self.lock:
+                            job.total_frames = seg_len
+                            self.save_queue()
+            except ImportError:
+                pass
+            except Exception as e:
+                self.logger.warning(f"Error applying export segment config: {e}")
+
             # Add per-project export flags (e.g., --luma-only for B&W sources)
             # Also handle reverse field order specially - it requires pre-processing
             reverse_temp_file = None

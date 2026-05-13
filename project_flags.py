@@ -84,10 +84,17 @@ EXPORT_FLAGS = {
         'description': 'Add letterboxing to output',
         'default': False
     },
+    'field_order_bff': {
+        'cli_flag': '--field-order',
+        'cli_value': 'bff',
+        'label': 'Reverse fields (fast, metadata only)',
+        'description': 'Tag output as BFF so players/NLEs present fields in correct order. No temp file, works with dropout correction.',
+        'default': False
+    },
     'fix_reverse': {
         'cli_flag': '--reverse',
-        'label': 'Fix field order (already decoded)',
-        'description': 'Fix field order on already-decoded TBC (creates temp files, slower)',
+        'label': 'Reverse fields (slow, rewrites file)',
+        'description': 'Byte-level field-order swap via ld-dropout-correct pre-pass. Creates temp file ~size of source. Use only if a downstream tool ignores BFF metadata.',
         'default': False
     },
     'bw': {
@@ -100,12 +107,6 @@ EXPORT_FLAGS = {
         'cli_flag': '--no-dropout-correct',
         'label': 'No dropout correction',
         'description': 'Disable dropout correction',
-        'default': False
-    },
-    'oftest': {
-        'cli_flag': '--oftest',
-        'label': 'Odd field first',
-        'description': 'Odd field first (TFF) output',
         'default': False
     },
 }
@@ -287,7 +288,14 @@ class ProjectFlagsManager:
                 enabled = default_value
 
             if enabled:
-                cli_flags.append(flag_def['cli_flag'])
+                cli_flag = flag_def.get('cli_flag')
+                if not cli_flag:
+                    continue  # internal-only flag (no CLI passthrough)
+                cli_flags.append(cli_flag)
+                # Two-arg flags (e.g. --field-order bff) carry their value in cli_value.
+                cli_value = flag_def.get('cli_value')
+                if cli_value is not None:
+                    cli_flags.append(str(cli_value))
         return cli_flags
 
     def get_enabled_flag_labels(self, project_name: str, flag_type: str = 'export') -> List[str]:
