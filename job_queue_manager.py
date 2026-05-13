@@ -929,9 +929,12 @@ class JobQueueManager:
                         seg_len = segment_config.get('frame_count_ntsc', 0)
 
                     if seg_start >= 0 and seg_len > 0:
-                        cmd.extend(['-s', str(seg_start), '-l', str(seg_len)])
+                        # tbc-video-export is 1-indexed for -s (errors out on 0);
+                        # the segment config stores 0-indexed values matching vhs-decode.
+                        tbc_start = seg_start + 1
+                        cmd.extend(['-s', str(tbc_start), '-l', str(seg_len)])
                         self.logger.info(
-                            f"Export segment mode: start={seg_start}, length={seg_len} ({video_standard.upper()})"
+                            f"Export segment mode: start={tbc_start} (1-indexed), length={seg_len} ({video_standard.upper()})"
                         )
                         with self.lock:
                             job.total_frames = seg_len
