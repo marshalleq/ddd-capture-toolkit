@@ -39,6 +39,10 @@
         "fix_reverse": true
       }
     },
-    "A Visit To America and Canada (1991)": {}
+    "A Visit To America and Canada (1991)": {
+      "export": {
+        "field_order_bff": true
+      }
+    }
   }
 }

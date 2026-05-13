@@ -5,14 +5,14 @@
       "enabled": true,
       "segment_type": "time_range",
       "start_time": "00:00",
-      "duration": "00:30",
-      "end_time": "00:30",
+      "duration": "01:00",
+      "end_time": "01:00",
       "start_frame_pal": 0,
-      "frame_count_pal": 750,
+      "frame_count_pal": 1500,
       "start_frame_ntsc": 0,
-      "frame_count_ntsc": 899,
-      "description": "First 30 seconds",
-      "created": "2026-05-13T19:47:01.526069"
+      "frame_count_ntsc": 1798,
+      "description": "First 1 minute",
+      "created": "2026-05-13T20:04:34.367249"
     }
   }
 }
