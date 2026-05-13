@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "projects": {
+    "A Visit To America and Canada (1991)": {
+      "enabled": true,
+      "segment_type": "time_range",
+      "start_time": "00:00",
+      "duration": "00:30",
+      "end_time": "00:30",
+      "start_frame_pal": 0,
+      "frame_count_pal": 750,
+      "start_frame_ntsc": 0,
+      "frame_count_ntsc": 899,
+      "description": "First 30 seconds",
+      "created": "2026-05-13T19:47:01.526069"
+    }
+  }
+}
