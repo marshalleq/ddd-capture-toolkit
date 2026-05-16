@@ -976,6 +976,7 @@ def display_vhs_decode_menu():
         print("\n🛠️ BACKGROUND JOB MANAGEMENT:")
         print("=" * 30)
         print("2. Configure Job Queue Settings")
+        print("3. Performance Settings")
         print()
         print("📝 Note: Job status monitoring integrated into Workflow Control Centre")
         print("   Real-time progress bars, FPS, and ETA now appear directly in the workflow matrix.")
@@ -992,6 +993,8 @@ def display_vhs_decode_menu():
             launch_workflow_control_centre()
         elif selection == '2':
             configure_job_queue_settings()
+        elif selection == '3':
+            display_performance_settings_menu()
         elif selection == '5':
             display_advanced_vhs_decode_menu()
             break  # Return to main menu after advanced options
@@ -6780,27 +6783,26 @@ def display_settings_menu():
         print("=" * 30)
         print("1. Change Capture Directory")
         print("2. Manage Processing Locations")
-        print("3. Performance Settings")
-        print("4. View Current Settings")
-        print("5. Reset to Defaults")
+        print("3. View Current Settings")
+        print("4. Reset to Defaults")
         print("e. Return to Main Menu")
+        print()
+        print("(Performance Settings moved to VHS-Decode menu, option 3)")
 
-        selection = input("\nSelect option (1-5/e): ").strip().lower()
+        selection = input("\nSelect option (1-4/e): ").strip().lower()
 
         if selection == '1':
             change_capture_directory()
         elif selection == '2':
             manage_processing_locations()
         elif selection == '3':
-            display_performance_settings_menu()
-        elif selection == '4':
             view_detailed_settings()
-        elif selection == '5':
+        elif selection == '4':
             reset_to_defaults()
         elif selection == 'e':
             break  # Return to main menu
         else:
-            print("Invalid selection. Please enter 1-5 or e.")
+            print("Invalid selection. Please enter 1-4 or e.")
             time.sleep(1)
 
 def manage_processing_locations():
