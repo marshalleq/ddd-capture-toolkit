@@ -2764,13 +2764,15 @@ def capture_new_video(return_to_calibration=False):
             print("  8. Apply dirty-page hard fix  (vm.dirty_ratio=2)             [live only]")
             print("  9. Drop kernel caches         (page/dentry/inode cache)      [live only]")
             print(" 10. Compact memory             (defragment physical RAM)      [live only]")
+            print(" 11. Enable realtime audio prio (setcap cap_sys_nice on chrt)  [persistent]")
+            print(" 12. Apply low-latency CPU prof (tuned latency-performance)    [persistent]")
         print()
         if return_to_calibration:
             print("  e. Return to Calibration Menu")
         else:
             print("  e. Return to Main Menu")
 
-        prompt_range = "1-10/e" if sys.platform == 'linux' else "1-2/e"
+        prompt_range = "1-12/e" if sys.platform == 'linux' else "1-2/e"
         selection = input(f"\nSelect option ({prompt_range}): ").strip().lower()
 
         if selection == '1':
@@ -2801,6 +2803,10 @@ def capture_new_video(return_to_calibration=False):
             drop_kernel_caches()
         elif selection == '10' and sys.platform == 'linux':
             compact_memory_now()
+        elif selection == '11' and sys.platform == 'linux':
+            enable_realtime_audio_priority()
+        elif selection == '12' and sys.platform == 'linux':
+            apply_low_latency_cpu_profile()
         elif selection == 'e':
             break
         else:
@@ -3586,6 +3592,251 @@ def drain_disk_swap_only():
         return
 
     _drain_swap_devices(disk_devices, 'disk')
+
+
+def enable_realtime_audio_priority():
+    """Grant CAP_SYS_NICE to /usr/bin/chrt so sox can run at realtime priority.
+
+    Why this helps:
+    ALSA over-runs happen when sox doesn't get scheduled onto a CPU quickly
+    enough when audio is ready. With realtime priority (SCHED_FIFO via chrt
+    -r 50), the kernel schedules sox before any normal process the moment
+    audio is available - which essentially eliminates over-runs on a
+    non-overloaded system.
+
+    Mechanism:
+    The capture code already tries `chrt -r 50 sox ...` and falls back to
+    plain `sox` if chrt lacks permission. Granting cap_sys_nice on chrt
+    makes that fallback unnecessary: future captures will silently run at
+    realtime priority.
+
+    Safety:
+    Granting cap_sys_nice means any process can invoke chrt to elevate
+    its own priority. Sox uses <1% of one core so it can't starve the
+    system in practice. Reversible with `sudo setcap -r /usr/bin/chrt`.
+    Lost if util-linux is reinstalled; can be re-run.
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nENABLE REALTIME AUDIO PRIORITY")
+    print("=" * 50)
+    print("Grants CAP_SYS_NICE on /usr/bin/chrt so sox can run at")
+    print("realtime priority (SCHED_FIFO 50) without needing sudo at")
+    print("capture time.")
+    print()
+    print("Why this might help:")
+    print("  ALSA over-runs cause silent audio sample drops that")
+    print("  accumulate as drift on long captures (e.g. ~300 ms over an")
+    print("  8-hour LP capture at 1 over-run per 15 min). Realtime")
+    print("  priority makes sox preempt other work the moment audio")
+    print("  is ready, essentially eliminating these stalls.")
+    print()
+    print("What this option does:")
+    print("  - Runs: sudo setcap cap_sys_nice+ep $(which chrt)")
+    print("  - One-time setup, persistent across reboots")
+    print("  - Lost if util-linux is reinstalled (re-run this option)")
+    print()
+    print("Safety:")
+    print("  - Reversible with: sudo setcap -r /usr/bin/chrt")
+    print("  - Sox uses <1% of one core so it cannot starve the system")
+    print("  - Once enabled, the capture code uses chrt automatically;")
+    print("    no other changes needed")
+    print()
+
+    chrt_path = shutil.which('chrt')
+    if not chrt_path:
+        print("ERROR: 'chrt' command not found on this system.")
+        print("Install util-linux (Fedora: it is part of the base system)")
+        input("\nPress Enter to return to menu...")
+        return
+
+    # Show current capability state
+    try:
+        result = subprocess.run(['getcap', chrt_path], capture_output=True, text=True)
+        caps_line = result.stdout.strip()
+        if 'cap_sys_nice' in caps_line:
+            print(f"Current state: ALREADY ENABLED ({caps_line})")
+        else:
+            print(f"Current state: not granted ({chrt_path})")
+    except Exception:
+        print(f"Current state: could not check via getcap")
+    print()
+
+    # Live test
+    try:
+        result = subprocess.run(
+            ['chrt', '-r', '50', 'true'],
+            capture_output=True, timeout=2,
+        )
+        if result.returncode == 0:
+            print("Test: chrt -r 50 already works for this user.")
+        else:
+            print("Test: chrt -r 50 currently FAILS without this fix.")
+    except Exception:
+        pass
+    print()
+
+    confirm = input("Apply now? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print()
+    print("Granting capability (you may be prompted for your sudo password)...")
+    r = subprocess.run(
+        ['sudo', 'setcap', 'cap_sys_nice+ep', chrt_path],
+        check=False,
+    )
+    if r.returncode == 0:
+        print(f"  [OK]   setcap cap_sys_nice+ep {chrt_path}")
+    else:
+        print(f"  [FAIL] setcap returned exit {r.returncode}")
+        input("\nPress Enter to return to menu...")
+        return
+
+    # Verify
+    try:
+        result = subprocess.run(['getcap', chrt_path], capture_output=True, text=True)
+        print(f"Verification: {result.stdout.strip() or '(no capabilities reported)'}")
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            ['chrt', '-r', '50', 'true'],
+            capture_output=True, timeout=2,
+        )
+        if result.returncode == 0:
+            print("Live test: chrt -r 50 now works without sudo.")
+        else:
+            print("Live test: chrt -r 50 still failing - capability may not have applied.")
+    except Exception:
+        pass
+
+    print()
+    print("Done. Next capture will run sox at realtime priority automatically.")
+    input("\nPress Enter to return to menu...")
+
+
+def apply_low_latency_cpu_profile():
+    """Install tuned (if needed) and switch to latency-performance profile.
+
+    Why this might help:
+    The tuned project ships system-wide tuning profiles. The
+    'latency-performance' profile keeps CPUs in their highest P-state,
+    disables deep C-states, and steers IRQs for low-latency response.
+    For capture workloads this means the kernel scheduler responds
+    faster to wake-ups (e.g. when ALSA has audio ready for sox to
+    read), reducing the chance of an over-run.
+
+    Persistence:
+    Profile choice is stored by tuned and re-applied on every boot.
+    Reversible with `sudo tuned-adm profile balanced`.
+
+    Trade-offs:
+    Higher idle power consumption. CPU stays at performance frequency
+    instead of dropping to low-power states. On a desktop/workstation
+    used for VHS archival this is fine; on a laptop you may want to
+    switch back to 'balanced' when not capturing.
+
+    Requires sudo. Linux only. Fedora/RHEL ship dnf; on other distros
+    install tuned via the system package manager.
+    """
+    clear_screen()
+    display_header()
+    print("\nAPPLY LOW-LATENCY CPU PROFILE")
+    print("=" * 50)
+    print("Activates the 'latency-performance' tuned profile.")
+    print()
+    print("Why this might help:")
+    print("  tuned's latency-performance profile keeps the CPU in its")
+    print("  highest P-state and disables deep idle states. The")
+    print("  scheduler wakes up faster on events like ALSA having")
+    print("  audio ready, reducing over-run risk.")
+    print()
+    print("Trade-offs:")
+    print("  - Higher idle power consumption (CPU stays clocked up)")
+    print("  - Not ideal for laptops on battery; fine for desktop")
+    print("  - Reversible: `sudo tuned-adm profile balanced`")
+    print()
+    print("Persistence:")
+    print("  - Stored by tuned, re-applied on every boot")
+    print()
+
+    have_tuned = bool(shutil.which('tuned-adm'))
+    if have_tuned:
+        try:
+            result = subprocess.run(['tuned-adm', 'active'], capture_output=True, text=True)
+            active = result.stdout.strip()
+            print(f"Current state: {active or '(unknown)'}")
+        except Exception:
+            print("Current state: tuned-adm available but query failed")
+    else:
+        print("Current state: tuned is NOT installed.")
+        print("Will offer to install it (Fedora: dnf install tuned -y).")
+    print()
+
+    confirm = input("Apply now? (Y/n): ").strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    # Install tuned if missing (Fedora/RHEL path; warn otherwise)
+    if not have_tuned:
+        if shutil.which('dnf'):
+            print()
+            print("Installing tuned (you may be prompted for your sudo password)...")
+            r = subprocess.run(['sudo', 'dnf', 'install', '-y', 'tuned'], check=False)
+            if r.returncode != 0:
+                print(f"  [FAIL] dnf install returned exit {r.returncode}")
+                input("\nPress Enter to return to menu...")
+                return
+            print("  [OK]   tuned installed")
+        else:
+            print()
+            print("ERROR: 'tuned-adm' not found and 'dnf' not available to install it.")
+            print("Install tuned via your distro's package manager and re-run this option.")
+            input("\nPress Enter to return to menu...")
+            return
+
+    print()
+    print("Enabling and starting tuned service...")
+    r = subprocess.run(
+        ['sudo', 'systemctl', 'enable', '--now', 'tuned'],
+        check=False,
+    )
+    if r.returncode == 0:
+        print("  [OK]   tuned service enabled and started")
+    else:
+        print(f"  [WARN] systemctl enable --now tuned returned exit {r.returncode}")
+
+    print()
+    print("Setting active profile to latency-performance...")
+    r = subprocess.run(
+        ['sudo', 'tuned-adm', 'profile', 'latency-performance'],
+        check=False,
+    )
+    if r.returncode == 0:
+        print("  [OK]   profile set to latency-performance")
+    else:
+        print(f"  [FAIL] tuned-adm profile returned exit {r.returncode}")
+        input("\nPress Enter to return to menu...")
+        return
+
+    # Verify
+    try:
+        result = subprocess.run(['tuned-adm', 'active'], capture_output=True, text=True)
+        print(f"Verification: {result.stdout.strip()}")
+    except Exception:
+        pass
+
+    print()
+    print("Done. CPU profile applied and will persist across reboots.")
+    input("\nPress Enter to return to menu...")
 
 
 def display_robust_timecode_menu():

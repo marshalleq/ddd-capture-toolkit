@@ -33,6 +33,38 @@ def release_audio_device_before_capture():
         pass
 
 
+def _can_use_realtime_audio():
+    """Check whether `chrt -r 50` is permitted (needs CAP_SYS_NICE on chrt).
+
+    Granted persistently via menu option 11 (`sudo setcap cap_sys_nice+ep
+    $(which chrt)`). Result is cached since the capability state doesn't
+    change between captures within a single process run.
+    """
+    if hasattr(_can_use_realtime_audio, '_cached'):
+        return _can_use_realtime_audio._cached
+    try:
+        result = subprocess.run(
+            ['chrt', '-r', '50', 'true'],
+            capture_output=True, timeout=2,
+        )
+        _can_use_realtime_audio._cached = (result.returncode == 0)
+    except Exception:
+        _can_use_realtime_audio._cached = False
+    return _can_use_realtime_audio._cached
+
+
+def _wrap_for_realtime(cmd):
+    """Prepend `chrt -r 50` to a command if realtime audio priority is
+    available. Prints a one-time hint pointing at menu option 11 otherwise."""
+    if _can_use_realtime_audio():
+        return ['chrt', '-r', '50'] + cmd
+    if not getattr(_wrap_for_realtime, '_warned', False):
+        print("Note: sox running without realtime priority.")
+        print("      Enable via Capture menu option 11 to reduce ALSA over-runs.")
+        _wrap_for_realtime._warned = True
+    return cmd
+
+
 def build_sox_command_with_device(output_filename, device_info):
     """Build sox command using pre-cached device info (no subprocess calls).
 
@@ -77,7 +109,7 @@ def build_sox_command_with_device(output_filename, device_info):
             '-b', bit_depth,
             '-c', channels,
             device,
-            '--buffer', '8192',
+            '--buffer', '524288',
             output_filename,
             'remix', '1', '2'
         ]
@@ -201,7 +233,7 @@ def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_
             time.sleep(audio_delay)
 
         # FAST: Skip release_audio_device_before_capture() - already done in prepare_capture_resources
-        sox_process = subprocess.Popen(sox_command)
+        sox_process = subprocess.Popen(_wrap_for_realtime(sox_command))
 
         while not stop_event.is_set() and sox_process.poll() is None:
             if stop_event.wait(timeout=60):
@@ -351,7 +383,7 @@ def shared_capture_process(sox_command, audio_delay, capture_duration, ddd_comma
         # Release audio device from PipeWire/PulseAudio right before starting sox
         release_audio_device_before_capture()
         # Start SOX with direct console output (preserves VU meters)
-        sox_process = subprocess.Popen(sox_command)
+        sox_process = subprocess.Popen(_wrap_for_realtime(sox_command))
 
         # Monitor SOX process status without interfering with its output
         start_time = time.time()
@@ -551,7 +583,7 @@ def get_sox_command(output_filename):
             '-b', bit_depth,
             '-c', channels,
             device,
-            '--buffer', '8192',     # SOX internal buffer size (bytes)
+            '--buffer', '524288',     # ~1s internal buffer; absorbs scheduler stalls
             output_filename,
             'remix', '1', '2'
         ]
