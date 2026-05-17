@@ -1663,32 +1663,55 @@ class JobQueueManager:
             ffmpeg_cmd.extend(['-c:v', 'copy'])
             
             if audio_exists:
-                # Check for audio flags
-                resample_48k = False
-                output_wav = False
+                # Resolve audio output settings: per-project flags override config defaults.
+                # Backwards compat: old `resample_48k`/`output_wav` boolean flags map to the
+                # equivalent new values.
+                try:
+                    from config import get_default_audio_resample_rate, get_default_audio_format
+                    default_rate = get_default_audio_resample_rate()
+                    default_format = get_default_audio_format()
+                except ImportError:
+                    default_rate = '96000'
+                    default_format = 'flac'
+
+                resample_target = default_rate
+                audio_format = default_format
                 if PROJECT_FLAGS_AVAILABLE and job.project_name:
                     try:
                         flags_manager = ProjectFlagsManager()
                         audio_flags = flags_manager.get_project_flags(job.project_name, 'audio')
-                        resample_48k = audio_flags.get('resample_48k', False)
-                        output_wav = audio_flags.get('output_wav', False)
-                        if resample_48k:
-                            self.logger.info(f"Audio flag: Resampling to 48kHz for editor compatibility")
-                        if output_wav:
-                            self.logger.info(f"Audio flag: Output as 24-bit WAV instead of FLAC")
+
+                        # New string-valued flags
+                        if 'resample_target' in audio_flags:
+                            resample_target = str(audio_flags['resample_target'])
+                        elif audio_flags.get('resample_48k', False):
+                            resample_target = '48000'
+
+                        if 'audio_format' in audio_flags:
+                            audio_format = str(audio_flags['audio_format'])
+                        elif audio_flags.get('output_wav', False):
+                            audio_format = 'wav'
                     except Exception as e:
                         self.logger.warning(f"Could not load audio flags: {e}")
 
-                # Apply resampling if enabled
-                if resample_48k:
-                    ffmpeg_cmd.extend(['-ar', '48000'])
-
-                # Encode audio as WAV or FLAC (24-bit)
-                if output_wav:
-                    ffmpeg_cmd.extend(['-c:a', 'pcm_s24le'])  # 24-bit WAV
+                # Apply resampling if not 'none'. Use soxr for high-quality SRC on
+                # the non-integer ratio (78125 -> 96000 / 48000 / 192000).
+                if resample_target != 'none':
+                    ffmpeg_cmd.extend([
+                        '-af', f'aresample=resampler=soxr:precision=33:osf=s32',
+                        '-ar', resample_target,
+                    ])
+                    self.logger.info(f"Audio: resampling to {resample_target} Hz (soxr)")
                 else:
-                    ffmpeg_cmd.extend(['-c:a', 'flac'])  # FLAC (24-bit by default)
-                    ffmpeg_cmd.extend(['-sample_fmt', 's32'])  # Ensure 24-bit depth for FLAC
+                    self.logger.info("Audio: keeping source sample rate (no resampling)")
+
+                # Encode audio per chosen format (24-bit either way)
+                if audio_format == 'wav':
+                    ffmpeg_cmd.extend(['-c:a', 'pcm_s24le'])
+                    self.logger.info("Audio: 24-bit WAV (pcm_s24le)")
+                else:
+                    ffmpeg_cmd.extend(['-c:a', 'flac', '-sample_fmt', 's32'])
+                    self.logger.info("Audio: 24-bit FLAC")
 
                 # Map video stream from input 0
                 ffmpeg_cmd.extend(['-map', '0:v:0'])

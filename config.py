@@ -46,7 +46,11 @@ DEFAULT_CONFIG = {
         "ffmpeg_threads": 4,  # Limit FFmpeg threads to keep UI responsive
         "ffmpeg_threads_description": "Number of threads FFmpeg uses (0=auto, 1-16=specific). Lower values reduce CPU load during final muxing to keep UI responsive. Recommended: 4-6 threads for most systems.",
         "compress_use_gpu": False,  # Use ld-compress -a (flaldf/OpenCL) instead of -c (CPU FLAC)
-        "compress_use_gpu_description": "Whether the compress step uses GPU acceleration via flaldf. Requires flaldf binary and an OpenCL runtime - see docs/gpu-compression.md."
+        "compress_use_gpu_description": "Whether the compress step uses GPU acceleration via flaldf. Requires flaldf binary and an OpenCL runtime - see docs/gpu-compression.md.",
+        "default_audio_resample_rate": "96000",  # Default target rate for final-mux audio
+        "default_audio_resample_rate_description": "Sample rate for audio in the final muxed output. Options: 'none' (keep clockgen-Lite native 78125 Hz), '48000', '96000', '192000'. 96000 is recommended: closest common standard above 78125 (NLEs like DaVinci Resolve don't accept the native rate) and uses high-quality soxr resampler.",
+        "default_audio_format": "flac",  # Default audio codec for final-mux output
+        "default_audio_format_description": "Audio codec for the final muxed output. Options: 'flac' (lossless, compressed, no size limit), 'wav' (lossless, uncompressed, classic 4GB limit). FLAC recommended unless an editor cannot read it. DaVinci Resolve 16+ supports FLAC natively."
     }
 }
 
@@ -260,6 +264,82 @@ def set_ffmpeg_threads(thread_count):
     except Exception as e:
         print(f"Error setting FFmpeg thread count: {e}")
         return False
+
+_VALID_AUDIO_RATES = ("none", "48000", "96000", "192000")
+_VALID_AUDIO_FORMATS = ("flac", "wav")
+
+
+def get_default_audio_resample_rate():
+    """Get configured default sample rate for final-mux audio output.
+
+    Returns one of: 'none', '48000', '96000', '192000'.
+    'none' means keep the source rate (78125 Hz from clockgen-Lite).
+    Per-project audio flags can override this default.
+    """
+    config = load_config()
+    perf = config.get('performance_settings', {})
+    rate = perf.get('default_audio_resample_rate', '96000')
+    if rate not in _VALID_AUDIO_RATES:
+        return '96000'
+    return rate
+
+
+def set_default_audio_resample_rate(rate):
+    """Set the default sample rate for final-mux audio output.
+
+    rate: one of 'none', '48000', '96000', '192000'. Returns True on success.
+    """
+    if rate not in _VALID_AUDIO_RATES:
+        print(f"Error: rate must be one of {_VALID_AUDIO_RATES} (got {rate!r})")
+        return False
+    try:
+        config = load_config()
+        if 'performance_settings' not in config:
+            config['performance_settings'] = {}
+        config['performance_settings']['default_audio_resample_rate'] = rate
+        if save_config(config):
+            print(f"Default audio resample rate set to: {rate}")
+            return True
+        return False
+    except Exception as e:
+        print(f"Error setting audio resample rate: {e}")
+        return False
+
+
+def get_default_audio_format():
+    """Get configured default audio codec for final-mux output.
+
+    Returns 'flac' or 'wav'. Per-project audio flags can override this.
+    """
+    config = load_config()
+    perf = config.get('performance_settings', {})
+    fmt = perf.get('default_audio_format', 'flac')
+    if fmt not in _VALID_AUDIO_FORMATS:
+        return 'flac'
+    return fmt
+
+
+def set_default_audio_format(fmt):
+    """Set the default audio codec for final-mux output.
+
+    fmt: one of 'flac', 'wav'. Returns True on success.
+    """
+    if fmt not in _VALID_AUDIO_FORMATS:
+        print(f"Error: format must be one of {_VALID_AUDIO_FORMATS} (got {fmt!r})")
+        return False
+    try:
+        config = load_config()
+        if 'performance_settings' not in config:
+            config['performance_settings'] = {}
+        config['performance_settings']['default_audio_format'] = fmt
+        if save_config(config):
+            print(f"Default audio format set to: {fmt}")
+            return True
+        return False
+    except Exception as e:
+        print(f"Error setting audio format: {e}")
+        return False
+
 
 def get_compress_use_gpu():
     """
