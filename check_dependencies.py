@@ -270,6 +270,46 @@ def check_system_commands():
     
     return all_good
 
+def check_ffmpeg_features():
+    """Check that ffmpeg has the libraries final-mux depends on.
+
+    Specifically: libsoxr is required for the audio sample-rate conversion
+    in the final-mux step (aresample=resampler=soxr). Fedora's ffmpeg-free
+    package and minimal source builds may omit it. Easy mode (conda-forge
+    ffmpeg) and performance mode (build-ffmpeg.sh with --enable-libsoxr)
+    both include it.
+    """
+    print("\n  Checking FFmpeg features required by final-mux...")
+    try:
+        result = subprocess.run(['ffmpeg', '-hide_banner', '-version'],
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode not in (0, 8):
+            print("    FFmpeg version check failed - cannot inspect features")
+            return False
+        config = result.stdout
+
+        if '--enable-libsoxr' in config or 'libsoxr' in config:
+            print("    libsoxr enabled (final-mux audio resampling: OK)")
+            return True
+
+        print("    libsoxr NOT enabled in this ffmpeg build")
+        print("    The final-mux step uses aresample=resampler=soxr for audio")
+        print("    sample-rate conversion and will FAIL without it.")
+        print()
+        print("    To fix:")
+        print("      Easy install: conda install -n ddd-capture-toolkit -c conda-forge soxr ffmpeg")
+        print("      Performance install: re-run setup.sh --performance (build-ffmpeg.sh")
+        print("                           now includes --enable-libsoxr)")
+        print("      System ffmpeg: install one with libsoxr (Fedora RPM Fusion ffmpeg,")
+        print("                     Debian/Ubuntu ffmpeg, not Fedora's 'ffmpeg-free')")
+        return False
+    except FileNotFoundError:
+        print("    FFmpeg not found in PATH")
+        return False
+    except Exception as e:
+        print(f"    Error checking ffmpeg features: {e}")
+        return False
+
 def check_platform_specific():
     """Check platform-specific requirements"""
     print(f"\n  Checking platform-specific features ({sys.platform})...")
@@ -352,8 +392,9 @@ def main():
         check_python_version(),
         check_python_packages(),
         check_system_commands(),
+        check_ffmpeg_features(),
     ]
-    
+
     check_platform_specific()
     check_vhs_audio_tools()
     
