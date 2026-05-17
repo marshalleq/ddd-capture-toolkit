@@ -109,7 +109,7 @@ def build_sox_command_with_device(output_filename, device_info):
             '-b', bit_depth,
             '-c', channels,
             device,
-            '--buffer', '524288',
+            '--buffer', '8192',
             output_filename,
             'remix', '1', '2'
         ]
@@ -583,7 +583,7 @@ def get_sox_command(output_filename):
             '-b', bit_depth,
             '-c', channels,
             device,
-            '--buffer', '524288',     # ~1s internal buffer; absorbs scheduler stalls
+            '--buffer', '8192',        # sox processes audio in blocks of this many bytes; small block = responsive VU/progress display (~60 Hz). chrt -r 50 (via _wrap_for_realtime) is what prevents over-runs, NOT the buffer size.
             output_filename,
             'remix', '1', '2'
         ]
