@@ -134,6 +134,7 @@ build_ffmpeg() {
         --enable-libopus \
         --enable-libvorbis \
         --enable-libmp3lame \
+        --enable-libsoxr \
         --enable-vaapi \
         --enable-shared \
         --disable-static \
@@ -143,7 +144,10 @@ build_ffmpeg() {
             log_error "FFmpeg configure failed"
             log_info "Trying minimal configuration..."
 
-            # Fallback: minimal config with just essential features
+            # Fallback: minimal config with just essential features.
+            # libsoxr is REQUIRED (final-mux audio resampling uses it). If
+            # this minimal configure fails too, the build aborts rather
+            # than producing an ffmpeg that silently lacks soxr.
             ./configure \
                 --prefix="${CONDA_PREFIX}" \
                 --extra-cflags="$extra_cflags" \
@@ -151,12 +155,14 @@ build_ffmpeg() {
                 --enable-gpl \
                 --enable-pthreads \
                 --enable-zlib \
+                --enable-libsoxr \
                 --enable-shared \
                 --disable-static \
                 --disable-doc \
                 --disable-debug \
                 || {
                     log_error "FFmpeg minimal configure also failed"
+                    log_error "(libsoxr is required; install soxr-devel or ensure conda 'soxr' package is present)"
                     return 1
                 }
         }
