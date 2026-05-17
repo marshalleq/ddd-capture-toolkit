@@ -1978,7 +1978,10 @@ class JobQueueManager:
             if not output_dir:
                 output_dir = os.getcwd()
 
-            # Run ld-compress
+            # Run ld-compress. start_new_session puts the bash script and its
+            # pipeline children (ld-lds-converter, flaldf/ffmpeg) in their own
+            # process group so we can signal the whole group on cancel - otherwise
+            # bash dies but the pipeline children keep running as orphans.
             import subprocess
             process = subprocess.Popen(
                 cmd,
@@ -1986,7 +1989,8 @@ class JobQueueManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                cwd=output_dir
+                cwd=output_dir,
+                start_new_session=True
             )
 
             # Track the process for termination capability
@@ -2317,37 +2321,63 @@ class JobQueueManager:
                 self.logger.info(f"Cleaned up {removed_count} old jobs")
     
     def _terminate_job_process(self, job_id: str) -> bool:
-        """Terminate the process for a running job"""
+        """Terminate the process for a running job, including pipeline children.
+
+        For jobs launched with start_new_session=True, the process is the leader
+        of its own process group and we signal the whole group so any children
+        (e.g. ld-lds-converter, flaldf in the ld-compress pipeline) are killed
+        too. Falls back to single-process terminate/kill if process-group lookup
+        fails (e.g. process already exited)."""
+        import signal
         try:
             if job_id in self.job_processes:
                 process = self.job_processes[job_id]
                 self.logger.info(f"Terminating process {process.pid} for job {job_id}")
-                
-                # Try graceful termination first
+
+                # Try to find the process group so we can signal pipeline children too.
+                pgid = None
                 try:
-                    process.terminate()
-                    # Wait up to 5 seconds for graceful shutdown
+                    pgid = os.getpgid(process.pid)
+                except (ProcessLookupError, OSError):
+                    pass
+
+                def _signal(sig):
+                    if pgid is not None:
+                        try:
+                            os.killpg(pgid, sig)
+                            return
+                        except (ProcessLookupError, PermissionError, OSError) as e:
+                            self.logger.debug(f"killpg({pgid}, {sig}) failed: {e}, falling back to single PID")
+                    # Fallback: signal just the tracked process
+                    if sig == signal.SIGTERM:
+                        process.terminate()
+                    else:
+                        process.kill()
+
+                # Graceful termination first
+                try:
+                    _signal(signal.SIGTERM)
                     try:
                         process.wait(timeout=5)
-                        self.logger.info(f"Process {process.pid} terminated gracefully")
+                        self.logger.info(f"Process group for {process.pid} terminated gracefully")
                     except subprocess.TimeoutExpired:
                         # Force kill if graceful termination didn't work
-                        self.logger.warning(f"Process {process.pid} didn't terminate gracefully, killing forcefully")
-                        process.kill()
-                        process.wait()  # Wait for kill to complete
-                        self.logger.info(f"Process {process.pid} killed forcefully")
-                        
+                        self.logger.warning(f"Process {process.pid} didn't terminate gracefully, killing whole group")
+                        _signal(signal.SIGKILL)
+                        process.wait()
+                        self.logger.info(f"Process group for {process.pid} killed forcefully")
+
                 except ProcessLookupError:
                     # Process already terminated
                     self.logger.info(f"Process {process.pid} was already terminated")
-                
+
                 # Clean up process tracking
                 del self.job_processes[job_id]
                 return True
             else:
                 self.logger.warning(f"No tracked process found for job {job_id}")
                 return False
-                
+
         except Exception as e:
             self.logger.error(f"Error terminating process for job {job_id}: {e}")
             return False
