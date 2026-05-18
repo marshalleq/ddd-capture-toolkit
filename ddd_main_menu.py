@@ -2769,13 +2769,22 @@ def capture_new_video(return_to_calibration=False):
             print(" 10. Compact memory             (defragment physical RAM)      [live only]")
             print(" 11. Enable realtime audio prio (setcap cap_sys_nice on chrt)  [persistent]")
             print(" 12. Apply low-latency CPU prof (tuned latency-performance)    [persistent]")
+            # Show option 13 with current toggle state so user can see at a glance
+            try:
+                _r = subprocess.run(['systemctl', 'is-enabled', 'tuned-ppd'],
+                                    capture_output=True, text=True, timeout=2)
+                _override_on = (_r.stdout.strip() != 'enabled')
+            except Exception:
+                _override_on = False
+            _state_label = "ON  - KDE/GNOME power widgets bypassed" if _override_on else "OFF - KDE/GNOME manage power profiles"
+            print(f" 13. Override desktop power mgmt (disable tuned-ppd)    [{_state_label}]")
         print()
         if return_to_calibration:
             print("  e. Return to Calibration Menu")
         else:
             print("  e. Return to Main Menu")
 
-        prompt_range = "1-12/e" if sys.platform == 'linux' else "1-2/e"
+        prompt_range = "1-13/e" if sys.platform == 'linux' else "1-2/e"
         selection = input(f"\nSelect option ({prompt_range}): ").strip().lower()
 
         if selection == '1':
@@ -2810,6 +2819,8 @@ def capture_new_video(return_to_calibration=False):
             enable_realtime_audio_priority()
         elif selection == '12' and sys.platform == 'linux':
             apply_low_latency_cpu_profile()
+        elif selection == '13' and sys.platform == 'linux':
+            toggle_kde_power_override()
         elif selection == 'e':
             break
         else:
@@ -3839,6 +3850,163 @@ def apply_low_latency_cpu_profile():
 
     print()
     print("Done. CPU profile applied and will persist across reboots.")
+    print()
+    print("NOTE: On Fedora 38+ with KDE/GNOME, tuned-ppd may revert this")
+    print("      setting on every boot. If the profile keeps reverting to")
+    print("      'balanced', use option 13 to disable tuned-ppd.")
+    input("\nPress Enter to return to menu...")
+
+
+def toggle_kde_power_override():
+    """Toggle whether KDE/GNOME desktop power management is overridden by
+    disabling the tuned-ppd shim service.
+
+    Why this exists:
+    On Fedora 38+ with KDE Plasma or GNOME, the `tuned-ppd` service runs
+    in the background and acts as a compatibility shim between the
+    freedesktop PowerProfiles D-Bus API (which KDE/GNOME power widgets
+    talk to) and tuned. On every boot it re-applies whatever profile the
+    desktop last requested - typically 'balanced' - which overrides any
+    profile set by `tuned-adm profile latency-performance` (menu option 12).
+
+    Disabling tuned-ppd lets option 12's setting actually persist across
+    reboots. The trade-off is that the desktop's power-profile widget no
+    longer works (it has nothing to talk to). For a dedicated capture
+    workstation this is usually fine; for a laptop or general workstation
+    where you switch power profiles via the GUI, you probably want this
+    OFF.
+
+    Toggle action:
+    - If tuned-ppd is currently enabled: disable + stop it.
+    - If tuned-ppd is currently disabled: re-enable + start it.
+
+    Both states persist across reboots.
+
+    Requires sudo. Linux only.
+    """
+    clear_screen()
+    display_header()
+    print("\nOVERRIDE DESKTOP POWER MANAGEMENT (tuned-ppd toggle)")
+    print("=" * 60)
+
+    # Detect current state
+    try:
+        r = subprocess.run(['systemctl', 'is-enabled', 'tuned-ppd'],
+                           capture_output=True, text=True, timeout=5)
+        is_enabled = (r.stdout.strip() == 'enabled')
+    except Exception as e:
+        print(f"Could not query tuned-ppd state: {e}")
+        input("\nPress Enter to return to menu...")
+        return
+
+    try:
+        r = subprocess.run(['systemctl', 'is-active', 'tuned-ppd'],
+                           capture_output=True, text=True, timeout=5)
+        is_active = (r.stdout.strip() == 'active')
+    except Exception:
+        is_active = False
+
+    override_on = (not is_enabled) and (not is_active)
+
+    print(f"Current state:")
+    print(f"  tuned-ppd service:  enabled={is_enabled}  active={is_active}")
+    if override_on:
+        print(f"  Override is:        ON   - KDE/GNOME power widgets bypassed")
+        print(f"  Effect on option 12: setting WILL persist across reboots")
+    else:
+        print(f"  Override is:        OFF  - KDE/GNOME manage power profiles")
+        print(f"  Effect on option 12: setting WILL revert on every boot")
+    print()
+
+    print("What this option does:")
+    print()
+    print("  On Fedora 38+ with KDE Plasma or GNOME, the 'tuned-ppd' service")
+    print("  re-routes power-profile changes from the desktop widget back")
+    print("  through tuned. On every boot it re-applies whatever the desktop")
+    print("  last requested - usually 'balanced' - which overrides whatever")
+    print("  profile option 12 wrote.")
+    print()
+    print("  Toggling override ON disables tuned-ppd. Option 12's setting")
+    print("  then actually survives reboots.")
+    print()
+    print("** Persistent across reboots in either state. **")
+    print()
+    print("Trade-off:")
+    print("  - Override ON  : ideal for dedicated capture workstations.")
+    print("                   Desktop's power-profile widget will not work.")
+    print("  - Override OFF : ideal for laptops or workstations that use")
+    print("                   the GUI to switch between power-saving and")
+    print("                   performance modes. CPU profile chosen via")
+    print("                   option 12 will not persist.")
+    print()
+
+    if override_on:
+        prompt = "Re-enable KDE/GNOME power management (turn override OFF)? (Y/n): "
+    else:
+        prompt = "Disable KDE/GNOME power management (turn override ON)? (Y/n): "
+
+    confirm = input(prompt).strip().lower()
+    if confirm == 'n':
+        print("Cancelled.")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print()
+    print("Applying (you may be prompted for your sudo password)...")
+
+    if override_on:
+        # Currently overridden; re-enable
+        r = subprocess.run(
+            ['sudo', 'systemctl', 'enable', '--now', 'tuned-ppd'],
+            check=False,
+        )
+        if r.returncode == 0:
+            print("  [OK]   tuned-ppd re-enabled and started")
+            print("  [INFO] KDE/GNOME will manage power profiles again")
+            print("  [INFO] Option 12's profile will be overridden on next boot")
+        else:
+            print(f"  [FAIL] systemctl enable --now tuned-ppd returned exit {r.returncode}")
+    else:
+        # Currently active; disable
+        r = subprocess.run(
+            ['sudo', 'systemctl', 'disable', '--now', 'tuned-ppd'],
+            check=False,
+        )
+        if r.returncode == 0:
+            print("  [OK]   tuned-ppd disabled and stopped")
+            print("  [INFO] Option 12's tuned profile will now persist across reboots")
+            print("  [INFO] Desktop power-profile widget will no longer work")
+        else:
+            print(f"  [FAIL] systemctl disable --now tuned-ppd returned exit {r.returncode}")
+
+    # Verify
+    print()
+    try:
+        r = subprocess.run(['systemctl', 'is-enabled', 'tuned-ppd'],
+                           capture_output=True, text=True, timeout=5)
+        is_enabled_after = (r.stdout.strip() == 'enabled')
+        r = subprocess.run(['systemctl', 'is-active', 'tuned-ppd'],
+                           capture_output=True, text=True, timeout=5)
+        is_active_after = (r.stdout.strip() == 'active')
+        print(f"Verification: tuned-ppd enabled={is_enabled_after} active={is_active_after}")
+    except Exception:
+        pass
+
+    # If we just turned override ON and tuned-adm is balanced, also re-apply
+    # latency-performance immediately so the user doesn't have to run option 12 again.
+    if not override_on:  # we just turned override ON
+        try:
+            r = subprocess.run(['tuned-adm', 'active'], capture_output=True, text=True, timeout=5)
+            current_profile = r.stdout.strip().lower()
+            if 'latency-performance' not in current_profile:
+                print()
+                print("Re-applying tuned latency-performance profile...")
+                subprocess.run(['sudo', 'tuned-adm', 'profile', 'latency-performance'], check=False)
+                r = subprocess.run(['tuned-adm', 'active'], capture_output=True, text=True, timeout=5)
+                print(f"  tuned-adm active: {r.stdout.strip()}")
+        except Exception:
+            pass
+
     input("\nPress Enter to return to menu...")
 
 
