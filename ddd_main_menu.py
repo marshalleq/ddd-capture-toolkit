@@ -1553,13 +1553,7 @@ def run_capture_analysis():
     display_header()
     try:
         from capture_analysis import interactive_analyse
-        from config import get_capture_directory
-        default_dir = None
-        try:
-            default_dir = get_capture_directory()
-        except Exception:
-            pass
-        interactive_analyse(default_dir=default_dir)
+        interactive_analyse()
     except ImportError as e:
         print(f"\nCould not load capture analysis module: {e}")
     except KeyboardInterrupt:
