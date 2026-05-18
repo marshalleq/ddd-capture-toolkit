@@ -983,6 +983,7 @@ def display_vhs_decode_menu():
         print()
         print("OTHER OPTIONS:")
         print("=" * 20)
+        print("4. Analyse Capture Levels (.lds/.ldf)")
         print("5. Advanced VHS-Decode Settings...")
         print("6. Kill Rogue/Stuck Processes")
         print("e. Return to Main Menu")
@@ -995,6 +996,8 @@ def display_vhs_decode_menu():
             configure_job_queue_settings()
         elif selection == '3':
             display_performance_settings_menu()
+        elif selection == '4':
+            run_capture_analysis()
         elif selection == '5':
             display_advanced_vhs_decode_menu()
             break  # Return to main menu after advanced options
@@ -1542,6 +1545,27 @@ def manual_vhs_decode_with_params(video_standard, tape_speed):
     except Exception as e:
         print(f"\nError during VHS decode: {e}")
     
+    input("\nPress Enter to return to menu...")
+
+def run_capture_analysis():
+    """Slice + analyse a .lds/.ldf capture for level/clipping inspection."""
+    clear_screen()
+    display_header()
+    try:
+        from capture_analysis import interactive_analyse
+        from config import get_capture_directory
+        default_dir = None
+        try:
+            default_dir = get_capture_directory()
+        except Exception:
+            pass
+        interactive_analyse(default_dir=default_dir)
+    except ImportError as e:
+        print(f"\nCould not load capture analysis module: {e}")
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+    except Exception as e:
+        print(f"\nError running capture analysis: {e}")
     input("\nPress Enter to return to menu...")
 
 def display_advanced_vhs_decode_menu():
