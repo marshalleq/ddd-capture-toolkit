@@ -166,13 +166,20 @@ def analyse_capture(input_path, skip_seconds=30, duration_seconds=60, output_pat
 
     if ext == '.lds':
         skip_bytes = skip_seconds * LDS_BYTES_PER_SECOND
-        need_bytes = duration_seconds * LDS_BYTES_PER_SECOND
-        if skip_bytes + need_bytes > file_size:
-            available = max(0, (file_size - skip_bytes)) // LDS_BYTES_PER_SECOND
+        if skip_bytes >= file_size:
+            available_total = file_size // LDS_BYTES_PER_SECOND
             raise ValueError(
-                f"Requested slice (skip {skip_seconds}s + {duration_seconds}s) extends past "
-                f"end of file. Only ~{available}s available after skip."
+                f"Skip offset {skip_seconds}s is past end of file "
+                f"(file is only ~{available_total}s long)."
             )
+        # Clamp requested duration to what's actually available.
+        available = (file_size - skip_bytes) // LDS_BYTES_PER_SECOND
+        if duration_seconds > available:
+            print(
+                f"  Note: only ~{available}s available after {skip_seconds}s skip; "
+                f"using that instead of requested {duration_seconds}s."
+            )
+            duration_seconds = available
 
     if output_path is None:
         base = os.path.splitext(input_path)[0]
@@ -254,7 +261,7 @@ def _verdict(stats):
     return f"OK (clipping {clip:.4f}%, RMS {rms:.3f})"
 
 
-def interactive_analyse(default_dir=None):
+def interactive_analyse():
     """Menu-driven entry point. Prompts for file, offset, duration; runs analysis."""
     print()
     print("CAPTURE ANALYSIS")
@@ -263,38 +270,20 @@ def interactive_analyse(default_dir=None):
     print("for Audacity inspection, and reports clipping/level statistics.")
     print()
 
-    # File prompt
-    if default_dir and os.path.isdir(default_dir):
-        captures = _list_captures(default_dir)
-        if captures:
-            print(f"Recent captures in {default_dir}:")
-            for i, name in enumerate(captures[:10], 1):
-                size = _format_size(os.path.getsize(os.path.join(default_dir, name)))
-                print(f"  {i}. {name}  ({size})")
-            print()
-            sel = input("Select a number, or enter a full path: ").strip()
-            if sel.isdigit() and 1 <= int(sel) <= len(captures[:10]):
-                input_path = os.path.join(default_dir, captures[int(sel) - 1])
-            else:
-                input_path = os.path.expanduser(sel)
-        else:
-            input_path = os.path.expanduser(input("Path to .lds/.ldf file: ").strip())
-    else:
-        input_path = os.path.expanduser(input("Path to .lds/.ldf file: ").strip())
-
-    if not input_path or not os.path.isfile(input_path):
-        print(f"File not found: {input_path}")
+    input_path = _select_capture_file()
+    if not input_path:
         return
 
     # Offset / duration
     skip = _prompt_int("Skip seconds from start", default=30, minimum=0)
     duration = _prompt_int("Duration to extract (seconds)", default=60, minimum=1)
 
-    # Size warning
+    # Size advisory. The default of 60 s produces ~4.5 GB, which is fine for
+    # modern Audacity; only warn beyond ~120 s (~9.5 GB) where it gets sluggish.
     expected_raw_bytes = duration * RAW_BYTES_PER_SECOND
     print(f"\nWill produce ~{_format_size(expected_raw_bytes)} raw 16-bit output.")
-    if expected_raw_bytes > 2 * 1024 ** 3:
-        confirm = input("That's a large file. Continue? (y/N): ").strip().lower()
+    if expected_raw_bytes > 10 * 1024 ** 3:
+        confirm = input("That's a very large file (Audacity may struggle). Continue? (y/N): ").strip().lower()
         if confirm not in ('y', 'yes'):
             print("Cancelled.")
             return
@@ -313,19 +302,119 @@ def interactive_analyse(default_dir=None):
     print_report(stats)
 
 
-def _list_captures(directory):
-    """Return capture files in the directory, newest first."""
+def _scan_processing_locations():
+    """
+    Walk all directories listed in config.json under 'processing_locations'
+    (managed via Configuration → Manage Processing Locations, i.e. menu 4,2)
+    plus the configured capture_directory, and return capture-file entries
+    sorted newest-first.
+
+    Each entry: {'path', 'location', 'relative', 'mtime', 'size'}.
+    Returns None if the config module can't be imported.
+    """
     try:
-        entries = []
-        for name in os.listdir(directory):
-            if name.lower().endswith(('.lds', '.ldf')):
-                full = os.path.join(directory, name)
-                if os.path.isfile(full):
-                    entries.append((os.path.getmtime(full), name))
-        entries.sort(reverse=True)
-        return [name for _, name in entries]
-    except OSError:
-        return []
+        from config import load_config, get_capture_directory
+    except ImportError:
+        return None
+    from pathlib import Path
+
+    config = load_config()
+    directories = []
+    seen = set()
+
+    try:
+        capture_dir = get_capture_directory()
+        if capture_dir and os.path.isdir(capture_dir):
+            directories.append(capture_dir)
+            seen.add(os.path.realpath(capture_dir))
+    except Exception:
+        pass
+
+    for d in config.get('processing_locations', []):
+        if d and os.path.isdir(d):
+            real = os.path.realpath(d)
+            if real not in seen:
+                directories.append(d)
+                seen.add(real)
+
+    entries = []
+    for d in directories:
+        base = Path(d)
+        for fp in base.glob('*'):
+            if not fp.is_file():
+                continue
+            if fp.suffix.lower() not in ('.lds', '.ldf'):
+                continue
+            try:
+                st = fp.stat()
+            except OSError:
+                continue
+            entries.append({
+                'path': str(fp),
+                'location': str(base),
+                'relative': fp.name,
+                'mtime': st.st_mtime,
+                'size': st.st_size,
+            })
+    entries.sort(key=lambda e: e['mtime'], reverse=True)
+    return entries
+
+
+def _select_capture_file():
+    """
+    List .lds/.ldf files across all enabled processing locations and prompt the
+    user to pick one. Falls back to a manual path entry if no locations are
+    configured or none contain capture files.
+
+    Returns an absolute path or None on cancel.
+    """
+    entries = _scan_processing_locations()
+
+    if entries is None:
+        # directory_manager not importable — last-resort fallback
+        sel = input("Path to .lds/.ldf file: ").strip()
+        if not sel:
+            print("Cancelled.")
+            return None
+        path = os.path.expanduser(sel)
+        if not os.path.isfile(path):
+            print(f"File not found: {path}")
+            return None
+        return path
+
+    if not entries:
+        print("No .lds/.ldf files found in any enabled processing location.")
+        print("Add or enable a location via Configuration menu → 4,2,")
+        print("or enter a path manually below (leave blank to cancel).")
+        sel = input("Path to .lds/.ldf file: ").strip()
+        if not sel:
+            return None
+        path = os.path.expanduser(sel)
+        if not os.path.isfile(path):
+            print(f"File not found: {path}")
+            return None
+        return path
+
+    # Show the list. Group by location for readability.
+    multi_location = len({e['location'] for e in entries}) > 1
+    print("Captures found in processing locations (newest first):")
+    print()
+    for i, e in enumerate(entries, 1):
+        size = _format_size(e['size'])
+        if multi_location:
+            print(f"  {i:2}. [{e['location']}] {e['relative']}  ({size})")
+        else:
+            print(f"  {i:2}. {e['relative']}  ({size})")
+    print()
+
+    while True:
+        sel = input(f"Select 1-{len(entries)} (or blank to cancel): ").strip()
+        if not sel:
+            print("Cancelled.")
+            return None
+        if sel.isdigit() and 1 <= int(sel) <= len(entries):
+            return entries[int(sel) - 1]['path']
+        print("Please enter a number from the list.")
 
 
 def _prompt_int(label, default, minimum=None, maximum=None):
