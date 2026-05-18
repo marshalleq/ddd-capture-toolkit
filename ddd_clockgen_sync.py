@@ -65,6 +65,133 @@ def _wrap_for_realtime(cmd):
     return cmd
 
 
+def verify_capture_environment():
+    """Pre-capture environment check. Returns a list of dicts:
+        {'name': str, 'status': 'PASS'|'WARN'|'SKIP', 'expected': str, 'actual': str, 'hint': str}
+
+    Verifies the load-bearing kernel/system settings that affect capture
+    reliability. Distro-portable: each check probes for its tool with
+    shutil.which() and SKIPs gracefully if the tool isn't installed
+    (e.g. tuned isn't ubiquitous outside Fedora/RHEL).
+
+    Read-only: no sudo, no state changes. Caller decides what to do with
+    the results.
+    """
+    import shutil
+    checks = []
+
+    # 1. usbcore.usbfs_memory_mb (libusb URB buffer cap)
+    try:
+        with open('/sys/module/usbcore/parameters/usbfs_memory_mb') as f:
+            v = f.read().strip()
+        status = 'PASS' if v == '1000' else 'WARN'
+        checks.append({
+            'name': 'usbfs_memory_mb',
+            'status': status,
+            'expected': '1000',
+            'actual': v,
+            'hint': 'Menu option 5 (re-apply USB buffer fix)',
+        })
+    except Exception:
+        checks.append({
+            'name': 'usbfs_memory_mb',
+            'status': 'SKIP',
+            'expected': '1000',
+            'actual': 'unreadable',
+            'hint': '',
+        })
+
+    # 2. vm.swappiness
+    if shutil.which('sysctl'):
+        try:
+            r = subprocess.run(['sysctl', '-n', 'vm.swappiness'],
+                               capture_output=True, text=True, timeout=2)
+            v = r.stdout.strip()
+            status = 'PASS' if v == '10' else 'WARN'
+            checks.append({
+                'name': 'vm.swappiness',
+                'status': status,
+                'expected': '10',
+                'actual': v,
+                'hint': 'Menu option 6 (re-apply swappiness fix)',
+            })
+        except Exception:
+            pass
+
+    # 3. chrt realtime capability (sox runs at SCHED_FIFO if granted)
+    if shutil.which('chrt'):
+        rt_ok = _can_use_realtime_audio()
+        checks.append({
+            'name': 'chrt cap_sys_nice',
+            'status': 'PASS' if rt_ok else 'WARN',
+            'expected': 'granted',
+            'actual': 'granted' if rt_ok else 'denied',
+            'hint': 'Menu option 11 (enable realtime audio priority)',
+        })
+
+    # 4. tuned active profile (only meaningful if tuned-adm exists)
+    if shutil.which('tuned-adm'):
+        try:
+            r = subprocess.run(['tuned-adm', 'active'],
+                               capture_output=True, text=True, timeout=5)
+            line = r.stdout.strip()
+            actual = line.split(':', 1)[1].strip() if ':' in line else line
+            status = 'PASS' if actual == 'latency-performance' else 'WARN'
+            checks.append({
+                'name': 'tuned profile',
+                'status': status,
+                'expected': 'latency-performance',
+                'actual': actual or 'unknown',
+                'hint': 'Menu option 12 (apply low-latency CPU profile)',
+            })
+        except Exception:
+            pass
+
+    # 5. tuned-ppd disabled (would otherwise revert option 12 on boot)
+    if shutil.which('systemctl'):
+        try:
+            r = subprocess.run(['systemctl', 'is-enabled', 'tuned-ppd'],
+                               capture_output=True, text=True, timeout=3)
+            v = r.stdout.strip()
+            if v in ('enabled', 'enabled-runtime'):
+                checks.append({
+                    'name': 'tuned-ppd',
+                    'status': 'WARN',
+                    'expected': 'disabled',
+                    'actual': v,
+                    'hint': 'Menu option 13 (override desktop power mgmt)',
+                })
+            elif v in ('disabled', 'masked'):
+                checks.append({
+                    'name': 'tuned-ppd',
+                    'status': 'PASS',
+                    'expected': 'disabled',
+                    'actual': v,
+                    'hint': '',
+                })
+            # not-found / other: skip silently (no tuned-ppd on this system)
+        except Exception:
+            pass
+
+    return checks
+
+
+def _print_environment_check_table(checks):
+    """Render the verify_capture_environment() result as a small table."""
+    if not checks:
+        return
+    print()
+    print("PRE-CAPTURE ENVIRONMENT CHECK")
+    print("-" * 70)
+    name_w = max(len(c['name']) for c in checks)
+    for c in checks:
+        line = f"  {c['name']:<{name_w}}  {c['status']:<4}  expected={c['expected']:<22} actual={c['actual']}"
+        print(line)
+        if c['status'] == 'WARN' and c['hint']:
+            print(f"  {'':<{name_w}}        -> fix: {c['hint']}")
+    print("-" * 70)
+
+
 def build_sox_command_with_device(output_filename, device_info):
     """Build sox command using pre-cached device info (no subprocess calls).
 
@@ -2559,6 +2686,22 @@ def start_capture_and_record():
     - Capture starts instantly when user presses Enter
     """
     print("--- Domesday Capture (Fast Start) ---")
+
+    # Pre-capture environment check: print PASS/WARN for each load-bearing
+    # kernel/system setting, prompt to proceed if anything is sub-optimal.
+    # Read-only; no sudo; portable across distros (each check SKIPs if its
+    # tool isn't present).
+    if sys.platform == 'linux':
+        checks = verify_capture_environment()
+        _print_environment_check_table(checks)
+        warns = [c for c in checks if c['status'] == 'WARN']
+        if warns:
+            print(f"\n{len(warns)} setting(s) above will reduce capture reliability.")
+            print("You can continue anyway, or quit and apply the menu options listed.")
+            choice = input("Continue with capture? (Y/n): ").strip().lower()
+            if choice == 'n':
+                print("Capture cancelled.")
+                return
 
     # Read configuration
     config = load_config()
