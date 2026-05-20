@@ -211,6 +211,172 @@ def _print_environment_check_table(checks):
     print("-" * 70)
 
 
+def build_audio_pipeline_with_device(output_filename, device_info):
+    """Build (sox_args, flac_args) for the sox|flac capture pipeline.
+
+    Why a pipeline instead of plain sox writing .flac directly:
+    Sox doing inline FLAC encoding holds up its own ALSA reads when an
+    encode frame takes a few extra ms. That stall lets the ALSA ring
+    buffer fill and samples get dropped (silent in sox's terminal
+    output, accumulating to seconds of audio drift over a multi-hour
+    capture - see SKILL.md "Sox often shows over-runs that aren't there"
+    + "Verifying gain on past captures"). Splitting the work across two
+    processes (sox reads + remixes, flac compresses) lets the kernel
+    schedule them on different cores; the encoding spike no longer
+    starves the read path.
+
+    Returns (sox_args, flac_args). Caller wires sox.stdout into flac.stdin.
+    """
+    import shutil as _shutil
+    device = device_info['device_id']
+    sample_rate = str(device_info.get('sample_rate', 78125))
+    bit_depth = str(device_info.get('bit_depth', 24))
+
+    if sys.platform == 'win32':
+        driver = 'waveaudio'
+    elif sys.platform == 'darwin':
+        driver = 'coreaudio'
+    else:
+        driver = 'alsa'
+
+    # Prefer system sox on Linux for ALSA support; conda sox is built without it
+    sox_cmd = 'sox'
+    if sys.platform == 'linux' and driver == 'alsa':
+        system_sox = '/usr/bin/sox'
+        if os.path.exists(system_sox):
+            sox_cmd = system_sox
+
+    flac_cmd = _shutil.which('flac')
+    if not flac_cmd:
+        raise RuntimeError(
+            "flac binary not found. Ensure the conda env is activated "
+            "(conda activate ddd-capture-toolkit) or install via your "
+            "package manager (Fedora: dnf install flac)."
+        )
+
+    # sox: ALSA in -> remix down to stereo -> raw 24-bit signed LE PCM on stdout
+    sox_args = [
+        sox_cmd,
+        '-t', driver,
+        '-r', sample_rate,
+        '-b', bit_depth,
+        '-c', '2',
+        device,
+        '--buffer', '8192',
+        '-t', 'raw',
+        '-L',
+        '-e', 'signed-integer',
+        '-b', '24',
+        '-c', '2',
+        '-',
+        'remix', '1', '2',
+    ]
+
+    # flac: raw PCM on stdin -> compressed .flac on disk.
+    # --lax is required because the clockgen-Lite rate (78125 Hz) is outside
+    # the FLAC Subset (which only specifies standard rates like 44.1k/48k/96k).
+    # The resulting file is still a valid FLAC; --lax just opts out of the
+    # hardware-playback compatibility constraint, which doesn't matter for
+    # archival captures decoded in software.
+    flac_args = [
+        flac_cmd,
+        '--silent',
+        '--force',
+        '--lax',
+        '--channels=2',
+        '--bps=24',
+        f'--sample-rate={sample_rate}',
+        '--sign=signed',
+        '--endian=little',
+        '-o', output_filename,
+        '-',
+    ]
+    return sox_args, flac_args
+
+
+def _launch_audio_pipeline(sox_args, flac_args, log_path):
+    """Spawn the sox|flac capture pipeline. Returns (sox_proc, flac_proc, log_file).
+
+    Both processes wrapped in chrt for realtime priority. Each process's stderr
+    is read in a small daemon thread that:
+      - echoes verbatim to the terminal (preserves sox VU meter + live output)
+      - writes a single timestamped line to <log_path> ONLY when the line
+        matches WARN/FAIL/over-run/ERROR keywords
+
+    Logging is deliberately minimal: no header, no per-byte work, no logging
+    of routine VU meter updates. CPU overhead is dominated by the verbatim
+    terminal echo (which would happen anyway in the old single-process path).
+    """
+    log_file = open(log_path, 'w', buffering=1)  # line buffered
+
+    sox_full = _wrap_for_realtime(sox_args)
+    flac_full = _wrap_for_realtime(flac_args)
+
+    sox_proc = subprocess.Popen(
+        sox_full,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+    )
+    flac_proc = subprocess.Popen(
+        flac_full,
+        stdin=sox_proc.stdout,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+    )
+    # Let sox receive SIGPIPE if flac dies first
+    sox_proc.stdout.close()
+
+    start_time = time.monotonic()
+    log_keywords = (b'WARN', b'FAIL', b'over-run', b'overrun', b'ERROR', b'fatal')
+
+    def _tee_stderr(proc, source):
+        buf = bytearray()
+        in_fd = proc.stderr.fileno()
+        out_fd = sys.stderr.fileno()
+        while True:
+            try:
+                chunk = os.read(in_fd, 1024)
+            except OSError:
+                break
+            if not chunk:
+                break
+            try:
+                os.write(out_fd, chunk)
+            except Exception:
+                pass
+            buf.extend(chunk)
+            # Extract complete lines (terminated by \n or \r) for logging
+            while True:
+                nl = buf.find(b'\n')
+                cr = buf.find(b'\r')
+                if nl < 0 and cr < 0:
+                    break
+                if nl < 0:
+                    i = cr
+                elif cr < 0:
+                    i = nl
+                else:
+                    i = min(nl, cr)
+                line = bytes(buf[:i]).strip()
+                del buf[:i + 1]
+                if line and any(kw in line for kw in log_keywords):
+                    elapsed = time.monotonic() - start_time
+                    h = int(elapsed // 3600)
+                    m = int((elapsed % 3600) // 60)
+                    s = elapsed % 60
+                    ts = f"{h:02d}:{m:02d}:{s:06.3f}"
+                    try:
+                        log_file.write(f"[{ts}] [{source}] {line.decode('utf-8', errors='replace')}\n")
+                    except Exception:
+                        pass
+
+    threading.Thread(target=_tee_stderr, args=(sox_proc, 'sox'), daemon=True).start()
+    threading.Thread(target=_tee_stderr, args=(flac_proc, 'flac'), daemon=True).start()
+
+    return sox_proc, flac_proc, log_file
+
+
 def build_sox_command_with_device(output_filename, device_info):
     """Build sox command using pre-cached device info (no subprocess calls).
 
@@ -293,10 +459,13 @@ def prepare_capture_resources(audio_output_path):
     print(f"Audio device ready: {device_info.get('device_name', device)} ({device})")
     print(f"   Sample rate: {sample_rate} Hz, Bit depth: {bit_depth}, Channels: {device_channels}")
 
-    # 4. Build sox command with cached device info (instant, no subprocess)
-    sox_command = build_sox_command_with_device(audio_output_path, device_info)
+    # 4. Build sox|flac pipeline (audio capture spec) with cached device info.
+    #    Returned tuple is consumed by shared_capture_process_fast.audio_capture_thread.
+    sox_args, flac_args = build_audio_pipeline_with_device(audio_output_path, device_info)
+    log_path = os.path.splitext(audio_output_path)[0] + '.capture.log'
+    audio_capture_spec = (sox_args, flac_args, log_path)
 
-    return sox_command, device_info
+    return audio_capture_spec, device_info
 
 
 def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_command):
@@ -378,17 +547,38 @@ def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_
         if audio_delay > 0:
             time.sleep(audio_delay)
 
+        # sox_command is now an audio_capture_spec tuple from prepare_capture_resources():
+        # (sox_args, flac_args, log_path). Launching the sox|flac pipeline puts FLAC
+        # encoding into a separate process so encoding CPU spikes can't stall sox's
+        # ALSA reads (the underlying cause of the long-capture drift we observed).
+        sox_args, flac_args, log_path = sox_command
         # FAST: Skip release_audio_device_before_capture() - already done in prepare_capture_resources
-        sox_process = subprocess.Popen(_wrap_for_realtime(sox_command))
+        sox_process, flac_process, capture_log = _launch_audio_pipeline(
+            sox_args, flac_args, log_path
+        )
 
         while not stop_event.is_set() and sox_process.poll() is None:
             if stop_event.wait(timeout=60):
                 break
 
-        # Use SIGINT (like Ctrl+C) for graceful sox shutdown instead of SIGTERM
+        # Use SIGINT (like Ctrl+C) for graceful sox shutdown.
+        # flac will then see EOF on its stdin, flush its frame buffer to disk, and exit.
         import signal
         sox_process.send_signal(signal.SIGINT)
         sox_process.wait()
+        try:
+            flac_process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            flac_process.terminate()
+            try:
+                flac_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                flac_process.kill()
+                flac_process.wait()
+        try:
+            capture_log.close()
+        except Exception:
+            pass
 
     # Start both threads
     video_thread = threading.Thread(target=video_capture_thread)

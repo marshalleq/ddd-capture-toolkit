@@ -48,6 +48,11 @@
       "decode": {
         "sub_deemphasis": true
       }
+    },
+    "test": {
+      "decode": {
+        "sub_deemphasis": true
+      }
     }
   }
 }
