@@ -73,25 +73,29 @@ def find_align_tool():
     
     return None
 
-def align_audio(input_wav, tbc_json, output_wav, sample_rate=78125):
+def align_audio(input_audio, tbc_json, output_audio, sample_rate=78125):
     """
-    Align VHS audio using the decode pipeline
-    
+    Align VHS audio using the decode pipeline.
+
+    Output format is determined by the file extension of ``output_audio`` (sox
+    inspects the extension). ``.flac`` is preferred — WAV is limited to 4 GB
+    which gets hit on tapes longer than ~2.5 hours at 24-bit/78125 Hz.
+
     Args:
-        input_wav: Path to input WAV file
+        input_audio: Path to input audio file (WAV or FLAC)
         tbc_json: Path to corresponding TBC JSON file
-        output_wav: Path for aligned output WAV file  
+        output_audio: Path for aligned output (prefer .flac over .wav)
         sample_rate: Sample rate for processing (default: 78125 Hz)
     """
-    
+
     print(f"Starting VHS audio alignment...")
-    print(f"   Input:  {input_wav}")
+    print(f"   Input:  {input_audio}")
     print(f"   TBC:    {tbc_json}")
-    print(f"   Output: {output_wav}")
-    
+    print(f"   Output: {output_audio}")
+
     # Check inputs exist
-    if not os.path.exists(input_wav):
-        print(f"Input WAV file not found: {input_wav}")
+    if not os.path.exists(input_audio):
+        print(f"Input audio file not found: {input_audio}")
         return False
         
     if not os.path.exists(tbc_json):
@@ -115,7 +119,7 @@ def align_audio(input_wav, tbc_json, output_wav, sample_rate=78125):
     try:
         # Step 1: SOX input processing (matches working Mac command)
         sox_input_cmd = [
-            'sox', '-D', input_wav, 
+            'sox', '-D', input_audio, 
             '-t', 'raw', 
             '-b', '24', 
             '-c', '2', 
@@ -150,7 +154,7 @@ def align_audio(input_wav, tbc_json, output_wav, sample_rate=78125):
             '-L',
             '-e', 'signed-integer',
             '-',
-            output_wav
+            output_audio
         ]
         
         print("Running alignment pipeline...")
@@ -174,8 +178,8 @@ def align_audio(input_wav, tbc_json, output_wav, sample_rate=78125):
         
         # Check if successful
         if proc3.returncode == 0:
-            if os.path.exists(output_wav):
-                output_size = os.path.getsize(output_wav) / (1024*1024)  # MB
+            if os.path.exists(output_audio):
+                output_size = os.path.getsize(output_audio) / (1024*1024)  # MB
                 print(f"Audio alignment completed successfully!")
                 print(f"   Output file: {output_size:.1f} MB")
                 return True
@@ -207,9 +211,9 @@ Examples:
         """
     )
     
-    parser.add_argument('input_wav', nargs='?', help='Input WAV file from VHS capture')
-    parser.add_argument('tbc_json', nargs='?', help='TBC JSON file with RF timing data')  
-    parser.add_argument('output_wav', nargs='?', help='Output aligned WAV file')
+    parser.add_argument('input_audio', nargs='?', help='Input audio file (WAV or FLAC) from VHS capture')
+    parser.add_argument('tbc_json', nargs='?', help='TBC JSON file with RF timing data')
+    parser.add_argument('output_audio', nargs='?', help='Output aligned audio file (prefer .flac; .wav has 4 GB limit)')
     parser.add_argument('--sample-rate', type=int, default=78125, 
                        help='Sample rate for processing (default: 78125 Hz)')
     parser.add_argument('--check-deps', action='store_true',
@@ -252,7 +256,7 @@ Examples:
         return 0
     
     # Validate required arguments for alignment
-    if not all([args.input_wav, args.tbc_json, args.output_wav]):
+    if not all([args.input_audio, args.tbc_json, args.output_audio]):
         print("Missing required arguments for audio alignment")
         print("Usage: python vhs_audio_align.py input.wav timing.tbc.json output.wav")
         print("Or use: python vhs_audio_align.py --check-deps")
@@ -262,11 +266,11 @@ Examples:
     print()
     
     # Run alignment
-    success = align_audio(args.input_wav, args.tbc_json, args.output_wav, args.sample_rate)
+    success = align_audio(args.input_audio, args.tbc_json, args.output_audio, args.sample_rate)
     
     if success:
         print("Audio alignment completed successfully!")
-        print(f"   Aligned audio saved to: {args.output_wav}")
+        print(f"   Aligned audio saved to: {args.output_audio}")
         return 0
     else:
         print("Audio alignment failed")
