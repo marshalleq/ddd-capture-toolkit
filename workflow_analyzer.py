@@ -185,31 +185,43 @@ class WorkflowAnalyzer:
         return False
     
     def _is_step_failed(self, step: WorkflowStep, project: Project) -> bool:
-        """Check if step has failed"""
-        # First check if step is actually complete with valid output files
-        # If files exist and are valid, ignore old failed jobs
+        """Check if step has failed.
+
+        Looks at the most-recent job for this project + step only. Old failed
+        jobs are ignored once a newer attempt (queued/running/completed/cancelled)
+        exists, so re-imported captures don't inherit prior failure indicators.
+        Use 'clean failed' to wipe stale entries explicitly.
+        """
+        # If the step has valid output files, any prior failure is moot
         if self._is_step_complete(step, project):
             return False
-        
-        # Check job queue for failed jobs only if step is not actually complete
+
         if self.job_manager:
             job_type = self._get_job_type_for_step(step)
             if job_type:
-                # Use non-blocking method with timeout to avoid UI freezing
-                failed_jobs = self.job_manager.get_jobs_nonblocking(JobStatus.FAILED, timeout=0.1)
-                if failed_jobs is not None:  # Only process if we got a response
-                    for job in failed_jobs:
-                        if (job.job_type == job_type and 
-                            self._is_job_for_project(job, project)):
+                all_jobs = self.job_manager.get_jobs_nonblocking(timeout=0.1)
+                if all_jobs is not None:
+                    matching = [
+                        j for j in all_jobs
+                        if j.job_type == job_type and self._is_job_for_project(j, project)
+                    ]
+                    if matching:
+                        latest = max(matching, key=lambda j: j.created_at)
+                        # Only treat as failed if the latest attempt failed.
+                        # Any newer queued/running/completed/cancelled job hides
+                        # earlier failures.
+                        if latest.status == JobStatus.FAILED:
                             return True
-        
-        # Check for suspicious output files (exist but too small)
+                        return False
+
+        # No matching jobs at all — fall back to detecting a suspiciously small
+        # output file as evidence of a prior failure that left a ghost behind.
         expected_file = self._get_expected_output_file(step, project)
         if expected_file and os.path.exists(expected_file):
             file_size = os.path.getsize(expected_file)
             if file_size < 1024:  # Less than 1KB is suspicious
                 return True
-                
+
         return False
     
     def _is_step_complete(self, step: WorkflowStep, project: Project) -> bool:

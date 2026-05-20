@@ -400,12 +400,35 @@ class JobQueueManager:
                 if job.job_id == job_id:
                     if job.status == JobStatus.RUNNING:
                         return False  # Cannot remove running job
-                    
+
                     del self.jobs[i]
                     self.save_queue()
                     self.logger.info(f"Removed job {job_id}")
                     return True
         return False
+
+    def remove_jobs_by_status(self, statuses) -> int:
+        """Remove all jobs whose status is in `statuses`.
+
+        Active jobs (QUEUED, RUNNING) are never affected unless explicitly
+        included. Returns the number of jobs removed.
+        """
+        status_set = set(statuses)
+        with self.lock:
+            before = len(self.jobs)
+            # Never remove RUNNING jobs even if asked, as a safety net.
+            self.jobs = [
+                j for j in self.jobs
+                if not (j.status in status_set and j.status != JobStatus.RUNNING)
+            ]
+            removed = before - len(self.jobs)
+            if removed:
+                self.save_queue()
+                self.logger.info(
+                    f"Removed {removed} job(s) with status in "
+                    f"{[s.value for s in status_set]}"
+                )
+            return removed
     
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a job (mark as cancelled, stop if running)"""

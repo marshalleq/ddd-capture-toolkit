@@ -438,18 +438,25 @@ class WorkflowControlCentre:
                 if status is None:
                     status_content.append("Job Status: Unavailable (busy)", style="red")
                 else:
-                    # Queue statistics
-                    status_content.append(f"Total Jobs: {status.get('total_jobs', 0)}", style="white")
+                    # Current activity
+                    active = status.get('running', 0) + status.get('queued', 0)
+                    status_content.append(f"Active: {active}", style="white")
                     status_content.append(" | ", style="dim")
                     status_content.append(f"Running: {status.get('running', 0)}", style="green")
                     status_content.append(" | ", style="dim")
                     status_content.append(f"Queued: {status.get('queued', 0)}", style="yellow")
-                    
+
                     if status.get('failed', 0) > 0:
                         status_content.append(" | ", style="dim")
                         status_content.append(f"Failed: {status.get('failed', 0)}", style="red")
-                    
+
+                    # Lifetime counter (cumulative; reset via 'clean history')
                     status_content.append("\n")
+                    status_content.append(
+                        f"Lifetime: {status.get('total_jobs', 0)}",
+                        style="dim",
+                    )
+                    status_content.append(" | ", style="dim")
                     processor_status = "Running" if status.get('processor_running', False) else "Stopped"
                     processor_style = "green" if status.get('processor_running', False) else "red"
                     status_content.append(f"Processor: {processor_status}", style=processor_style)
@@ -758,14 +765,23 @@ class WorkflowControlCentre:
             else:
                 self.message = f"Invalid force command format. Use: force 1e, force 2d, etc."
 
-        # Clean command to reset stuck progress displays
+        # Clean command to reset stuck progress displays or bulk-clear history
         elif cmd.startswith('clean '):
             clean_cmd = cmd[6:].strip()
             clean_match = re.match(r'^(\d+)([dmaef])$', clean_cmd)
             if clean_match:
                 self.handle_clean_command(int(clean_match.group(1)), clean_match.group(2))
+            elif clean_cmd == 'failed':
+                self.handle_clean_history(['failed'])
+            elif clean_cmd == 'cancelled':
+                self.handle_clean_history(['cancelled'])
+            elif clean_cmd == 'history':
+                self.handle_clean_history(['failed', 'cancelled', 'completed'])
             else:
-                self.message = f"Invalid clean command format. Use: clean 1e, clean 2d, etc."
+                self.message = (
+                    "Invalid clean command. Use: 'clean 1e' (per-step), "
+                    "'clean failed', 'clean cancelled', or 'clean history'."
+                )
 
         # Bulk stop / cancel commands. Must match before the generic 'stop '
         # prefix so 'stop all' doesn't fall into the regex path.
@@ -2270,7 +2286,40 @@ class WorkflowControlCentre:
                 self.message = f"Error cleaning {step_name} jobs: {str(e)}"
         else:
             self.message = f"Job manager not available - cannot clean {step_name} jobs"
-    
+
+    def handle_clean_history(self, status_names):
+        """Bulk-remove finished jobs from the queue by status name.
+
+        Accepted status names: 'failed', 'cancelled', 'completed'. Active jobs
+        (queued, running) are never touched. Used by the 'clean failed',
+        'clean cancelled', and 'clean history' commands to reset the lifetime
+        counters in the System Status panel.
+        """
+        if not self.job_manager:
+            self.message = "Job manager not available - cannot clean job history"
+            return
+
+        from job_queue_manager import JobStatus
+        name_to_status = {
+            'failed': JobStatus.FAILED,
+            'cancelled': JobStatus.CANCELLED,
+            'completed': JobStatus.COMPLETED,
+        }
+        statuses = [name_to_status[n] for n in status_names if n in name_to_status]
+        if not statuses:
+            self.message = "Nothing to clean — unknown status name(s)."
+            return
+
+        try:
+            removed = self.job_manager.remove_jobs_by_status(statuses)
+            label = "/".join(status_names)
+            if removed:
+                self.message = f"✓ Removed {removed} {label} job(s) from history"
+            else:
+                self.message = f"No {label} jobs to remove"
+        except Exception as e:
+            self.message = f"Error cleaning {','.join(status_names)} jobs: {e}"
+
     def _check_step_output_exists(self, project, workflow_step):
         """Check if the output file for a workflow step actually exists
         
@@ -2501,7 +2550,10 @@ class WorkflowControlCentre:
         print("  stop 1e - Stop a job for project+step (cancels queued, terminates running)")
         print("  stop all - Stop everything immediately (terminate running + cancel queued)")
         print("  cancel queue - Cancel all queued jobs, leave running jobs to finish")
-        print("  clean 1e - Reset stuck progress displays for failed jobs")
+        print("  clean 1e - Reset stuck progress displays for one step")
+        print("  clean failed - Remove all failed jobs from history (resets Failed counter)")
+        print("  clean cancelled - Remove all cancelled jobs from history")
+        print("  clean history - Remove all finished jobs (failed + cancelled + completed)")
         print("  H - Show this help")
         print("  Q - Quit the Workflow Control Centre")
         
@@ -2552,7 +2604,7 @@ def simple_workflow_interface():
                 print("=" * 20)
                 print(f"Capture Directory: {capture_dir}")
                 print(f"Job Processor: {'Running' if status['processor_running'] else 'Stopped'}")
-                print(f"Total Jobs: {status['total_jobs']}")
+                print(f"Lifetime Jobs: {status['total_jobs']}  (cumulative; reset via 'clean history')")
                 print(f"  Running: {status['running']}")
                 print(f"  Queued: {status['queued']}")
                 print(f"  Completed: {status['completed']}")
