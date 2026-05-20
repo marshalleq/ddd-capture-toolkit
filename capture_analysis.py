@@ -222,7 +222,7 @@ def print_report(stats):
     print(f"max sample   : {stats['raw_max']}")
     print(f"mean sample  : {stats['raw_mean']:.1f}    (ideal centre: 512)")
     print(f"AC RMS       : {stats['rms_normalised']:.3f}    "
-          f"(DdD-style 0..1 normalised; aim ~0.30-0.45)")
+          f"(DdD-style 0..1 normalised; see VERDICT below)")
     print()
     print("--- CLIPPING ---")
     print(f"low rail  (raw=0)    : {stats['clipped_low']:,}")
@@ -247,18 +247,46 @@ def print_report(stats):
 
 
 def _verdict(stats):
-    """Heuristic verdict combining clipping rate and AC RMS."""
+    """
+    Tiered verdict calibrated against user-judged reference captures:
+      Test4: 0.0069% clipping, RMS 0.248 -> Excellent
+      Test3: 0.0145% clipping, RMS 0.285 -> Good
+      Test2: 0.0245% clipping, RMS 0.316 -> OK
+
+    Ladder (lowest clipping wins, but extreme RMS overrides):
+      < 0.01%  EXCELLENT   only unavoidable sync-pulse clipping
+      < 0.02%  GOOD        clean capture, minor transient clipping
+      < 0.05%  OK          acceptable, slightly more headroom would help
+      < 0.2%   FAIR        usable but worth tightening
+      < 0.5%   MILD CLIPPING
+      >= 0.5%  HEAVY CLIPPING
+    RMS overrides:
+      > 0.55   SIGNAL HOT  (too much amplification, reduce gain)
+      < 0.15   SIGNAL LOW  (risk of quantization noise)
+    """
     clip = stats['clipped_pct']
     rms = stats['rms_normalised']
-    if clip > 0.5:
-        return f"HEAVY CLIPPING ({clip:.2f}%) — reduce gain"
-    if clip > 0.1:
-        return f"MILD CLIPPING ({clip:.3f}%) — consider reducing gain"
-    if rms < 0.20:
-        return f"SIGNAL LOW (RMS {rms:.3f}) — consider raising gain"
+
+    # Heavy clipping is always the most actionable diagnosis
+    if clip >= 0.5:
+        return f"HEAVY CLIPPING — {clip:.2f}% clipped, RMS {rms:.3f} (reduce gain)"
+
+    # Then RMS extremes — meaningful even when clipping is moderate
     if rms > 0.55:
-        return f"SIGNAL HOT (RMS {rms:.3f}) — likely clipping nearby, reduce gain"
-    return f"OK (clipping {clip:.4f}%, RMS {rms:.3f})"
+        return f"SIGNAL HOT — RMS {rms:.3f}, {clip:.3f}% clipped (reduce gain)"
+    if rms < 0.15:
+        return f"SIGNAL LOW — RMS {rms:.3f}, {clip:.4f}% clipped (raise gain)"
+
+    # Clipping-tier ladder for the healthy RMS range
+    if clip >= 0.2:
+        return f"MILD CLIPPING — {clip:.3f}% clipped, RMS {rms:.3f} (consider reducing gain)"
+    if clip >= 0.05:
+        return f"FAIR — {clip:.4f}% clipped, RMS {rms:.3f} (room to improve)"
+    if clip >= 0.02:
+        return f"OK — {clip:.4f}% clipped, RMS {rms:.3f} (more headroom would help)"
+    if clip >= 0.01:
+        return f"GOOD — {clip:.4f}% clipped, RMS {rms:.3f} (clean capture)"
+    return f"EXCELLENT — {clip:.4f}% clipped, RMS {rms:.3f} (only unavoidable sync-pulse clipping)"
 
 
 def interactive_analyse():
