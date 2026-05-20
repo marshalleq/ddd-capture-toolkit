@@ -8656,10 +8656,15 @@ def display_performance_settings_menu():
 
         # Import config functions
         sys.path.append('.')
-        from config import get_ffmpeg_threads, get_compress_use_gpu
+        from config import (
+            get_ffmpeg_threads, get_compress_use_gpu,
+            get_default_audio_resample_rate, get_default_audio_format,
+        )
 
         current_threads = get_ffmpeg_threads()
         gpu_compress = get_compress_use_gpu()
+        audio_rate = get_default_audio_resample_rate()
+        audio_format = get_default_audio_format()
 
         print("\nPERFORMANCE SETTINGS")
         print("=" * 25)
@@ -8671,30 +8676,104 @@ def display_performance_settings_menu():
         print(f"   (Controls CPU usage for video muxing operations)")
         print(f"Compress GPU Acceleration: {'ON' if gpu_compress else 'OFF'}")
         print(f"   (ld-compress -a / flaldf - requires OpenCL runtime; see docs/gpu-compression.md)")
+        print(f"Audio Resample Rate: {audio_rate}")
+        print(f"   (Default sample rate used by final-mux; per-project audio flags can override)")
+        print(f"Audio Format: {audio_format}")
+        print(f"   (Default audio codec used by final-mux; per-project audio flags can override)")
         print()
         print("PERFORMANCE OPTIONS:")
         print("=" * 25)
         print("1. Configure FFmpeg Thread Count")
         print("2. Toggle Compress GPU Acceleration")
-        print("3. View Performance Status")
-        print("4. Reset to Defaults")
+        print("3. Configure Audio Resample Rate")
+        print("4. Configure Audio Format")
+        print("5. View Performance Status")
+        print("6. Reset to Defaults")
         print("e. Return to Settings Menu")
 
-        selection = input("\nSelect option (1-4/e): ").strip().lower()
+        selection = input("\nSelect option (1-6/e): ").strip().lower()
 
         if selection == '1':
             configure_ffmpeg_threads()
         elif selection == '2':
             toggle_compress_gpu()
         elif selection == '3':
-            view_performance_status()
+            configure_audio_resample_rate()
         elif selection == '4':
+            configure_audio_format()
+        elif selection == '5':
+            view_performance_status()
+        elif selection == '6':
             reset_performance_defaults()
         elif selection == 'e':
             break  # Return to settings menu
         else:
-            print("Invalid selection. Please enter 1-4 or e.")
+            print("Invalid selection. Please enter 1-6 or e.")
             time.sleep(1)
+
+
+def configure_audio_resample_rate():
+    """Configure the default audio resample rate for final-mux."""
+    clear_screen()
+    display_header()
+    print("\nCONFIGURE AUDIO RESAMPLE RATE")
+    print("=" * 40)
+    print("Default sample rate used by the final-mux step.")
+    print("Per-project audio flags can override this default.")
+    print()
+
+    sys.path.append('.')
+    from config import get_default_audio_resample_rate, set_default_audio_resample_rate
+
+    current = get_default_audio_resample_rate()
+    print(f"Current setting: {current}")
+    print()
+    print("Options:")
+    print("  1. none    - Keep clockgen-Lite native 78125 Hz (no resample)")
+    print("  2. 48000   - 48 kHz (downsamples — loses data; only for editor compatibility)")
+    print("  3. 96000   - 96 kHz (RECOMMENDED — closest standard above native)")
+    print("  4. 192000  - 192 kHz (oversample, larger files)")
+    print()
+    choice = input("Select option (1-4) or press Enter to keep current: ").strip()
+    mapping = {'1': 'none', '2': '48000', '3': '96000', '4': '192000'}
+    if not choice:
+        print("No change.")
+    elif choice in mapping:
+        set_default_audio_resample_rate(mapping[choice])
+    else:
+        print(f"Invalid selection: {choice}")
+    time.sleep(1)
+
+
+def configure_audio_format():
+    """Configure the default audio codec for final-mux."""
+    clear_screen()
+    display_header()
+    print("\nCONFIGURE AUDIO FORMAT")
+    print("=" * 40)
+    print("Default audio codec used by the final-mux step.")
+    print("Per-project audio flags can override this default.")
+    print()
+
+    sys.path.append('.')
+    from config import get_default_audio_format, set_default_audio_format
+
+    current = get_default_audio_format()
+    print(f"Current setting: {current}")
+    print()
+    print("Options:")
+    print("  1. flac  - Lossless, compressed (RECOMMENDED — no file size limit)")
+    print("  2. wav   - Lossless, uncompressed (classic 4 GB limit)")
+    print()
+    choice = input("Select option (1-2) or press Enter to keep current: ").strip()
+    mapping = {'1': 'flac', '2': 'wav'}
+    if not choice:
+        print("No change.")
+    elif choice in mapping:
+        set_default_audio_format(mapping[choice])
+    else:
+        print(f"Invalid selection: {choice}")
+    time.sleep(1)
 
 
 def toggle_compress_gpu():

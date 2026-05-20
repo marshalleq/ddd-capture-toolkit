@@ -85,7 +85,7 @@ AUDIO_FLAGS = {
         'value_type': 'choice',
         'choices': ['none', '48000', '96000', '192000'],
         'label': 'Resample target rate',
-        'description': "Per-project override of the resample rate. SYSTEM DEFAULT IS 96000 (set in config.json: default_audio_resample_rate). Off (no value) uses the system default. Values: 'none' keeps clockgen-Lite native 78125 Hz; '96000' is the closest standard above 78125 and is recommended.",
+        'description': "Per-project override of the resample rate. SYSTEM DEFAULT IS 96000 (configure via VHS-Decode menu → Performance Settings → Audio Resample Rate). Off (no value) uses the system default. Values: 'none' keeps clockgen-Lite native 78125 Hz; '96000' is the closest standard above 78125 and is recommended.",
         'default': False
     },
     'audio_format': {
@@ -93,15 +93,15 @@ AUDIO_FLAGS = {
         'value_type': 'choice',
         'choices': ['flac', 'wav'],
         'label': 'Audio format override',
-        'description': "Per-project override of the audio codec. SYSTEM DEFAULT IS flac (set in config.json: default_audio_format). Off (no value) uses the system default. Values: 'flac' is lossless+compressed (no size limit); 'wav' is lossless+uncompressed (classic 4 GB limit).",
+        'description': "Per-project override of the audio codec. SYSTEM DEFAULT IS flac (configure via VHS-Decode menu → Performance Settings → Audio Format). Off (no value) uses the system default. Values: 'flac' is lossless+compressed (no size limit); 'wav' is lossless+uncompressed (classic 4 GB limit).",
         'default': False
     },
     # ---- Legacy boolean flags ----
     # Kept for backwards compatibility with projects that set them explicitly
     # (e.g. HongKong_Fixed_Audio sets output_wav=true). DO NOT default these to
     # True — that previously caused every project to silently override the
-    # system defaults from config.json. For new projects use resample_target /
-    # audio_format above.
+    # system defaults configured in Performance Settings. For new projects use
+    # resample_target / audio_format above.
     'resample_48k': {
         'cli_flag': None,
         'label': 'Force 48kHz (legacy)',
