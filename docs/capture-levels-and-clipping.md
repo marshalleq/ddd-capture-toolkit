@@ -370,7 +370,23 @@ Both are described as "WIP" in vhs-decode's own help text, so behaviour may evol
 
 **3. `--high_boost <multiplier>`** *(vhs-decode flag)*
 
-Adjusts the luma high-frequency boost during demod. Default varies by tape speed and is built into the tape format profile. Raising it sharpens but increases ringing; lowering it softens but reduces ringing. Setting it to 0 disables boost entirely. Currently only usable via direct CLI invocation (not yet exposed in the toolkit's per-project flag UI because it takes a numeric value, not a boolean).
+Adjusts the luma high-frequency boost during demod. Default (off) uses the tape-format profile value. Raising it sharpens but increases ringing; lowering it softens but reduces ringing. Setting it to 0 disables boost entirely.
+
+Configurable per-project via `config/project_flags.json` as a numeric value, e.g.:
+
+```json
+{
+  "projects": {
+    "MyTape": {
+      "decode": {
+        "high_boost": 0.5
+      }
+    }
+  }
+}
+```
+
+The WCC's flag UI doesn't yet have a numeric-input field; toggling the checkbox without a value is a no-op. Other value-bearing flags (`sharpness`, `chroma_decoder`, `chroma_gain`) work the same way — set the literal value in JSON. Boolean toggles (`sub_deemphasis`, `non_linear_deemphasis`, etc.) work directly from the UI.
 
 #### Lower-level deemphasis curve
 

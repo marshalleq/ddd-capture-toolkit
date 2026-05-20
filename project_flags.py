@@ -50,10 +50,20 @@ DECODE_FLAGS = {
         'description': 'Anti-ringing: alternative non-linear deemph mechanism. Often cleaner chroma side-effects than NLD on consumer 80s sources.',
         'default': False
     },
-    # NOTE: --high_boost takes a numeric multiplier (e.g. --high_boost 1.5),
-    # not a boolean. The current flag-definition format only supports binary
-    # toggles, so this is left out until value-bearing flag support is added.
-    # Re-enable by extending DECODE_FLAGS schema to carry a per-project value.
+    'high_boost': {
+        'cli_flag': '--high_boost',
+        'value_type': 'float',
+        'label': 'High frequency boost',
+        'description': 'Multiplier for luma HF boost during demod. Default (off) uses the tape-format profile value. Set 0 to disable boost; >1 sharpens (more ringing); <1 softens (less ringing).',
+        'default': False  # off = use tape-format profile default
+    },
+    'sharpness': {
+        'cli_flag': '--sharpness',
+        'value_type': 'int',
+        'label': 'Sharpness filter (0-100)',
+        'description': 'Crude post-demod sharpness filter. Off by default; experiment with low values (10-30) if the picture needs subtle detail enhancement.',
+        'default': False
+    },
     'nodd': {
         'cli_flag': '--nodd',
         'label': 'No dropout detect',
@@ -117,6 +127,22 @@ EXPORT_FLAGS = {
         'cli_flag': '--no-dropout-correct',
         'label': 'No dropout correction',
         'description': 'Disable dropout correction',
+        'default': False
+    },
+    'chroma_decoder': {
+        'cli_flag': '--chroma-decoder',
+        'value_type': 'choice',
+        'choices': ['PAL2D', 'TRANSFORM2D', 'TRANSFORM3D',
+                    'NTSC1D', 'NTSC2D', 'NTSC3D', 'NTSC3DNOADAPT'],
+        'label': 'Chroma decoder override',
+        'description': 'Override the chroma decoder. Default (off) uses PAL2D for PAL S-Video / NTSC2D for NTSC S-Video. TRANSFORM2D/3D give cleaner chroma in some cases but can expose mottling in saturated reds.',
+        'default': False
+    },
+    'chroma_gain': {
+        'cli_flag': '--chroma-gain',
+        'value_type': 'float',
+        'label': 'Chroma gain multiplier',
+        'description': 'Pre-encoding chroma gain. Default (off) uses 1.0. Saturation tweaks are usually better done in your NLE / colour grader; this is useful mainly for normalising saturation across decoder comparisons.',
         'default': False
     },
 }
@@ -290,22 +316,33 @@ class ProjectFlagsManager:
 
         cli_flags = []
         for flag_key, flag_def in flag_defs.items():
-            default_value = flag_def.get('default', False)
-            # Check explicit setting, fall back to default
-            if flag_key in type_flags:
-                enabled = type_flags[flag_key]
-            else:
-                enabled = default_value
+            value_type = flag_def.get('value_type', 'bool')
+            default = flag_def.get('default', False)
 
-            if enabled:
-                cli_flag = flag_def.get('cli_flag')
-                if not cli_flag:
-                    continue  # internal-only flag (no CLI passthrough)
+            # Per-project setting overrides the schema default
+            setting = type_flags.get(flag_key, default)
+
+            cli_flag = flag_def.get('cli_flag')
+            if not cli_flag:
+                continue  # internal-only flag (no CLI passthrough)
+
+            if value_type == 'bool':
+                # Binary toggle. Static cli_value (if any) is the second arg.
+                if setting:
+                    cli_flags.append(cli_flag)
+                    static_value = flag_def.get('cli_value')
+                    if static_value is not None:
+                        cli_flags.append(str(static_value))
+            else:
+                # Value-bearing flag (float / int / choice). The setting is the
+                # value to pass; False/None/empty disables. A bare True from a
+                # toggle UI without a value is treated as "no-op" rather than
+                # emitting an invalid 'True' argument — set the value in
+                # project_flags.json directly (e.g. "high_boost": 1.5).
+                if setting is False or setting is None or setting == '' or setting is True:
+                    continue
                 cli_flags.append(cli_flag)
-                # Two-arg flags (e.g. --field-order bff) carry their value in cli_value.
-                cli_value = flag_def.get('cli_value')
-                if cli_value is not None:
-                    cli_flags.append(str(cli_value))
+                cli_flags.append(str(setting))
         return cli_flags
 
     def get_enabled_flag_labels(self, project_name: str, flag_type: str = 'export') -> List[str]:
