@@ -85,7 +85,7 @@ AUDIO_FLAGS = {
         'value_type': 'choice',
         'choices': ['none', '48000', '96000', '192000'],
         'label': 'Resample target rate',
-        'description': "Override the system default resample rate (config.json: default_audio_resample_rate). 'none' keeps clockgen-Lite native 78125 Hz; '96000' is recommended (closest standard above 78125, NLEs accept it). Off (no value) uses the system default.",
+        'description': "Per-project override of the resample rate. SYSTEM DEFAULT IS 96000 (set in config.json: default_audio_resample_rate). Off (no value) uses the system default. Values: 'none' keeps clockgen-Lite native 78125 Hz; '96000' is the closest standard above 78125 and is recommended.",
         'default': False
     },
     'audio_format': {
@@ -93,7 +93,7 @@ AUDIO_FLAGS = {
         'value_type': 'choice',
         'choices': ['flac', 'wav'],
         'label': 'Audio format override',
-        'description': "Override the system default audio codec (config.json: default_audio_format). 'flac' is lossless+compressed (no size limit); 'wav' is lossless+uncompressed (4 GB limit). Off (no value) uses the system default.",
+        'description': "Per-project override of the audio codec. SYSTEM DEFAULT IS flac (set in config.json: default_audio_format). Off (no value) uses the system default. Values: 'flac' is lossless+compressed (no size limit); 'wav' is lossless+uncompressed (classic 4 GB limit).",
         'default': False
     },
     # ---- Legacy boolean flags ----
@@ -105,13 +105,13 @@ AUDIO_FLAGS = {
     'resample_48k': {
         'cli_flag': None,
         'label': 'Force 48kHz (legacy)',
-        'description': 'Legacy override forcing 48kHz resample. Prefer resample_target above. Only honoured if explicitly set on a project.',
+        'description': 'Legacy override forcing 48kHz resample. SYSTEM DEFAULT IS 96000 — enabling this downsamples below the captured 78125 Hz, which loses data. Prefer resample_target above. Only honoured if explicitly set on a project.',
         'default': False
     },
     'output_wav': {
         'cli_flag': None,
         'label': 'Force WAV (legacy)',
-        'description': 'Legacy override forcing WAV output. Prefer audio_format above. Only honoured if explicitly set on a project.',
+        'description': 'Legacy override forcing WAV output. SYSTEM DEFAULT IS flac. Prefer audio_format above. Only honoured if explicitly set on a project.',
         'default': False
     },
 }
