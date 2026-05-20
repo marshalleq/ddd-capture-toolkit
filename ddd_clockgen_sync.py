@@ -177,15 +177,34 @@ def verify_capture_environment():
 
 
 def _print_environment_check_table(checks):
-    """Render the verify_capture_environment() result as a small table."""
+    """Render the verify_capture_environment() result as a small table.
+
+    PASS rows render in green, WARN rows in bright yellow/orange. ANSI
+    escapes are emitted only when stdout is a tty so logs/redirected
+    output stay plain.
+    """
     if not checks:
         return
+
+    use_color = sys.stdout.isatty()
+    GREEN = '\033[92m' if use_color else ''
+    ORANGE = '\033[93m' if use_color else ''
+    BOLD = '\033[1m' if use_color else ''
+    RESET = '\033[0m' if use_color else ''
+
+    def colorise(status):
+        if status == 'PASS':
+            return f'{GREEN}{BOLD}{status:<4}{RESET}'
+        if status == 'WARN':
+            return f'{ORANGE}{BOLD}{status:<4}{RESET}'
+        return f'{status:<4}'
+
     print()
     print("PRE-CAPTURE ENVIRONMENT CHECK")
     print("-" * 70)
     name_w = max(len(c['name']) for c in checks)
     for c in checks:
-        line = f"  {c['name']:<{name_w}}  {c['status']:<4}  expected={c['expected']:<22} actual={c['actual']}"
+        line = f"  {c['name']:<{name_w}}  {colorise(c['status'])}  expected={c['expected']:<22} actual={c['actual']}"
         print(line)
         if c['status'] == 'WARN' and c['hint']:
             print(f"  {'':<{name_w}}        -> fix: {c['hint']}")
