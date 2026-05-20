@@ -1,18 +1,4 @@
 {
   "version": 1,
-  "projects": {
-    "Australia trip (1987)": {
-      "enabled": true,
-      "segment_type": "time_range",
-      "start_time": "00:00",
-      "duration": "05:00",
-      "end_time": "05:00",
-      "start_frame_pal": 0,
-      "frame_count_pal": 7500,
-      "start_frame_ntsc": 0,
-      "frame_count_ntsc": 8991,
-      "description": "First 5 minutes",
-      "created": "2026-05-20T17:58:32.083214"
-    }
-  }
+  "projects": {}
 }
