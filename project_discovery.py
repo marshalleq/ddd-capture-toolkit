@@ -211,9 +211,9 @@ class ProjectDiscovery:
                 project.output_files['compress'] = filepath
         elif file_ext in self.RF_EXTENSIONS:
             project.capture_files['video'] = filepath
-        elif file_ext in self.AUDIO_EXTENSIONS and not filename.endswith('_aligned.wav'):
+        elif file_ext in self.AUDIO_EXTENSIONS and not filename.endswith(('_aligned.flac', '_aligned.wav')):
             project.capture_files['audio'] = filepath
-        elif filename.endswith('_aligned.wav'):
+        elif filename.endswith(('_aligned.flac', '_aligned.wav')):
             project.output_files['align'] = filepath
         elif file_ext == '.tbc':
             # Skip chroma TBC files - these are handled internally by tbc-video-export
