@@ -2670,14 +2670,9 @@ def manual_audio_alignment():
             input("\nPress Enter to return to menu...")
             return
         
-        # Generate output aligned audio filename (support both WAV and FLAC)
-        if audio_ext == '.wav':
-            aligned_audio_file = audio_file_path.replace('.wav', '_aligned.wav')
-        elif audio_ext == '.flac':
-            aligned_audio_file = audio_file_path.replace('.flac', '_aligned.wav')  # Output as WAV
-        else:
-            # Fallback for other extensions
-            aligned_audio_file = os.path.splitext(audio_file_path)[0] + '_aligned.wav'
+        # Generate output aligned audio filename. Output is FLAC (lossless,
+        # compressed, no 4 GB limit). final-mux accepts FLAC natively.
+        aligned_audio_file = os.path.splitext(audio_file_path)[0] + '_aligned.flac'
         
         print(f"\nSelected audio file: {os.path.basename(audio_file_path)}")
         print(f"TBC JSON file: {os.path.basename(tbc_json_file)}")

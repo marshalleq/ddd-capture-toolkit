@@ -43,6 +43,11 @@
       "export": {
         "field_order_bff": true
       }
+    },
+    "Australia trip (1987)": {
+      "decode": {
+        "sub_deemphasis": true
+      }
     }
   }
 }

@@ -1823,15 +1823,12 @@ class WorkflowControlCentre:
                     self.message = f"TBC JSON file not found for {project.name} (tried: {tbc_json_file})"
                     return False
                 
-                # Generate aligned audio output filename
-                audio_ext = os.path.splitext(audio_file)[1].lower()
-                if audio_ext == '.wav':
-                    aligned_audio_file = audio_file.replace('.wav', '_aligned.wav')
-                elif audio_ext == '.flac':
-                    aligned_audio_file = audio_file.replace('.flac', '_aligned.wav')  # Output as WAV
-                else:
-                    # Fallback for other extensions
-                    aligned_audio_file = os.path.splitext(audio_file)[0] + '_aligned.wav'
+                # Generate aligned audio output filename.
+                # Output is always FLAC: lossless, compressed, no 4 GB limit (WAV
+                # caps at ~4 GB which gets hit on tapes longer than ~2.5 h at
+                # 24-bit/78125 Hz). final-mux accepts FLAC natively and Resolve
+                # at 96 kHz reads it correctly.
+                aligned_audio_file = os.path.splitext(audio_file)[0] + '_aligned.flac'
                 
                 parameters = {
                     'audio_file': audio_file,
@@ -1878,24 +1875,25 @@ class WorkflowControlCentre:
                         if os.path.exists(potential_video):
                             video_file = potential_video
                 
-                # Try to find aligned audio file (_aligned.wav)
+                # Try to find aligned audio file (_aligned.flac preferred,
+                # _aligned.wav supported for legacy outputs)
                 if hasattr(project, 'output_files') and 'align' in project.output_files:
                     audio_file = project.output_files['align']
                 elif hasattr(project, 'aligned_audio_file'):
                     audio_file = project.aligned_audio_file
                 else:
-                    # Look for _aligned.wav files based on project base name
+                    base_name = None
                     if hasattr(project, 'capture_files') and 'audio' in project.capture_files:
-                        original_audio = project.capture_files['audio']
-                        base_name = os.path.splitext(original_audio)[0]
-                        potential_aligned = f"{base_name}_aligned.wav"
-                        if os.path.exists(potential_aligned):
-                            audio_file = potential_aligned
+                        base_name = os.path.splitext(project.capture_files['audio'])[0]
                     elif hasattr(project, 'audio_file') and project.audio_file:
                         base_name = os.path.splitext(project.audio_file)[0]
-                        potential_aligned = f"{base_name}_aligned.wav"
-                        if os.path.exists(potential_aligned):
-                            audio_file = potential_aligned
+
+                    if base_name:
+                        for ext in ('.flac', '.wav'):
+                            potential_aligned = f"{base_name}_aligned{ext}"
+                            if os.path.exists(potential_aligned):
+                                audio_file = potential_aligned
+                                break
                     
                     # If no aligned audio found, check for original audio (video-only case)
                     if not audio_file:

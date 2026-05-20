@@ -1835,7 +1835,7 @@ def analyze_alignment_with_tbc(audio_filename, tbc_json_filename):
         print("Running alignment analysis...")
         # Generate aligned filename based on the input audio filename
         base_name = os.path.splitext(os.path.basename(audio_filename))[0]
-        aligned_output = os.path.join(os.path.dirname(audio_filename), f"{base_name}_aligned.wav")
+        aligned_output = os.path.join(os.path.dirname(audio_filename), f"{base_name}_aligned.flac")
         result = subprocess.run([
             sys.executable, alignment_script, 
             audio_filename, tbc_json_filename, aligned_output
@@ -2429,16 +2429,16 @@ def _validate_calibration_with_configured_delay_DISABLED():
         aligned_audio_file = analyze_alignment_with_tbc(validation_capture_filename, tbc_json_file)
         
         # Wait for aligned file to be fully created
-        if aligned_audio_file and aligned_audio_file.endswith('_aligned.wav'):
+        if aligned_audio_file and aligned_audio_file.endswith(('_aligned.flac', '_aligned.wav')):
             print(f"Waiting for aligned audio file to be ready: {aligned_audio_file}")
             wait_for_file_ready(aligned_audio_file, max_wait_seconds=30)
-        
+
         if aligned_audio_file and os.path.exists(aligned_audio_file):
             print(f"\nMechanical alignment completed: {aligned_audio_file}")
             debug_log.append(f"Aligned audio file created: {os.path.basename(aligned_audio_file)}")
-            
+
             # Verify we're using the aligned file (debug info)
-            if aligned_audio_file.endswith('_aligned.wav'):
+            if aligned_audio_file.endswith(('_aligned.flac', '_aligned.wav')):
                 print(f"CONFIRMED: Using aligned audio file for analysis")
                 debug_log.append("Using aligned audio file for test pattern analysis")
             else:
@@ -2758,7 +2758,8 @@ def start_capture_and_record():
             '.tbc.json',      # TBC metadata
             '.tbc.lz4',       # Compressed TBC
             '_ffv1.mkv',      # Exported video
-            '_aligned.wav',   # Aligned audio
+            '_aligned.flac',  # Aligned audio (FLAC, current)
+            '_aligned.wav',   # Aligned audio (WAV, legacy)
             '_final.mkv'      # Final muxed output
         ]
         for ext in extensions:
@@ -3011,7 +3012,7 @@ def save_calibration_results(alignment_base_name, offset_seconds, delay_seconds,
                 "tbc_file": f"{alignment_base_name}.tbc",
                 "tbc_json_file": f"{alignment_base_name}.tbc.json",
                 "video_file": f"{alignment_base_name}_ffv1.mkv",
-                "aligned_audio_file": f"{alignment_base_name}_aligned.wav"
+                "aligned_audio_file": f"{alignment_base_name}_aligned.flac"
             },
             "calibration_status": {
                 "offset_within_tolerance": bool(abs(offset_seconds or 0) < 0.010),  # 10ms tolerance
