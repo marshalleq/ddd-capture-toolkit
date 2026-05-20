@@ -38,12 +38,22 @@ DECODE_FLAGS = {
         'description': 'Skip chroma decoding (for B&W sources)',
         'default': False
     },
-    'high_boost': {
-        'cli_flag': '--high_boost',
-        'label': 'High boost',
-        'description': 'Apply high frequency boost filter',
+    'non_linear_deemphasis': {
+        'cli_flag': '--non_linear_deemphasis',
+        'label': 'Non-linear deemphasis (NLD)',
+        'description': 'Anti-ringing: clip luma overshoots after demod. Reduces ringing on sharp edges; can soften luma slightly.',
         'default': False
     },
+    'sub_deemphasis': {
+        'cli_flag': '--sub_deemphasis',
+        'label': 'Sub deemphasis (SD)',
+        'description': 'Anti-ringing: alternative non-linear deemph mechanism. Often cleaner chroma side-effects than NLD on consumer 80s sources.',
+        'default': False
+    },
+    # NOTE: --high_boost takes a numeric multiplier (e.g. --high_boost 1.5),
+    # not a boolean. The current flag-definition format only supports binary
+    # toggles, so this is left out until value-bearing flag support is added.
+    # Re-enable by extending DECODE_FLAGS schema to carry a per-project value.
     'nodd': {
         'cli_flag': '--nodd',
         'label': 'No dropout detect',
