@@ -726,14 +726,18 @@ class JobQueueManager:
             
             self.logger.info(f"Starting VHS decode: {' '.join(cmd)}")
             
-            # Start process
+            # Start process. start_new_session puts the subprocess in its own
+            # process group so _terminate_job_process can signal the whole group
+            # without also killing the parent (which shares the controlling
+            # terminal's group otherwise).
             import subprocess
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                start_new_session=True
             )
 
             # Track the process for termination capability
@@ -1187,13 +1191,15 @@ class JobQueueManager:
             else:
                 self.logger.warning(f"Could not find conda environment with ffmpeg - TBC export may fail")
             
+            # start_new_session: see decode launch for rationale (avoid killing parent)
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
-                env=env
+                env=env,
+                start_new_session=True
             )
             
             # Track the process for termination
@@ -1458,13 +1464,15 @@ class JobQueueManager:
                     job.total_frames = input_file_size  # Use bytes as "frames" for progress calc
                     self.save_queue()
 
-                # Run the subprocess with proper output capture
+                # Run the subprocess with proper output capture.
+                # start_new_session: see decode launch for rationale (avoid killing parent)
                 process = subprocess.Popen(
                     alignment_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    bufsize=1
+                    bufsize=1,
+                    start_new_session=True
                 )
 
                 # Track the process for termination capability
@@ -1735,13 +1743,15 @@ class JobQueueManager:
                 job.progress = 20.0
                 self.save_queue()
             
-            # Run FFmpeg process with simple subprocess handling
+            # Run FFmpeg process with simple subprocess handling.
+            # start_new_session: see decode launch for rationale (avoid killing parent)
             process = subprocess.Popen(
                 ffmpeg_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                start_new_session=True
             )
 
             # Track the process for termination capability
@@ -2335,9 +2345,23 @@ class JobQueueManager:
                 self.logger.info(f"Terminating process {process.pid} for job {job_id}")
 
                 # Try to find the process group so we can signal pipeline children too.
+                # Critical safety check: if the subprocess shares the parent's process
+                # group (i.e. was launched without start_new_session=True), killpg
+                # would terminate the parent (and the entire WCC). Detect that case
+                # and fall back to single-PID signalling.
                 pgid = None
                 try:
-                    pgid = os.getpgid(process.pid)
+                    child_pgid = os.getpgid(process.pid)
+                    own_pgid = os.getpgid(0)
+                    if child_pgid == own_pgid:
+                        self.logger.warning(
+                            f"Process {process.pid} shares parent process group "
+                            f"({child_pgid}); falling back to single-PID terminate "
+                            "to avoid killing the parent. Launch this job with "
+                            "start_new_session=True to clean up pipeline children."
+                        )
+                    else:
+                        pgid = child_pgid
                 except (ProcessLookupError, OSError):
                     pass
 
