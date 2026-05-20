@@ -74,18 +74,45 @@ DECODE_FLAGS = {
 
 # Flag definitions for audio processing (final mux step)
 # Controls how audio is processed when muxing video and audio together.
+#
+# The system-wide defaults live in config.json under performance_settings:
+#   - default_audio_resample_rate (default '96000')
+#   - default_audio_format (default 'flac')
+# These per-project flags override the system defaults when set.
 AUDIO_FLAGS = {
-    'resample_48k': {
+    'resample_target': {
         'cli_flag': None,  # Internal flag, not a CLI passthrough
-        'label': 'Resample to 48kHz',
-        'description': 'Resample audio to 48kHz for DaVinci Resolve/editor compatibility',
-        'default': True
+        'value_type': 'choice',
+        'choices': ['none', '48000', '96000', '192000'],
+        'label': 'Resample target rate',
+        'description': "Override the system default resample rate (config.json: default_audio_resample_rate). 'none' keeps clockgen-Lite native 78125 Hz; '96000' is recommended (closest standard above 78125, NLEs accept it). Off (no value) uses the system default.",
+        'default': False
+    },
+    'audio_format': {
+        'cli_flag': None,
+        'value_type': 'choice',
+        'choices': ['flac', 'wav'],
+        'label': 'Audio format override',
+        'description': "Override the system default audio codec (config.json: default_audio_format). 'flac' is lossless+compressed (no size limit); 'wav' is lossless+uncompressed (4 GB limit). Off (no value) uses the system default.",
+        'default': False
+    },
+    # ---- Legacy boolean flags ----
+    # Kept for backwards compatibility with projects that set them explicitly
+    # (e.g. HongKong_Fixed_Audio sets output_wav=true). DO NOT default these to
+    # True — that previously caused every project to silently override the
+    # system defaults from config.json. For new projects use resample_target /
+    # audio_format above.
+    'resample_48k': {
+        'cli_flag': None,
+        'label': 'Force 48kHz (legacy)',
+        'description': 'Legacy override forcing 48kHz resample. Prefer resample_target above. Only honoured if explicitly set on a project.',
+        'default': False
     },
     'output_wav': {
-        'cli_flag': None,  # Internal flag, not a CLI passthrough
-        'label': 'Output as WAV',
-        'description': 'Output 24-bit WAV instead of FLAC',
-        'default': True
+        'cli_flag': None,
+        'label': 'Force WAV (legacy)',
+        'description': 'Legacy override forcing WAV output. Prefer audio_format above. Only honoured if explicitly set on a project.',
+        'default': False
     },
 }
 
