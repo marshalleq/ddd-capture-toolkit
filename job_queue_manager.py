@@ -1712,14 +1712,19 @@ class JobQueueManager:
                         flags_manager = ProjectFlagsManager()
                         audio_flags = flags_manager.get_project_flags(job.project_name, 'audio')
 
-                        # New string-valued flags
-                        if 'resample_target' in audio_flags:
-                            resample_target = str(audio_flags['resample_target'])
+                        # New choice-typed flags. Both are present in the schema
+                        # so get_project_flags always includes them; only treat
+                        # as an override when the value is a non-empty string
+                        # (False/None/'' mean "no override; use system default").
+                        rt = audio_flags.get('resample_target')
+                        if isinstance(rt, str) and rt:
+                            resample_target = rt
                         elif audio_flags.get('resample_48k', False):
                             resample_target = '48000'
 
-                        if 'audio_format' in audio_flags:
-                            audio_format = str(audio_flags['audio_format'])
+                        af = audio_flags.get('audio_format')
+                        if isinstance(af, str) and af:
+                            audio_format = af
                         elif audio_flags.get('output_wav', False):
                             audio_format = 'wav'
                     except Exception as e:
