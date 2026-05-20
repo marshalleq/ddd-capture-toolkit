@@ -356,7 +356,25 @@ Ringing — bright/dark halos adjacent to sharp edges, sometimes with visible de
 
 #### Decoder-side levers
 
-The de-emphasis curve in vhs-decode is parameterised by three values that appeared in the decode log's `RF Parameters` section:
+Try these in order. The first two are exposed as per-project toggles via the WCC's flag UI (`X` on a project → decode flags); both default to off.
+
+**1. `--sub_deemphasis` (SD)** *(vhs-decode flag, also `--sd`)*
+
+A non-linear deemphasis mechanism that reduces ringing without softening luma edges as much as NLD does. On consumer 80s sources this is often the cleanest single-flag win — reduces ringing visibly and produces fewer chroma side-effects than NLD. **First thing to try.**
+
+**2. `--non_linear_deemphasis` (NLD)** *(vhs-decode flag, also `--nld`)*
+
+Clips luma overshoots after demod. Stronger ringing reduction than SD on some sources, but softens luma transitions slightly, which can produce subtle chroma muddiness around edges (because the chroma decoder uses luma as a reference). Worth trying if SD alone isn't enough.
+
+Both are described as "WIP" in vhs-decode's own help text, so behaviour may evolve. Empirically, on 80s consumer camcorder source material, **SD alone tends to win** over NLD alone, the combination of both, or the default (no flag).
+
+**3. `--high_boost <multiplier>`** *(vhs-decode flag)*
+
+Adjusts the luma high-frequency boost during demod. Default varies by tape speed and is built into the tape format profile. Raising it sharpens but increases ringing; lowering it softens but reduces ringing. Setting it to 0 disables boost entirely. Currently only usable via direct CLI invocation (not yet exposed in the toolkit's per-project flag UI because it takes a numeric value, not a boolean).
+
+#### Lower-level deemphasis curve
+
+The de-emphasis curve in vhs-decode is parameterised by three values that appear in the decode log's `RF Parameters` section:
 
 ```
 deemph_tau   : 1.3e-06    (time constant)
@@ -364,17 +382,11 @@ deemph_mid   : 273755.82  (mid-frequency reference, Hz)
 deemph_q     : 0.462088   (filter Q factor)
 ```
 
-These have format-specific defaults (PAL vs NTSC, VHS vs S-VHS, etc.) but can be overridden via project flags or custom decode commands.
-
-The other relevant flag is:
-
-**`--high_boost <value>`** *(vhs-decode flag)*
-
-Adjusts the luma high-frequency boost during demod. Default varies by tape speed. Raising it sharpens but increases ringing; lowering it softens but reduces ringing. Useful when the deemphasis curve is approximately right but needs fine adjustment.
+These have format-specific defaults (PAL vs NTSC, VHS vs S-VHS, etc.) and can be overridden via custom decode invocation. Only worth touching after the simpler flags above don't get the result you want — the curve is sensitive to small changes and easy to make worse.
 
 #### Per-tape-format presets
 
-The vhs-decode project ships with documented parameter sets for different recording profiles:
+The vhs-decode project ships documented parameter sets for different recording profiles in its wiki (Tape Type / Format documentation):
 
 - Early VHS (1980s consumer recordings)
 - Late VHS (1990s+)
@@ -382,20 +394,20 @@ The vhs-decode project ships with documented parameter sets for different record
 - Camcorder EP-mode
 - Specific brand/model profiles where users have published tuned sets
 
-These are in the vhs-decode wiki under the "Tape Type" or "Format" documentation. A tape from a 1980s Panasonic camcorder may benefit substantially from a profile that better matches the original recording's emphasis characteristics, where the default profile is tuned for later commercial VHS.
+A tape from a 1980s consumer camcorder may benefit from a profile that better matches the original recording's emphasis characteristics, where the default profile is tuned for later commercial VHS.
 
 #### Experimental procedure for ringing
 
 Same Segment Mode approach as for chroma, with different parameters:
 
-1. Identify a frame range with sharp edges and visible ringing — high-contrast titles or text are ideal. Configure segment mode for that range.
+1. Identify a frame range with sharp edges and visible ringing — high-contrast titles, text, or a person against a contrasting background are ideal. Configure segment mode for that range.
 2. Run baseline export with current settings; keep as reference.
-3. Try `--high_boost -3` (negative values lower the boost). Compare.
-4. If a documented tape-format preset exists for your source (e.g. a 1980s consumer camcorder profile in the vhs-decode wiki), try those `deemph_*` overrides next.
-5. Compare visually. Ringing reduction usually trades against perceived sharpness — judge by which looks more natural rather than by which is "sharper."
-6. Save the winning combination per-project.
+3. Enable `--sub_deemphasis` (per-project flag) and re-decode. Compare.
+4. If SD alone isn't enough, try `--non_linear_deemphasis` instead, and the combination of both.
+5. If still not satisfactory, drop to direct CLI for `--high_boost` experiments (`--high_boost 0`, `--high_boost 0.5`, etc.) or look for a documented tape-format preset.
+6. Save the winning flag combination per-project via the WCC's flag UI (`X` on the project).
 
-For text-heavy or sharp-edge content (titles, on-screen graphics), aggressive ringing reduction is usually worth the slight softening. For motion-heavy natural content, milder adjustments preserve perceived detail.
+For text-heavy or sharp-edge content, aggressive ringing reduction is usually worth the slight softening. For motion-heavy natural content, milder adjustments preserve perceived detail.
 
 ### Shared workflow: Segment Mode parameter sweeps
 
@@ -409,6 +421,56 @@ Both artefact categories use the same iteration pattern, so it's worth describin
 6. **Save the winning combination.** Update the *real* project's `project_flags.json` with the chosen parameters. Reuse on similar tapes (same vintage, same camera, same deck) by referencing the same flag set.
 
 The iteration cost is roughly **15 minutes per parameter variant** for a 1000-frame segment on a modern CPU. So three or four variants is an evening's experimentation; full optimisation of a difficult tape might take a few sessions.
+
+### Worked example: ringing reduction on a 1980s consumer camcorder source
+
+A concrete example of the sweep process, on a tape recorded with a National Panasonic NV-180 (early-80s portable VHS, NZ market, PAL). Source had visible ringing on sharp luma edges. The test segment was 375 frames (15 s) at a moment with a person standing in front of three different backgrounds, one of them solid white — ideal for spotting ringing on a clear edge.
+
+**Round 1: decode-side flags**
+
+Four parallel decodes from the same `.lds`, identical other than the flags listed. ~90 s total wall time on a modern CPU (parallel).
+
+| Variant | Flags added | Result |
+|---|---|---|
+| baseline | (default toolkit flags) | Reference. Visible ringing. |
+| `--high_boost 0` | hb0 | Softer overall; ringing reduced but image looks noticeably less crisp. **Not preferred.** |
+| `--non_linear_deemphasis` | nld | Less ringing than baseline. Slight chroma muddiness around edges. |
+| both `--high_boost 0 --non_linear_deemphasis` | combined | Combines both effects. Not better than NLD alone. |
+
+NLD won round 1. Moving on to address the muddy chroma it introduced.
+
+**Round 2: chroma decoder sweep on the NLD output**
+
+Re-exported the NLD `.tbc` with three different chroma decoders. ~10 s per export (no re-decode needed).
+
+| Chroma decoder | Result |
+|---|---|
+| PAL2D *(default for PAL S-Video)* | Reference. Some muddiness around edges. |
+| TRANSFORM2D | Cleaner overall but exposes mottling in red regions. |
+| TRANSFORM3D | Cleanest chroma; mottling in reds more visible than PAL2D once saturation is matched. |
+
+The transform decoders produced visible mottling artefacts in saturated reds (a classic VHS chroma SNR issue exposed when surrounding chroma is cleaned up). PAL2D's general chroma softness masks the same artefact in the baseline. At matched saturation (via `--chroma-gain 1.8`), the mottling on transform decoders was *worse* than on PAL2D — confirming the transform decoders weren't actually solving the underlying chroma issue, just trading visible muddiness for visible mottling.
+
+**Round 3: alternative anti-ringing flag**
+
+Tried `--sub_deemphasis` (SD) instead of NLD, with PAL2D chroma decoder.
+
+| Variant | Result |
+|---|---|
+| `--sub_deemphasis` alone | Similar ringing reduction to NLD, but **without** the chroma muddiness. **Winner.** |
+| `--non_linear_deemphasis --sub_deemphasis` | Combined more aggressive than either alone, but no benefit over SD alone. |
+
+**Final winning combination for this tape vintage:**
+
+- Decode: `--sub_deemphasis` (and standard defaults: `--no_resample --recheck_phase --ire0_adjust`)
+- Chroma decoder: PAL2D (default for PAL S-Video)
+- Chroma gain: 1.0 (default — saturation adjusted in post if needed)
+
+**Why SD won where NLD didn't:** NLD operates by clipping luma overshoots after demodulation, which softens the luma edge slightly. The chroma decoder uses luma as a reference for burst alignment and comb filtering, so softer luma edges → less-precise chroma demodulation → bleed at edges. SD operates on a different stage of the deemphasis chain and doesn't introduce the same luma softening, so the chroma decoder gets a clean reference and produces cleaner edges.
+
+**Generalising to other tapes of similar vintage:** SD is worth trying first on any consumer 80s VHS or VHS-C recording. If it doesn't help or the source is from later commercial VHS, fall back to NLD. If neither works, the source may need lower-level deemphasis curve overrides or a documented tape-format preset.
+
+**On chroma-gain in decode vs saturation in post:** results above used `--chroma-gain` during the sweep to compare decoders at matched saturation. For final output, use `chroma-gain 1.0` (default) and apply saturation tweaks in your NLE / colour grader. Resolve specifically gives per-hue control (e.g. HSL qualifier on the red range) that's far more useful than a global gain multiplier at decode time.
 
 ---
 
