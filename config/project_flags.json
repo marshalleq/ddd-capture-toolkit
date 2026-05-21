@@ -53,6 +53,16 @@
       "decode": {
         "sub_deemphasis": true
       }
+    },
+    "calibration": {
+      "decode": {
+        "sub_deemphasis": true
+      }
+    },
+    "Mercer Takeaways": {
+      "decode": {
+        "sub_deemphasis": true
+      }
     }
   }
 }
