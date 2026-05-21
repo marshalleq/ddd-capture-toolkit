@@ -41,7 +41,7 @@ try:
     from directory_manager import DirectoryManager
     from job_queue_manager import get_job_queue_manager
     from project_status_display import ProjectStatusDisplay, DisplayConfig
-    from project_flags import ProjectFlagsManager, DECODE_FLAGS, EXPORT_FLAGS, AUDIO_FLAGS, get_flag_definitions
+    from project_flags import ProjectFlagsManager, DECODE_FLAGS, EXPORT_FLAGS, AUDIO_FLAGS, COMPRESS_FLAGS, get_flag_definitions
     from segment_config import load_segment_config, save_segment_config, toggle_segment_enabled, clear_segment_config, has_segment_config
     COMPONENTS_AVAILABLE = True
     SEGMENT_AVAILABLE = True
@@ -719,6 +719,8 @@ class WorkflowControlCentre:
         # Also supports flags: 1x (flags for project 1)
         coord_match = re.match(r'^(\d+)([dmaefx])$', cmd)
         coord_format_match = re.match(r'^(\d+)d([pn])$', cmd)
+        # Nmv: project N, compress (m), validate (v) — full .ldf integrity check
+        compress_validate_match = re.match(r'^(\d+)mv$', cmd)
         job_match = re.match(r'^j(\d+)$', cmd)
         if coord_match:
             project_num = int(coord_match.group(1))
@@ -732,6 +734,9 @@ class WorkflowControlCentre:
             project_num = int(coord_format_match.group(1))
             format_override = 'pal' if coord_format_match.group(2) == 'p' else 'ntsc'
             self.handle_coordinate_command(project_num, 'd', video_format=format_override)
+        elif compress_validate_match:
+            project_num = int(compress_validate_match.group(1))
+            self.handle_compress_validate(project_num)
 
         # Project selection (any positive integer)
         elif cmd.isdigit() and int(cmd) >= 1:
@@ -1006,6 +1011,7 @@ class WorkflowControlCentre:
             {'type': 'decode', 'title': 'DECODE FLAGS', 'subtitle': 'vhs-decode options'},
             {'type': 'export', 'title': 'EXPORT FLAGS', 'subtitle': 'tbc-video-export options'},
             {'type': 'audio', 'title': 'AUDIO FLAGS', 'subtitle': 'final mux audio options'},
+            {'type': 'compress', 'title': 'COMPRESS FLAGS', 'subtitle': 'lds-compress validation options'},
             {'type': 'segment', 'title': 'SEGMENT CONFIG', 'subtitle': 'test range for decode/export'},
         ]
         current_page = 0
@@ -1014,7 +1020,13 @@ class WorkflowControlCentre:
         decode_flags = flags_manager.get_project_flags(project.name, 'decode')
         export_flags = flags_manager.get_project_flags(project.name, 'export')
         audio_flags = flags_manager.get_project_flags(project.name, 'audio')
-        current_flags = {'decode': decode_flags, 'export': export_flags, 'audio': audio_flags}
+        compress_flags = flags_manager.get_project_flags(project.name, 'compress')
+        current_flags = {
+            'decode': decode_flags,
+            'export': export_flags,
+            'audio': audio_flags,
+            'compress': compress_flags,
+        }
 
         # Segment presets
         segment_presets = [
@@ -2317,6 +2329,116 @@ class WorkflowControlCentre:
                 self.message = f"No {label} jobs to remove"
         except Exception as e:
             self.message = f"Error cleaning {','.join(status_names)} jobs: {e}"
+
+    def handle_compress_validate(self, project_num):
+        """Option C: Full structural validation of a project's .ldf master.
+
+        Streams the .ldf through ld-ldf-reader, counts decoded bytes, compares
+        to the expected count from the source .lds. SLOW (~10 min per hour of
+        capture) but definitive — gives you confidence to delete the .lds.
+
+        Triggered by typing e.g. '1mv' (project 1, compress, validate).
+        """
+        project_idx = project_num - 1
+        if project_idx >= len(self.current_projects):
+            self.message = f"No project at position {project_num}"
+            return
+        project = self.current_projects[project_idx]
+
+        # Locate the .lds (or .ldf) source and the .ldf to validate
+        lds_path = None
+        ldf_path = None
+        if hasattr(project, 'capture_files') and 'video' in project.capture_files:
+            cap = project.capture_files['video']
+            if cap.endswith('.lds'):
+                lds_path = cap
+                ldf_path = cap[:-4] + '.ldf'
+            elif cap.endswith('.ldf'):
+                ldf_path = cap
+
+        if not ldf_path or not os.path.exists(ldf_path):
+            self.message = f"No .ldf file found for {project.name}"
+            return
+        if not lds_path or not os.path.exists(lds_path):
+            # User has already deleted the .lds. Can still verify decode-ability
+            # but can't compare sample counts. Fall back to integrity test.
+            self.message = (
+                f"Source .lds missing — running FLAC integrity check on .ldf only "
+                f"(can't verify sample count without the source). "
+                f"This may take several minutes…"
+            )
+            self._run_compress_validate_background(ldf_path, lds_path=None)
+            return
+
+        self.message = (
+            f"Validating {os.path.basename(ldf_path)} — streaming full decode "
+            f"and counting samples. This may take 10+ min per hour of capture…"
+        )
+        self._run_compress_validate_background(ldf_path, lds_path)
+
+    def _run_compress_validate_background(self, ldf_path, lds_path):
+        """Run the full ldf validation in a background thread so the UI stays
+        responsive. Posts result via self.message when done."""
+        import threading
+        import shutil
+        import subprocess
+
+        def worker():
+            try:
+                tool = shutil.which('ld-ldf-reader')
+                if not tool:
+                    self.message = "ld-ldf-reader not on PATH — cannot validate"
+                    return
+
+                import time as _t
+                start = _t.time()
+                proc = subprocess.Popen(
+                    [tool, ldf_path, '0'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                # Stream and count bytes
+                total = 0
+                while True:
+                    chunk = proc.stdout.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                proc.wait()
+                elapsed = _t.time() - start
+
+                if lds_path:
+                    lds_size = os.path.getsize(lds_path)
+                    expected_bytes = lds_size * 4 // 5 * 2  # 16-bit samples
+                    ratio = total / expected_bytes if expected_bytes else 0
+                    # Allow up to 1 MB slack (FLAC frame boundary alignment)
+                    if abs(expected_bytes - total) <= 1_000_000:
+                        self.message = (
+                            f"✓ Validate PASS for {os.path.basename(ldf_path)}: "
+                            f"decoded {total:_} bytes (expected {expected_bytes:_}, "
+                            f"{ratio*100:.4f}%) in {elapsed:.0f}s. Safe to delete .lds."
+                        )
+                    else:
+                        self.message = (
+                            f"✗ Validate FAIL for {os.path.basename(ldf_path)}: "
+                            f"decoded {total:_} bytes, expected {expected_bytes:_} "
+                            f"({ratio*100:.2f}%). DO NOT DELETE .lds."
+                        )
+                else:
+                    # No .lds to compare; just report exit code
+                    if proc.returncode == 0 and total > 0:
+                        self.message = (
+                            f"✓ .ldf decodes cleanly ({total:_} bytes in {elapsed:.0f}s). "
+                            f"Integrity intact, but can't verify sample count without source .lds."
+                        )
+                    else:
+                        self.message = (
+                            f"✗ .ldf decode failed (rc={proc.returncode}, {total:_} bytes)."
+                        )
+            except Exception as e:
+                self.message = f"Validate error: {e}"
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _check_step_output_exists(self, project, workflow_step):
         """Check if the output file for a workflow step actually exists
