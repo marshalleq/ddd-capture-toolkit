@@ -72,6 +72,19 @@ DECODE_FLAGS = {
     },
 }
 
+# Flag definitions for the lds-compress step (.lds → .ldf).
+# These control how the toolkit validates a successful compress; the actual
+# ld-compress invocation has no per-project flags currently.
+COMPRESS_FLAGS = {
+    'flac_integrity_check': {
+        'cli_flag': None,  # Internal flag, drives post-compress validation
+        'label': 'FLAC integrity check after compress',
+        'description': "After compress completes, stream the .ldf through ld-ldf-reader to verify every FLAC frame's CRC decodes cleanly end-to-end. Catches silent partial-compress failures that the basic exit-code check misses. Slow (minutes to tens of minutes depending on capture length) but on by default because losing your source .lds to a bad compress is much worse.",
+        'default': True
+    },
+}
+
+
 # Flag definitions for audio processing (final mux step)
 # Controls how audio is processed when muxing video and audio together.
 #
@@ -226,6 +239,8 @@ class ProjectFlagsManager:
             return EXPORT_FLAGS
         elif flag_type == 'audio':
             return AUDIO_FLAGS
+        elif flag_type == 'compress':
+            return COMPRESS_FLAGS
         else:
             raise ValueError(f"Unknown flag type: {flag_type}")
 
@@ -408,7 +423,7 @@ def get_flag_definitions(flag_type: str = 'export') -> Dict:
     Get available flag definitions.
 
     Args:
-        flag_type: 'decode', 'export', or 'audio'
+        flag_type: 'decode', 'export', 'audio', or 'compress'
 
     Returns:
         Dictionary of flag definitions
@@ -417,5 +432,7 @@ def get_flag_definitions(flag_type: str = 'export') -> Dict:
         return DECODE_FLAGS.copy()
     elif flag_type == 'audio':
         return AUDIO_FLAGS.copy()
+    elif flag_type == 'compress':
+        return COMPRESS_FLAGS.copy()
     else:
         return EXPORT_FLAGS.copy()
