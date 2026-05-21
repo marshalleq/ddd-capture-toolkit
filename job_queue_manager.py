@@ -2190,6 +2190,38 @@ class JobQueueManager:
                 self.logger.info(f"LDS compression completed: {expected_output}")
                 self.logger.info(f"Output size: {output_size:.2f} GB (compression ratio: {compression_ratio:.1f}%)")
 
+                # ----- Option A (always on): structural completeness check -----
+                # ld-compress has been observed to exit 0 even when truncated
+                # mid-stream (the progress jumps from N% to "completed" without
+                # actually finishing). A silent partial compress is dangerous if
+                # the user then deletes the source .lds. Verify the .ldf actually
+                # extends to the expected length by seeking to near the end and
+                # reading a small amount; if the seek lands inside the file we
+                # know the compress wrote at least that far.
+                ok, msg = self._validate_ldf_structural(job.input_file, expected_output)
+                if not ok:
+                    error_msg = f"Compress structural check failed: {msg}"
+                    self.logger.error(error_msg)
+                    job.error_message = error_msg
+                    return False
+                self.logger.info(f"Compress structural check passed: {msg}")
+
+                # ----- Option B (per-project, default on): FLAC integrity test -----
+                # Streams the .ldf through ld-ldf-reader to /dev/null; if the
+                # decoder exits 0 the FLAC frame CRCs all checked. Slower
+                # (~real-time-of-tape ÷ ~3 on this hardware) but catches mid-file
+                # corruption that the structural check can miss. Disable per
+                # project via the X menu (COMPRESS_FLAGS.flac_integrity_check).
+                if self._compress_flac_integrity_enabled(job.project_name):
+                    self.logger.info("Running FLAC integrity test (compress integrity_check enabled)")
+                    ok, msg = self._validate_ldf_flac_integrity(expected_output)
+                    if not ok:
+                        error_msg = f"Compress FLAC integrity test failed: {msg}"
+                        self.logger.error(error_msg)
+                        job.error_message = error_msg
+                        return False
+                    self.logger.info(f"FLAC integrity test passed: {msg}")
+
                 with self.lock:
                     job.progress = 100.0
 
@@ -2216,6 +2248,126 @@ class JobQueueManager:
             self.logger.error(f"LDS compression job error: {e}")
             job.error_message = str(e)
             return False
+
+    # ---------- Compress validation helpers ----------
+
+    def _validate_ldf_structural(self, lds_path: str, ldf_path: str) -> tuple:
+        """Option A: Fast structural check that the .ldf extends to expected end.
+
+        Uses ld-ldf-reader to seek to a position 1M samples before the expected
+        end-of-stream (derived from the source .lds size). If the seek lands
+        inside the file and returns data, the compress wrote at least that far.
+        Truncated files return zero bytes at this position.
+
+        Runs in ~1 second regardless of file size.
+
+        Returns (ok: bool, message: str).
+        """
+        import shutil
+        try:
+            lds_size = os.path.getsize(lds_path)
+        except OSError as e:
+            return False, f"Could not stat source .lds: {e}"
+
+        # .lds is 10-bit packed (4 samples in 5 bytes). Total samples = bytes * 4/5.
+        expected_samples = lds_size * 4 // 5
+        if expected_samples <= 2_000_000:
+            # Capture too short to meaningfully seek-test; just accept.
+            return True, f"Source too short for seek check ({expected_samples} samples)"
+
+        # Seek to 1M samples before the expected end and try to read 1MB of
+        # decoded output (= 524288 samples at 16-bit, well within the last
+        # 1M-sample window).
+        seek_pos = expected_samples - 1_000_000
+        read_target = 1_000_000  # bytes
+
+        tool = shutil.which('ld-ldf-reader')
+        if not tool:
+            return True, "ld-ldf-reader not on PATH; skipping seek check"
+
+        try:
+            proc = subprocess.Popen(
+                [tool, ldf_path, str(seek_pos)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            data = b''
+            deadline = time.time() + 30  # generous timeout
+            while len(data) < read_target and time.time() < deadline:
+                chunk = proc.stdout.read(min(64 * 1024, read_target - len(data)))
+                if not chunk:
+                    break
+                data += chunk
+        finally:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        if len(data) < read_target // 2:
+            # Less than 500 KB of output at near-end position — file is short.
+            ldf_size = os.path.getsize(ldf_path) if os.path.exists(ldf_path) else 0
+            return False, (
+                f"truncated .ldf — seek to sample {seek_pos:_} returned only "
+                f"{len(data):_} bytes (expected ≥{read_target:_}). "
+                f"Source .lds is {lds_size:_} bytes, output .ldf is {ldf_size:_} bytes. "
+                f"DO NOT DELETE THE SOURCE .lds."
+            )
+        return True, (
+            f"seek to sample {seek_pos:_} returned {len(data):_} bytes, "
+            f"file extends to expected length"
+        )
+
+    def _validate_ldf_flac_integrity(self, ldf_path: str) -> tuple:
+        """Option B: Stream the .ldf through ld-ldf-reader; if it exits 0 the
+        FLAC frame CRCs are all valid end-to-end.
+
+        Returns (ok: bool, message: str). Slow — minutes to ~30 min depending
+        on hardware and capture length. Disable per-project via the X menu.
+        """
+        import shutil
+        tool = shutil.which('ld-ldf-reader')
+        if not tool:
+            return True, "ld-ldf-reader not on PATH; skipping integrity test"
+
+        start = time.time()
+        try:
+            with open(os.devnull, 'wb') as devnull:
+                rc = subprocess.call(
+                    [tool, ldf_path, '0'],
+                    stdout=devnull,
+                    stderr=subprocess.DEVNULL,
+                )
+        except Exception as e:
+            return False, f"ld-ldf-reader failed: {e}"
+
+        elapsed = time.time() - start
+        if rc != 0:
+            return False, (
+                f"ld-ldf-reader exit code {rc} after {elapsed:.0f}s — "
+                f"FLAC stream has decode errors. DO NOT DELETE THE SOURCE .lds."
+            )
+        return True, f"end-to-end FLAC decode clean ({elapsed:.0f}s)"
+
+    def _compress_flac_integrity_enabled(self, project_name: str) -> bool:
+        """Return True if the per-project flac_integrity_check is enabled.
+
+        Defaults to True (on) — disable via COMPRESS_FLAGS for a specific
+        project that doesn't need or want the slow integrity step.
+        """
+        if not PROJECT_FLAGS_AVAILABLE or not project_name:
+            return True
+        try:
+            flags_manager = ProjectFlagsManager()
+            compress_flags = flags_manager.get_project_flags(project_name, 'compress')
+            return bool(compress_flags.get('flac_integrity_check', True))
+        except Exception:
+            return True
 
     def save_queue(self):
         """Save queue to persistent storage"""
