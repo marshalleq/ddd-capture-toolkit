@@ -53,6 +53,9 @@ build.txt
 
 # Job queue and log files (contain user-specific data)
 config/job_queue.json
+config/project_flags.json
+config/project_segments.json
+config/processing_locations.json
 logs/
 workflow_debug.log
 *.log
