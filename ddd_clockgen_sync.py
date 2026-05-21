@@ -924,10 +924,18 @@ def get_sox_command(output_filename):
             'remix', '1', '2'
         ]
 
-# Create capture file paths in temp folder
+# Create capture file paths in temp folder. These default paths are used by
+# offer_wav_conversion() further down; the actual capture paths come from
+# the live capture flow (start_capture_and_record -> prepare_capture_resources)
+# and are unrelated.
 CAPTURE_FLAC_PATH = os.path.join(get_temp_folder(), f'{CAPTURE_NAME}.flac')
 CAPTURE_WAV_PATH = os.path.join(get_temp_folder(), f'{CAPTURE_NAME}.wav')
-SOX_COMMAND = get_sox_command(CAPTURE_FLAC_PATH)
+# Note: SOX_COMMAND used to be assigned here via get_sox_command(...) at module
+# import time. That call eagerly probed the audio device and could print
+# "Falling back to default audio device..." if pipewire/wireplumber hadn't
+# released the clockgen yet. The variable was never read, so it's been removed
+# along with the misleading import-time warning. The live capture path does its
+# own device probe at start-capture time, when the device is actually ready.
 # --- SCRIPT LOGIC ---
 
 import tempfile
