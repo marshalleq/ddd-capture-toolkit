@@ -559,6 +559,8 @@ class WorkflowControlCentre:
         controls.append(" - Force Overwrite\n", style="white")
         controls.append("clean 1e", style="bold bright_blue")
         controls.append(" - Reset Progress\n", style="white")
+        controls.append("1mv", style="bold green")
+        controls.append(" - Validate .ldf master (full check)\n", style="white")
         controls.append("auto", style="bold cyan")
         controls.append(" - Auto-queue\n", style="white")
         controls.append("cleanup", style="bold orange1")
@@ -610,7 +612,7 @@ class WorkflowControlCentre:
         # Create content with input area and status
         content = Text()
         content.append("Command Input\n", style="bold green")
-        
+
         # Add the table content manually since we can't embed Table in Text
         content.append(f"Command: ", style="bold cyan")
         content.append(f"{display_input:<25}", style="yellow")
@@ -618,8 +620,25 @@ class WorkflowControlCentre:
         content.append("\n")
         content.append("Type command and press Enter  ", style="white")
         content.append("| ", style="dim")
-        content.append("Use coordinate system (1d, 2e) or actions (auto, h)", style="dim")
-        
+        content.append("Use coordinate system (1d, 2e) or actions (auto, h)\n", style="dim")
+
+        # Show the most recent status message (from command results, validation
+        # outcomes, etc.) so background results like 1mv are visible.
+        last_message = getattr(self, 'message', '') or ''
+        if last_message:
+            content.append("\n")
+            # Pick a style that catches the eye but doesn't shout for normal info.
+            if last_message.startswith('✗') or 'FAIL' in last_message or 'DO NOT DELETE' in last_message:
+                msg_style = "bold red"
+            elif last_message.startswith('✓') or 'PASS' in last_message:
+                msg_style = "bold green"
+            elif 'Warning' in last_message or 'Invalid' in last_message:
+                msg_style = "bold yellow"
+            else:
+                msg_style = "white"
+            content.append("Status: ", style="bold cyan")
+            content.append(last_message, style=msg_style)
+
         return Panel(content, title="Command Input", border_style="yellow")
     
     def refresh_data(self):
