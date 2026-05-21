@@ -534,50 +534,45 @@ class WorkflowControlCentre:
         return "█" * filled_chars + "░" * empty_chars
     
     def create_controls_panel(self):
-        """Create controls panel with keyboard shortcuts display"""
+        """Create controls panel with keyboard shortcuts display.
+
+        Compact one-line-per-command layout. Important commands appear first
+        so they remain visible when the terminal is half-width and the panel
+        gets vertically squeezed. Press `h` for the full command reference.
+        """
         from rich.text import Text
-        
-        controls = Text("Controls", style="bold green")
-        controls.append("\n")
-        controls.append("═" * 25, style="dim")
-        controls.append("\n")
-        controls.append("1-7", style="bold cyan")
-        controls.append(" - Select Project\n", style="white")
-        controls.append("1d", style="bold yellow")
-        controls.append(" - Decode (default)\n", style="white")
-        controls.append("1dp/1dn", style="bold yellow")
-        controls.append(" - Decode PAL/NTSC\n", style="white")
-        controls.append("1m,1e,1a,1f", style="bold yellow")
-        controls.append(" - Other steps\n", style="white")
-        controls.append("stop 1d", style="bold red")
-        controls.append(" - Stop Job (running+queued)\n", style="white")
-        controls.append("stop all", style="bold red")
-        controls.append(" - Stop everything now\n", style="white")
-        controls.append("cancel queue", style="bold red")
-        controls.append(" - Cancel queued, let running finish\n", style="white")
-        controls.append("force 1e", style="bold magenta")
-        controls.append(" - Force Overwrite\n", style="white")
-        controls.append("clean 1e", style="bold bright_blue")
-        controls.append(" - Reset Progress\n", style="white")
-        controls.append("1mv", style="bold green")
-        controls.append(" - Validate .ldf master (full check)\n", style="white")
-        controls.append("auto", style="bold cyan")
-        controls.append(" - Auto-queue\n", style="white")
-        controls.append("cleanup", style="bold orange1")
-        controls.append(" - Clean /tmp\n", style="white")
-        controls.append("settemp", style="bold green")
-        controls.append(" - Set temp dir\n", style="white")
-        controls.append("\n")
-        controls.append("d", style="bold cyan")
-        controls.append(" - Details\n", style="white")
-        controls.append("h", style="bold cyan")
-        controls.append(" - Help\n", style="white")
-        controls.append("q", style="bold red")
-        controls.append(" - Quit & Exit\n", style="white")
-        controls.append("\n")
-        controls.append("═" * 25, style="dim")
-        
-        return Panel(controls, title="Controls", border_style="magenta")
+
+        # Each tuple: (command_text, command_style, description)
+        # Order matters — first lines are most likely to be visible when the
+        # panel is height-constrained.
+        rows = [
+            ("h",         "bold cyan",        "Full help"),
+            ("1-7",       "bold cyan",        "Select"),
+            ("1d 1m 1e",  "bold yellow",      "Dec/cMp/Exp"),
+            ("1a 1f",     "bold yellow",      "Algn/Final"),
+            ("1mv",       "bold green",       "Verify .ldf"),
+            ("1x",        "bold cyan",        "Flags page"),
+            ("1dp 1dn",   "bold yellow",      "PAL / NTSC"),
+            ("auto",      "bold cyan",        "Queue ready"),
+            ("stop 1d",   "bold red",         "Stop one"),
+            ("stop all",  "bold red",         "Stop all"),
+            ("cancel q",  "bold red",         "Cancel queued"),
+            ("force 1e",  "bold magenta",     "Overwrite"),
+            ("clean 1e",  "bold bright_blue", "Reset stuck"),
+            ("clean failed", "bold bright_blue", "Wipe failed"),
+            ("clean history", "bold bright_blue", "Wipe finished"),
+            ("cleanup",   "bold orange1",     "Clear /tmp"),
+            ("settemp",   "bold orange1",     "Set tmp dir"),
+            ("d",         "bold cyan",        "Details"),
+            ("q",         "bold red",         "Quit"),
+        ]
+
+        controls = Text()
+        for cmd, style, desc in rows:
+            controls.append(f"{cmd:<14}", style=style)
+            controls.append(f" {desc}\n", style="white")
+
+        return Panel(controls, title="Controls (h=help)", border_style="magenta")
     
     
     def create_command_input_panel(self):
