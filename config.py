@@ -54,7 +54,7 @@ DEFAULT_CONFIG = {
     }
 }
 
-CONFIG_FILE = "config.json"
+CONFIG_FILE = "config/config.json"
 
 def get_project_root():
     """Get the project root directory (where this script is located)"""
