@@ -16,7 +16,7 @@ TIMING_CALIBTRATION_REFERENCE.md
 !media/mp4/sync_test_10s.mp4
 
 # Ignore user-specific configuration files
-config.json
+config/config.json
 
 # Python cache files
 __pycache__/
