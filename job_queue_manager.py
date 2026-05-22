@@ -49,8 +49,10 @@ class JobStatus(Enum):
 # Job scheduling categories based on I/O characteristics
 # Heavy I/O jobs saturate disk bandwidth and should not run concurrently on same storage
 HEAVY_IO_JOBS = {"tbc-export", "final-mux"}
-# Light jobs are algorithm-bound with low I/O, can run many in parallel
-LIGHT_JOBS = {"vhs-decode", "lds-compress", "audio-align"}
+# Light jobs are algorithm-bound with low I/O, can run many in parallel.
+# Checksum is disk-bound (sequential reads only) but its CPU load is minimal,
+# so it counts as a light slot for scheduling purposes.
+LIGHT_JOBS = {"vhs-decode", "lds-compress", "audio-align", "checksum"}
 
 # Storage type classification for scheduling rules
 # Maps location names to storage type
@@ -615,6 +617,8 @@ class JobQueueManager:
                 success = self._execute_final_mux_job(job)
             elif job.job_type == "lds-compress":
                 success = self._execute_lds_compress_job(job)
+            elif job.job_type == "checksum":
+                success = self._execute_checksum_job(job)
             else:
                 self.logger.error(f"Unknown job type: {job.job_type}")
                 success = False
@@ -2274,6 +2278,156 @@ class JobQueueManager:
             self.logger.error(f"LDS compression job error: {e}")
             job.error_message = str(e)
             return False
+
+    def _execute_checksum_job(self, job: QueuedJob) -> bool:
+        """Hash a list of files and record the results in the validation log.
+
+        Job parameters:
+            files:      list of paths to hash (order preserved in log)
+            mode:       'hash' (default) — record fresh hashes
+                        'verify' — re-hash and compare to most-recent log entry
+            step:       optional label ('capture', 'compress', 'align', etc.)
+                        used in the log entry title
+            algorithm:  hashlib name (default 'sha256')
+
+        progress is reported as bytes_hashed / total_bytes via job.progress
+        and job.current_frame. The user-visible job line in the WCC shows
+        which file is currently being hashed (job.status_message).
+        """
+        try:
+            import validation_log
+        except ImportError as e:
+            job.error_message = f"validation_log module not available: {e}"
+            return False
+
+        files = job.parameters.get('files', [])
+        if not files:
+            job.error_message = "No files to hash"
+            return False
+
+        mode = job.parameters.get('mode', 'hash')
+        step = job.parameters.get('step', 'manual')
+        algorithm = job.parameters.get('algorithm', 'sha256')
+
+        # Filter to files that actually exist; record skips so the user sees them
+        present = [(p, os.path.getsize(p)) for p in files if os.path.isfile(p)]
+        missing = [p for p in files if not os.path.isfile(p)]
+        if not present:
+            job.error_message = f"None of the requested files exist: {files}"
+            return False
+
+        total_bytes = sum(sz for _, sz in present)
+        with self.lock:
+            job.total_frames = total_bytes  # repurposed for "bytes total" progress
+            job.current_frame = 0
+            job.progress = 0.0
+            self._save_queue_async()
+
+        results = {}
+        bytes_done_overall = 0
+        start_time = time.time()
+        last_progress_save = 0.0
+
+        for path, size in present:
+            # Update status message so the user sees which file is in flight
+            short_name = os.path.basename(path)
+            with self.lock:
+                job.status_message = f"Hashing {short_name} ({size / (1024**3):.1f} GB)"
+                self._save_queue_async()
+
+            chunk_done = [0]
+
+            def progress_cb(done, total, _co=chunk_done):
+                _co[0] = done
+                # Throttle queue saves to 1/sec to avoid disk thrash
+                now = time.time()
+                with self.lock:
+                    job.current_frame = bytes_done_overall + done
+                    if total_bytes:
+                        job.progress = (job.current_frame / total_bytes) * 100.0
+                nonlocal_last = getattr(self, '_last_checksum_progress', 0.0)
+                if now - nonlocal_last > 1.0:
+                    self._last_checksum_progress = now
+                    # Compute throughput: bytes hashed in the most recent
+                    # window (approximate via overall rate).
+                    elapsed = now - start_time
+                    if elapsed > 0:
+                        with self.lock:
+                            job.current_fps = job.current_frame / elapsed
+                    self._save_queue_async()
+
+            try:
+                digest, elapsed = validation_log.compute_file_hash(
+                    path, algorithm=algorithm, progress_callback=progress_cb,
+                )
+                _, mtime = validation_log.file_identity(path)
+
+                # Classify the role from the extension for the log entry
+                ext = os.path.splitext(path)[1].lower().lstrip('.')
+                if ext == 'tbc':
+                    role = 'tbc'
+                elif ext == 'mkv' and '_final' in path:
+                    role = 'final'
+                elif ext == 'mkv' and '_ffv1' in path:
+                    role = 'ffv1'
+                elif ext == 'flac' and '_aligned' in path:
+                    role = 'aligned'
+                else:
+                    role = ext
+
+                results[role] = {
+                    'path': path, 'size': size, 'mtime': mtime,
+                    'hash': digest, 'elapsed': elapsed,
+                }
+                bytes_done_overall += size
+            except OSError as e:
+                results[role if role else 'unknown'] = {
+                    'path': path, 'size': size, 'mtime': '',
+                    'hash': f'(error: {e})', 'elapsed': None,
+                }
+                self.logger.warning(f"checksum job: error hashing {path}: {e}")
+                # Don't fail the whole job — continue with the remaining files
+                bytes_done_overall += size
+
+        elapsed_total = time.time() - start_time
+
+        # Write the right log entry depending on mode + step
+        try:
+            ref_path = present[0][0]
+            if mode == 'verify':
+                # Verify mode: compare results to most-recent recorded hashes
+                # and log an INVALID/PASS verification entry. The verification
+                # logic itself lives in validation_log to keep this method
+                # focused on orchestration.
+                validation_log.log_verify(
+                    ref_path,
+                    new_hashes=results,
+                    missing_files=missing,
+                    elapsed_seconds=elapsed_total,
+                )
+            else:
+                # Plain hash mode: log under whichever step this was triggered for
+                validation_log.log_hash(
+                    ref_path,
+                    file_hashes=results,
+                    step=step,
+                    missing_files=missing,
+                    elapsed_seconds=elapsed_total,
+                )
+        except Exception as e:
+            self.logger.error(f"Checksum job: log write failed: {e}")
+            job.error_message = f"Hashed but log write failed: {e}"
+            return False
+
+        with self.lock:
+            job.progress = 100.0
+            job.status_message = f"Hashed {len(results)} file(s) in {elapsed_total:.0f}s"
+            self._save_queue_async()
+        self.logger.info(
+            f"Checksum job complete: {len(results)} files hashed, "
+            f"{bytes_done_overall:,} bytes in {elapsed_total:.0f}s"
+        )
+        return True
 
     # ---------- Compress validation helpers ----------
 
