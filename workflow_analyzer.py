@@ -549,12 +549,12 @@ class WorkflowAnalyzer:
 
         # Get output file base name (strip all extensions)
         output_basename = os.path.basename(job.output_file).lower()
-        for ext in ['.tbc.json', '.tbc.lz4', '.lds', '.ldf', '.tbc', '.flac', '.wav', '.mkv', '.json']:
+        for ext in ['.tbc.json', '.tbc.lz4', '.lds', '.ldf', '.tbc', '.flac', '.wav', '.mkv', '.json', '.log']:
             if output_basename.endswith(ext):
                 output_basename = output_basename[:-len(ext)]
                 break
-        # Also strip suffixes like _ffv1, _aligned, _final from output names
-        for suffix in ['_ffv1', '_aligned', '_final']:
+        # Also strip suffixes like _ffv1, _aligned, _final, _validation from output names
+        for suffix in ['_ffv1', '_aligned', '_final', '_validation']:
             if output_basename.endswith(suffix):
                 output_basename = output_basename[:-len(suffix)]
                 break
