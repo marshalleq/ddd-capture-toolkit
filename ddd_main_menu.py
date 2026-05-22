@@ -8654,12 +8654,14 @@ def display_performance_settings_menu():
         from config import (
             get_ffmpeg_threads, get_compress_use_gpu,
             get_default_audio_resample_rate, get_default_audio_format,
+            get_auto_checksum,
         )
 
         current_threads = get_ffmpeg_threads()
         gpu_compress = get_compress_use_gpu()
         audio_rate = get_default_audio_resample_rate()
         audio_format = get_default_audio_format()
+        auto_checksum = get_auto_checksum()
 
         print("\nPERFORMANCE SETTINGS")
         print("=" * 25)
@@ -8675,6 +8677,8 @@ def display_performance_settings_menu():
         print(f"   (Default sample rate used by final-mux; per-project audio flags can override)")
         print(f"Audio Format: {audio_format}")
         print(f"   (Default audio codec used by final-mux; per-project audio flags can override)")
+        print(f"Auto-checksum: {'ON' if auto_checksum else 'OFF'}")
+        print(f"   (Hash files after capture and after each validated step; results in <project>_validation.log)")
         print()
         print("PERFORMANCE OPTIONS:")
         print("=" * 25)
@@ -8682,11 +8686,12 @@ def display_performance_settings_menu():
         print("2. Toggle Compress GPU Acceleration")
         print("3. Configure Audio Resample Rate")
         print("4. Configure Audio Format")
-        print("5. View Performance Status")
-        print("6. Reset to Defaults")
+        print("5. Toggle Auto-checksum")
+        print("6. View Performance Status")
+        print("7. Reset to Defaults")
         print("e. Return to Settings Menu")
 
-        selection = input("\nSelect option (1-6/e): ").strip().lower()
+        selection = input("\nSelect option (1-7/e): ").strip().lower()
 
         if selection == '1':
             configure_ffmpeg_threads()
@@ -8697,14 +8702,51 @@ def display_performance_settings_menu():
         elif selection == '4':
             configure_audio_format()
         elif selection == '5':
-            view_performance_status()
+            toggle_auto_checksum()
         elif selection == '6':
+            view_performance_status()
+        elif selection == '7':
             reset_performance_defaults()
         elif selection == 'e':
             break  # Return to settings menu
         else:
-            print("Invalid selection. Please enter 1-6 or e.")
+            print("Invalid selection. Please enter 1-7 or e.")
             time.sleep(1)
+
+
+def toggle_auto_checksum():
+    """Toggle the global auto-checksum setting."""
+    clear_screen()
+    display_header()
+    print("\nAUTO-CHECKSUM")
+    print("=" * 25)
+
+    sys.path.append('.')
+    from config import get_auto_checksum, set_auto_checksum
+
+    current = get_auto_checksum()
+    print(f"Current setting: {'ON' if current else 'OFF'}")
+    print()
+    print("When ON, the toolkit hashes files automatically:")
+    print("  • After each capture: the 3 originals (.lds, .flac, .json) with a 5-second")
+    print("    cancel window before hashing begins.")
+    print("  • After each successful validation step (compress, align, export, final-mux):")
+    print("    a background checksum job runs to record the SHA-256 of the new output.")
+    print()
+    print("All results land in <project>_validation.log. The WCC matrix shows")
+    print("HASHING (flashing) → VALIDATED (green) per project step.")
+    print()
+    print("When OFF, no automatic hashing happens. You can still manually hash a")
+    print("project at any time via the WCC's 'hash N' / 'verify N' commands.")
+    print()
+
+    choice = input(f"{'Disable' if current else 'Enable'} auto-checksum? (y/N): ").strip().lower()
+    if choice in ('y', 'yes'):
+        set_auto_checksum(not current)
+        time.sleep(1)
+    else:
+        print("No changes made.")
+        time.sleep(1)
 
 
 def configure_audio_resample_rate():
