@@ -17,7 +17,121 @@ import os
 import sys
 import argparse
 import platform
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
+
+
+# Watchdog: if the output file stops growing for this long while the pipeline
+# processes are still alive but sleeping, dump a diagnostic snapshot to a log
+# file. The mono-based VhsDecodeAutoAudioAlign tool occasionally deadlocks
+# without crashing; this lets us collect evidence next time it happens.
+WATCHDOG_STALL_SECONDS = 60
+WATCHDOG_POLL_SECONDS = 5
+
+
+def _read_proc_file(pid, name):
+    """Read /proc/<pid>/<name>, return string or '' on error."""
+    try:
+        with open(f"/proc/{pid}/{name}") as f:
+            return f.read()
+    except (OSError, IOError):
+        return ""
+
+
+def _snapshot_process_state(pid, label, log):
+    """Dump everything we can about a pipeline process to the watchdog log."""
+    log.write(f"\n--- {label} (PID {pid}) ---\n")
+    if not os.path.isdir(f"/proc/{pid}"):
+        log.write("  process is gone\n")
+        return
+
+    status = _read_proc_file(pid, "status")
+    for line in status.splitlines():
+        if line.startswith(("State:", "VmRSS:", "VmSize:", "Threads:", "voluntary_ctxt_switches:", "nonvoluntary_ctxt_switches:")):
+            log.write(f"  {line}\n")
+
+    io = _read_proc_file(pid, "io")
+    for line in io.splitlines():
+        log.write(f"  io  {line}\n")
+
+    wchan = _read_proc_file(pid, "wchan").strip()
+    log.write(f"  wchan: {wchan or '(none)'}\n")
+
+    stack = _read_proc_file(pid, "stack")
+    if stack:
+        # Just first 5 frames — enough to identify what kernel call it's in
+        for line in stack.splitlines()[:5]:
+            log.write(f"  stack {line}\n")
+
+    # Open fds (interesting ones: pipes, the .ldf, the audio files)
+    fd_dir = f"/proc/{pid}/fd"
+    try:
+        fds = os.listdir(fd_dir)
+    except OSError:
+        fds = []
+    for fd in sorted(fds, key=lambda x: int(x) if x.isdigit() else 999):
+        try:
+            target = os.readlink(f"{fd_dir}/{fd}")
+        except OSError:
+            continue
+        log.write(f"  fd {fd} -> {target}\n")
+
+
+def _watchdog_thread(processes, output_audio, log_path, stop_event):
+    """Background watchdog. Watches for stalls and writes diagnostic dumps.
+
+    A stall is: output file size unchanged for WATCHDOG_STALL_SECONDS *and*
+    all pipeline processes are alive (otherwise the pipeline has already
+    finished or crashed and the parent will notice).
+    """
+    last_size = 0
+    last_growth_time = time.time()
+    snapshot_count = 0
+
+    try:
+        while not stop_event.wait(WATCHDOG_POLL_SECONDS):
+            # Has the pipeline finished or crashed? Watchdog stops if so.
+            alive = [p for p in processes if p.poll() is None]
+            if len(alive) < len(processes):
+                # At least one process exited — let the parent handle it.
+                return
+
+            try:
+                current_size = os.path.getsize(output_audio) if os.path.exists(output_audio) else 0
+            except OSError:
+                current_size = 0
+
+            now = time.time()
+            if current_size > last_size:
+                last_size = current_size
+                last_growth_time = now
+                continue
+
+            stalled_for = now - last_growth_time
+            if stalled_for >= WATCHDOG_STALL_SECONDS:
+                snapshot_count += 1
+                with open(log_path, "a") as log:
+                    log.write("\n" + "=" * 70 + "\n")
+                    log.write(f"STALL SNAPSHOT #{snapshot_count} at {datetime.now().isoformat()}\n")
+                    log.write(f"Output file: {output_audio}\n")
+                    log.write(f"Output size: {current_size:_} bytes (unchanged for {stalled_for:.0f}s)\n")
+                    log.write(f"Pipeline alive: {len(alive)}/{len(processes)} processes\n")
+                    log.write("=" * 70 + "\n")
+                    for proc, label in zip(processes, ["input-sox", "mono-align", "output-sox"]):
+                        _snapshot_process_state(proc.pid, label, log)
+                    log.write("\n")
+
+                # Re-arm so we don't spam: only emit a fresh snapshot every
+                # WATCHDOG_STALL_SECONDS of continued stall.
+                last_growth_time = now
+                print(f"[watchdog] Stall detected — snapshot #{snapshot_count} written to {log_path}",
+                      file=sys.stderr)
+    except Exception as e:
+        # Don't let watchdog errors take down the alignment.
+        with open(log_path, "a") as log:
+            log.write(f"\n[watchdog error: {e}]\n")
 
 def check_dependencies():
     """Check if required tools are available"""
@@ -168,10 +282,32 @@ def align_audio(input_audio, tbc_json, output_audio, sample_rate=78125):
         proc1.stdout.close()  # Allow proc1 to receive SIGPIPE if proc2 exits
         proc3 = subprocess.Popen(sox_output_cmd, stdin=proc2.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         proc2.stdout.close()  # Allow proc2 to receive SIGPIPE if proc3 exits
-        
+
+        # Start the watchdog thread that snapshots state if the pipeline stalls.
+        # Log lives next to the output file as <output>.watchdog.log so it's
+        # discoverable when investigating a failed alignment.
+        watchdog_log = output_audio + ".watchdog.log"
+        with open(watchdog_log, "w") as f:
+            f.write(f"Audio-align watchdog started at {datetime.now().isoformat()}\n")
+            f.write(f"Output:    {output_audio}\n")
+            f.write(f"PIDs:      input-sox={proc1.pid}, mono-align={proc2.pid}, output-sox={proc3.pid}\n")
+            f.write(f"Threshold: stall = no output growth for {WATCHDOG_STALL_SECONDS}s while all processes alive\n")
+            f.write(f"Poll:      every {WATCHDOG_POLL_SECONDS}s\n")
+        stop_event = threading.Event()
+        watchdog = threading.Thread(
+            target=_watchdog_thread,
+            args=((proc1, proc2, proc3), output_audio, watchdog_log, stop_event),
+            daemon=True,
+        )
+        watchdog.start()
+
         # Wait for completion
-        stdout, stderr = proc3.communicate()
-        
+        try:
+            stdout, stderr = proc3.communicate()
+        finally:
+            stop_event.set()
+            watchdog.join(timeout=WATCHDOG_POLL_SECONDS + 2)
+
         # Get errors from all processes
         proc1_stdout, proc1_stderr = proc1.communicate() if proc1.poll() is None else (b'', b'')
         proc2_stdout, proc2_stderr = proc2.communicate() if proc2.poll() is None else (b'', b'')
