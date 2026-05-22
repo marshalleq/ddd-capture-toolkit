@@ -128,6 +128,161 @@ def _ts():
     return datetime.now().isoformat(timespec='seconds')
 
 
+def log_hash(any_capture_file_path, file_hashes, step='hash',
+             missing_files=None, elapsed_seconds=None):
+    """Generic hash-recording log entry. Used by the checksum job for any
+    workflow step (compress, align, export, final-mux) and for retrospective
+    hashing of existing files. The `step` label tells the user (and any later
+    workflow analyzer) which step's outputs were hashed.
+
+    file_hashes: {role: {'path', 'size', 'mtime', 'hash', 'elapsed'}}.
+    missing_files: list of paths requested but not present on disk.
+    """
+    log_path = get_log_path(any_capture_file_path)
+    lines = [
+        f"[{_ts()}] {step.title()}: hash recorded  →  DONE",
+    ]
+    if elapsed_seconds is not None:
+        lines.append(f"  total elapsed:  {elapsed_seconds:.0f}s")
+    if missing_files:
+        for p in missing_files:
+            lines.append(f"  missing (skipped): {p}")
+    if file_hashes:
+        lines.append("")
+        lines.append("  File identity + checksums (SHA-256):")
+        for role, info in file_hashes.items():
+            size = info.get('size', 0)
+            mtime = info.get('mtime', '')
+            h = info.get('hash', '(skipped)')
+            path = info.get('path', '')
+            elapsed = info.get('elapsed')
+            elapsed_str = f"  ({elapsed:.0f}s)" if elapsed is not None else ""
+            lines.append(f"    .{role:<8} {size:>18,} bytes  mtime {mtime}  {h}{elapsed_str}")
+            if path:
+                lines.append(f"          {path}")
+    _append(log_path, "\n".join(lines) + "\n")
+
+
+def log_verify(any_capture_file_path, new_hashes, missing_files=None,
+               elapsed_seconds=None):
+    """Verify-mode entry: compare freshly-computed hashes to the most-recent
+    recorded hashes in the log, record PASS/FAIL per file.
+
+    new_hashes: {role: file_info} from a fresh re-hash.
+
+    The comparison reads back our own log (which is a small text file) to
+    find the most recent hash for each role.
+    """
+    log_path = get_log_path(any_capture_file_path)
+    expected = _parse_latest_hashes(log_path)
+
+    all_pass = True
+    detail_lines = []
+    for role, info in new_hashes.items():
+        new_hash = info.get('hash', '')
+        exp = expected.get(role)
+        if exp is None:
+            detail_lines.append(f"    .{role:<8} NO PRIOR HASH (recording new)  {new_hash}")
+            all_pass = False
+            continue
+        if exp['hash'] == new_hash:
+            detail_lines.append(f"    .{role:<8} MATCH    {new_hash}")
+        else:
+            all_pass = False
+            detail_lines.append(
+                f"    .{role:<8} MISMATCH  expected {exp['hash']}  got {new_hash}"
+            )
+
+    verdict = "PASS — all hashes match prior record" if all_pass else "FAIL — hash mismatch(es) found"
+    lines = [
+        f"[{_ts()}] Verify: re-hash + compare to log  →  {verdict}",
+    ]
+    if elapsed_seconds is not None:
+        lines.append(f"  total elapsed:  {elapsed_seconds:.0f}s")
+    if missing_files:
+        for p in missing_files:
+            lines.append(f"  missing: {p}")
+    lines.append("")
+    lines.extend(detail_lines)
+    _append(log_path, "\n".join(lines) + "\n")
+
+
+def _parse_latest_hashes(log_path):
+    """Scan the validation log and return the most-recent recorded hash for
+    each role: {role: {'hash', 'size', 'mtime'}}. Best-effort parsing — the
+    log format is intended for humans, but the hash lines have a stable shape
+    that we can recognise.
+
+    Returns empty dict if the log doesn't exist or has no parseable entries.
+    """
+    if not os.path.isfile(log_path):
+        return {}
+    latest = {}
+    try:
+        with open(log_path) as f:
+            for line in f:
+                # Match lines like: "    .lds     <SIZE> bytes  mtime <ISO>  <HASH>"
+                stripped = line.strip()
+                if not stripped.startswith('.'):
+                    continue
+                parts = stripped.split()
+                # Expect: .role  N,N,N bytes  mtime ISO hash
+                if len(parts) < 6 or parts[2] != 'bytes' or parts[3] != 'mtime':
+                    continue
+                role = parts[0][1:].rstrip(':').strip()  # strip leading '.'
+                if not role:
+                    continue
+                try:
+                    size = int(parts[1].replace(',', '').replace('_', ''))
+                except ValueError:
+                    continue
+                mtime = parts[4]
+                # Hash is parts[5]; ignore trailing "(Xs)" if present
+                hash_val = parts[5]
+                # Heuristic: hex digest is 64 chars for SHA-256
+                if not (len(hash_val) == 64 and all(c in '0123456789abcdefABCDEF' for c in hash_val)):
+                    continue
+                latest[role] = {'hash': hash_val, 'size': size, 'mtime': mtime}
+    except OSError:
+        return {}
+    return latest
+
+
+def file_state(path, log_path=None):
+    """Cheap status check for a file: returns one of
+    {'missing', 'no-hash', 'validated', 'stale'} based on log entries and
+    the current filesystem state. Never re-hashes — that's what verify is for.
+
+    'missing'   — file doesn't exist
+    'no-hash'   — file exists, no hash recorded yet
+    'validated' — hash recorded, file's size+mtime still match what was recorded
+    'stale'     — hash recorded, but size or mtime differs from the recorded value
+    """
+    if not os.path.isfile(path):
+        return 'missing'
+    if log_path is None:
+        log_path = get_log_path(path)
+    latest = _parse_latest_hashes(log_path)
+
+    ext = os.path.splitext(path)[1].lower().lstrip('.')
+    if ext == 'mkv' and '_final' in path:
+        role = 'final'
+    elif ext == 'mkv' and '_ffv1' in path:
+        role = 'ffv1'
+    elif ext == 'flac' and '_aligned' in path:
+        role = 'aligned'
+    else:
+        role = ext
+
+    rec = latest.get(role)
+    if rec is None:
+        return 'no-hash'
+    current_size, current_mtime = file_identity(path)
+    if current_size != rec['size'] or current_mtime != rec['mtime']:
+        return 'stale'
+    return 'validated'
+
+
 def log_capture_hashes(any_capture_file_path, file_hashes, elapsed_seconds=None,
                        cancelled=False):
     """Record the post-capture hashes of the 3 originals (.lds, .flac, .json).
