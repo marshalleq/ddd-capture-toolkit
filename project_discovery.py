@@ -157,11 +157,12 @@ class ProjectDiscovery:
         # Handle workflow output suffixes - ordered from most specific to least specific
         workflow_suffixes = [
             '_chroma',          # TBC chroma decode
-            '_luma',            # TBC luma decode  
+            '_luma',            # TBC luma decode
             '_aligned',         # Audio alignment output
             '_ffv1',            # FFV1 export
             '_final',           # Final muxed output
             '_metadata',        # Metadata files
+            '_validation',      # Per-project SHA-256 validation log (sidecar)
         ]
         
         base_name = name_without_ext

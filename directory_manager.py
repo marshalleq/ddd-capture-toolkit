@@ -197,7 +197,7 @@ class DirectoryManager:
                     base_name = Path(file_path).stem
                     
                     # Remove common suffixes to get project name
-                    for suffix in ['_aligned', '_final', '_compressed']:
+                    for suffix in ['_aligned', '_final', '_compressed', '_validation']:
                         if base_name.endswith(suffix):
                             base_name = base_name[:-len(suffix)]
                     
