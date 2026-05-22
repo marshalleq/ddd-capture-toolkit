@@ -25,13 +25,18 @@ class WorkflowStep(Enum):
 
 class StepStatus(Enum):
     """Status of individual workflow steps"""
-    COMPLETE = "complete"          # Step finished successfully
+    COMPLETE = "complete"          # Step finished successfully (file exists, no hash recorded)
     FAILED = "failed"              # Error occurred, needs attention
     VIDEO_ONLY = "video_only"      # No audio present, only video will be processed
     READY = "ready"                # Prerequisites met, can start
     PROCESSING = "processing"      # Currently being processed
     QUEUED = "queued"              # Waiting in job queue
     MISSING = "missing"            # Prerequisites not satisfied
+    # Hash / validation states
+    HASHING = "hashing"            # A checksum job is currently running for this step's outputs
+    VALIDATED = "validated"        # Step complete AND hash recorded AND file size+mtime unchanged
+    STALE = "stale"                # Hash recorded but file has changed (size/mtime differs from log)
+    INVALID = "invalid"            # Explicit verify revealed a hash mismatch — file may be corrupt
 
 @dataclass
 class WorkflowStatus:
@@ -53,14 +58,19 @@ class WorkflowAnalyzer:
     # Status colors for display (matches architecture spec)
     STATUS_COLORS = {
         'complete': 'green',
-        'failed': 'red', 
+        'failed': 'red',
         'video_only': 'orange3',
         'ready': 'white',
         'processing': 'blue',
         'queued': 'bright_black',
-        'missing': 'bright_black'
+        'missing': 'bright_black',
+        # Hash / validation states
+        'hashing': 'bright_cyan',       # rendered with flash by the matrix view
+        'validated': 'bright_green',    # subtly brighter than 'complete'
+        'stale': 'yellow',              # file changed since last hash
+        'invalid': 'bold red',          # explicit verify revealed mismatch
     }
-    
+
     # Status descriptions
     STATUS_DESCRIPTIONS = {
         'complete': 'Step finished successfully',
@@ -69,7 +79,11 @@ class WorkflowAnalyzer:
         'ready': 'Prerequisites met, can start',
         'processing': 'Currently being processed - See Job Status Screen',
         'queued': 'Waiting in job queue',
-        'missing': 'Prerequisites not satisfied'
+        'missing': 'Prerequisites not satisfied',
+        'hashing': 'Checksum job running for this step\'s outputs',
+        'validated': 'Step complete and hash matches recorded value (file unchanged since hash)',
+        'stale': 'Hash recorded but file has been modified since (size/mtime differ) — re-hash or verify',
+        'invalid': 'Verify revealed a hash mismatch — file may be corrupt',
     }
     
     def __init__(self, job_manager: Optional[JobQueueManager] = None):
@@ -117,29 +131,41 @@ class WorkflowAnalyzer:
         Returns:
             StepStatus for the step
         """
-        # Priority order as per architecture: Running > Queued > Failed > Complete > Ready > Missing
-        
-        # 1. Check if processing/running
+        # Priority: Running > Queued > Failed > Hashing > Invalid > Stale > Validated > Complete > Ready > Missing
+
+        # 1. Step itself currently running (decode, compress, etc.)
         if self._is_step_running(step, project):
             return StepStatus.PROCESSING
-            
-        # 2. Check if queued
+
+        # 2. Step itself queued
         if self._is_step_queued(step, project):
             return StepStatus.QUEUED
-            
-        # 3. Check if failed
+
+        # 3. Step failed
         if self._is_step_failed(step, project):
             return StepStatus.FAILED
-            
-        # 4. Check if complete
+
+        # 4. Step's outputs exist? Determine the appropriate post-completion state.
         if self._is_step_complete(step, project):
+            # Is a checksum job currently running for this step's outputs?
+            if self._is_step_hashing(step, project):
+                return StepStatus.HASHING
+            # Look at the hash state of the step's tracked outputs
+            hash_state = self._get_step_hash_state(step, project)
+            if hash_state == 'invalid':
+                return StepStatus.INVALID
+            if hash_state == 'stale':
+                return StepStatus.STALE
+            if hash_state == 'validated':
+                return StepStatus.VALIDATED
+            # 'no-hash' or 'mixed' falls through to plain COMPLETE
             return StepStatus.COMPLETE
-            
-        # 5. Check if ready to start
+
+        # 5. Ready to start?
         if self._can_step_start(step, project):
             return StepStatus.READY
-            
-        # 6. Default to missing prerequisites
+
+        # 6. Default: missing prerequisites
         return StepStatus.MISSING
     
     def _is_step_running(self, step: WorkflowStep, project: Project) -> bool:
@@ -243,6 +269,96 @@ class WorkflowAnalyzer:
     def _can_step_start(self, step: WorkflowStep, project: Project) -> bool:
         """Check if step prerequisites are satisfied"""
         return self.check_prerequisites(step, project)
+
+    def _get_step_tracked_files(self, step: WorkflowStep, project: Project):
+        """Return the list of files whose hash state determines this step's
+        VALIDATED/STALE/INVALID result. Empty list = no tracked files for this
+        step (e.g. DECODE doesn't have a stable single output we track hashes
+        for; users care about the .tbc but it's a derivative of the .lds so
+        typically only the .tbc.json + capture originals are hashed).
+        """
+        # capture step: .lds, .flac, .json originals
+        if step == WorkflowStep.CAPTURE:
+            files = []
+            for key in ('video', 'audio'):
+                p = project.capture_files.get(key) if hasattr(project, 'capture_files') else None
+                if p and os.path.isfile(p):
+                    files.append(p)
+            # Also the .json metadata if present (derived from video path)
+            if hasattr(project, 'capture_files') and 'video' in project.capture_files:
+                vp = project.capture_files['video']
+                base = vp[:-4] if vp.endswith(('.lds', '.ldf')) else os.path.splitext(vp)[0]
+                jp = base + '.json'
+                if os.path.isfile(jp):
+                    files.append(jp)
+            return files
+        # compress: the .ldf
+        if step == WorkflowStep.COMPRESS:
+            p = project.output_files.get('compress') if hasattr(project, 'output_files') else None
+            return [p] if p and os.path.isfile(p) else []
+        # align: the _aligned audio
+        if step == WorkflowStep.ALIGN:
+            p = project.output_files.get('align') if hasattr(project, 'output_files') else None
+            return [p] if p and os.path.isfile(p) else []
+        # export: the _ffv1.mkv
+        if step == WorkflowStep.EXPORT:
+            p = project.output_files.get('export') if hasattr(project, 'output_files') else None
+            return [p] if p and os.path.isfile(p) else []
+        # final: the _final.mkv
+        if step == WorkflowStep.FINAL:
+            p = project.output_files.get('final') if hasattr(project, 'output_files') else None
+            return [p] if p and os.path.isfile(p) else []
+        # decode: not tracked (intermediate .tbc, regenerable from .lds)
+        return []
+
+    def _is_step_hashing(self, step: WorkflowStep, project: Project) -> bool:
+        """Check if a checksum job is currently running for this step."""
+        if not self.job_manager:
+            return False
+        running = self.job_manager.get_jobs_nonblocking(JobStatus.RUNNING, timeout=0.1)
+        if running is None:
+            return False
+        # Match by project + step label encoded in job parameters
+        for job in running:
+            if job.job_type != 'checksum':
+                continue
+            if not self._is_job_for_project(job, project):
+                continue
+            job_step = (job.parameters or {}).get('step', '')
+            if job_step == step.value:
+                return True
+        return False
+
+    def _get_step_hash_state(self, step: WorkflowStep, project: Project) -> str:
+        """Aggregate hash state across this step's tracked files.
+
+        Returns one of: 'invalid', 'stale', 'validated', 'no-hash', 'mixed'.
+
+        Priority: any 'invalid' → 'invalid'; any 'stale' → 'stale';
+        all 'validated' → 'validated'; some validated + some 'no-hash' →
+        'mixed' (treated as plain COMPLETE).
+        """
+        try:
+            import validation_log
+        except ImportError:
+            return 'no-hash'
+
+        files = self._get_step_tracked_files(step, project)
+        if not files:
+            return 'no-hash'
+
+        log_path = validation_log.get_log_path(files[0])
+        states = [validation_log.file_state(p, log_path=log_path) for p in files]
+
+        if 'invalid' in states:
+            return 'invalid'
+        if 'stale' in states:
+            return 'stale'
+        if all(s == 'validated' for s in states):
+            return 'validated'
+        if all(s == 'no-hash' for s in states):
+            return 'no-hash'
+        return 'mixed'
     
     def check_prerequisites(self, step: WorkflowStep, project: Project) -> bool:
         """
@@ -530,6 +646,14 @@ class WorkflowAnalyzer:
             project and 'audio' not in project.capture_files):
             return "Video Only"  # Final output is video-only
             
+        # Hashing is rendered with a 1 Hz flash so the user sees that the
+        # validation work is actively running. The flash uses the wall-clock
+        # second-bit to alternate between two display states; the calling
+        # renderer re-evaluates this every refresh tick.
+        if step_status == StepStatus.HASHING:
+            import time
+            return "Hashing…" if int(time.time()) % 2 == 0 else "Hashing "
+
         # Standard status display
         status_display = {
             StepStatus.COMPLETE: "Complete",
@@ -538,9 +662,12 @@ class WorkflowAnalyzer:
             StepStatus.READY: "Ready",
             StepStatus.PROCESSING: "Processing",
             StepStatus.QUEUED: "Queued",
-            StepStatus.MISSING: "Missing"
+            StepStatus.MISSING: "Missing",
+            StepStatus.VALIDATED: "Validated",
+            StepStatus.STALE: "Stale",
+            StepStatus.INVALID: "INVALID",
         }
-        
+
         return status_display.get(step_status, str(step_status.value))
 
 def main():
