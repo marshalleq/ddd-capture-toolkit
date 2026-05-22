@@ -638,6 +638,13 @@ class JobQueueManager:
                 job.completed_at = datetime.now()
                 # Use async save to avoid blocking job completion
                 self._save_queue_async()
+
+            # Post-success: if auto_checksum is on, enqueue a checksum job for
+            # the output file of any pipeline step that just succeeded. The
+            # checksum job is itself in the queue (light category) so it gets
+            # storage-aware scheduling and doesn't bog down the main pipeline.
+            if success and job.status == JobStatus.COMPLETED and job.job_type != 'checksum':
+                self._maybe_enqueue_checksum_for(job)
         
         except Exception as e:
             self.logger.error(f"Error executing job {job.job_id}: {e}")
@@ -2227,21 +2234,17 @@ class JobQueueManager:
                 if self._compress_flac_integrity_enabled(job.project_name):
                     self.logger.info("Running FLAC integrity test (compress integrity_check enabled)")
                     ok, msg = self._validate_ldf_flac_integrity(expected_output)
-                    # Also hash the .ldf for the validation log — we just read
-                    # the whole thing anyway, so the cost is just a hash compute
-                    # pass which is fast vs the decode that already happened.
-                    ldf_hash = None
-                    if ok:
-                        try:
-                            import validation_log as _vl
-                            ldf_hash, _ = _vl.compute_file_hash(expected_output)
-                        except Exception as e:
-                            self.logger.warning(f"Could not hash .ldf for log: {e}")
+                    # The .ldf hash itself is now recorded by the post-job
+                    # auto-checksum hook (see _maybe_enqueue_checksum_for),
+                    # which queues a checksum job after this executor returns
+                    # True. Keeping the hashing in a separate job means the
+                    # main compress pipeline isn't blocked on hash compute
+                    # and the WCC matrix shows HASHING then VALIDATED in the
+                    # compress column as that job runs.
                     try:
                         import validation_log
                         validation_log.log_tier2(
-                            expected_output, ok, msg,
-                            ldf_path=expected_output, ldf_hash=ldf_hash,
+                            expected_output, ok, msg, ldf_path=expected_output,
                         )
                     except Exception as log_err:
                         self.logger.warning(f"Could not write validation log: {log_err}")
@@ -2278,6 +2281,83 @@ class JobQueueManager:
             self.logger.error(f"LDS compression job error: {e}")
             job.error_message = str(e)
             return False
+
+    def _maybe_enqueue_checksum_for(self, finished_job: QueuedJob):
+        """If auto_checksum is on, queue a checksum job for the output of the
+        just-completed pipeline step. This is how the WCC's HASHING /
+        VALIDATED states get populated without the user lifting a finger.
+
+        We deliberately drop the .ldf inline-hash that the compress step used
+        to do internally — moving it here unifies the post-validation hashing
+        across all step types.
+        """
+        try:
+            from config import get_auto_checksum
+            if not get_auto_checksum():
+                return
+        except ImportError:
+            return
+
+        # Map job type → (step label for log, output paths to hash)
+        # If the step doesn't have a hashable output we just skip.
+        outputs = []
+        step_label = None
+        if finished_job.job_type == 'lds-compress':
+            step_label = 'compress'
+            if finished_job.output_file:
+                outputs = [finished_job.output_file]
+        elif finished_job.job_type == 'audio-align':
+            step_label = 'align'
+            if finished_job.output_file:
+                outputs = [finished_job.output_file]
+        elif finished_job.job_type == 'tbc-export':
+            step_label = 'export'
+            if finished_job.output_file:
+                outputs = [finished_job.output_file]
+        elif finished_job.job_type == 'final-mux':
+            step_label = 'final'
+            if finished_job.output_file:
+                outputs = [finished_job.output_file]
+        # vhs-decode produces .tbc + .tbc.chroma + .tbc.json — we don't currently
+        # hash these because the .tbc is fully regenerable from the .lds. If a
+        # future tier wants to hash them, add a branch here.
+
+        if not outputs or not step_label:
+            return
+
+        # Drop outputs that don't exist (job may have completed but output got
+        # moved/deleted by some other process)
+        outputs = [p for p in outputs if os.path.isfile(p)]
+        if not outputs:
+            return
+
+        try:
+            parameters = {
+                'files': outputs,
+                'mode': 'hash',
+                'step': step_label,
+            }
+            # Inputs for the queue manager: use first output as both "input" and
+            # "output" for tracking purposes — the actual files-to-hash are in
+            # the parameters dict. Uses add_job_nonblocking so we don't deadlock
+            # if the queue lock is contended by another worker thread.
+            job_id = self.add_job_nonblocking(
+                job_type='checksum',
+                input_file=outputs[0],
+                output_file=outputs[0],
+                parameters=parameters,
+                priority=3,  # lower than user-initiated work
+                project_name=finished_job.project_name,
+                timeout=2.0,
+            )
+            if job_id:
+                self.logger.info(
+                    f"Queued post-{step_label} checksum job {job_id} for "
+                    f"{[os.path.basename(p) for p in outputs]}"
+                )
+        except Exception as e:
+            # Hashing should never block the workflow — log and move on
+            self.logger.warning(f"Could not enqueue checksum job for {step_label}: {e}")
 
     def _execute_checksum_job(self, job: QueuedJob) -> bool:
         """Hash a list of files and record the results in the validation log.
