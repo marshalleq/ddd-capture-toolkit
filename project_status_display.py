@@ -162,10 +162,16 @@ class ProjectStatusDisplay:
         if debug_enabled:
             self._debug_log(f"Enhanced cell for {project.name} step {step.value}: status={step_status}, job_manager={self.analyzer.job_manager is not None}")
         
-        # First check: If step is complete, always show complete status regardless of job queue
-        if step_status == StepStatus.COMPLETE:
+        # First check: terminal/no-progress states render as plain text.
+        # COMPLETE plus the hash-related terminal states (VALIDATED/STALE/INVALID)
+        # all use the simple text path — there's no progress bar to show for them.
+        # HASHING uses simple text too, but the display string flashes via the
+        # 1Hz alternation in get_step_display_status, picked up by the 4Hz UI refresh.
+        terminal_states = (StepStatus.COMPLETE, StepStatus.VALIDATED, StepStatus.STALE,
+                           StepStatus.INVALID, StepStatus.HASHING)
+        if step_status in terminal_states:
             if debug_enabled:
-                self._debug_log(f"Step {step.value} for {project.name} is complete - showing complete status")
+                self._debug_log(f"Step {step.value} for {project.name} status={step_status.value} - simple text")
             return self._create_simple_status_text(step_status, project, step)
         
         # Second check: Only show progress for steps that are actually processing or queued
