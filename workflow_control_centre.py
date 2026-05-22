@@ -555,6 +555,8 @@ class WorkflowControlCentre:
             ("1d 1m 1e",  "bold yellow",      "Dec/cMp/Exp"),
             ("1a 1f",     "bold yellow",      "Algn/Final"),
             ("1mv",       "bold green",       "Verify .ldf"),
+            ("hash 1",    "bold green",       "Hash project files"),
+            ("verify 1",  "bold green",       "Re-check hashes"),
             ("1x",        "bold cyan",        "Flags page"),
             ("1dp 1dn",   "bold yellow",      "PAL / NTSC"),
             ("auto",      "bold cyan",        "Queue ready"),
@@ -759,6 +761,9 @@ class WorkflowControlCentre:
         coord_format_match = re.match(r'^(\d+)d([pn])$', cmd)
         # Nmv: project N, compress (m), validate (v) — full .ldf integrity check
         compress_validate_match = re.match(r'^(\d+)mv$', cmd)
+        # 'hash N' / 'verify N' — checksum operations on a whole project
+        hash_match = re.match(r'^hash\s+(\d+)$', cmd)
+        verify_match = re.match(r'^verify\s+(\d+)$', cmd)
         job_match = re.match(r'^j(\d+)$', cmd)
         if coord_match:
             project_num = int(coord_match.group(1))
@@ -775,6 +780,10 @@ class WorkflowControlCentre:
         elif compress_validate_match:
             project_num = int(compress_validate_match.group(1))
             self.handle_compress_validate(project_num)
+        elif hash_match:
+            self.handle_hash_project(int(hash_match.group(1)))
+        elif verify_match:
+            self.handle_verify_project(int(verify_match.group(1)))
 
         # Project selection (any positive integer)
         elif cmd.isdigit() and int(cmd) >= 1:
@@ -2371,6 +2380,162 @@ class WorkflowControlCentre:
         except Exception as e:
             self.message = f"Error cleaning {','.join(status_names)} jobs: {e}"
 
+    def _project_tracked_files(self, project):
+        """Return a dict of {step_label: [file_paths]} for every tracked file
+        in the project. Used by hash/verify to know what to checksum."""
+        files_by_step = {}
+
+        # Capture originals (.lds + .flac + .json)
+        capture_files = []
+        if hasattr(project, 'capture_files'):
+            for key in ('video', 'audio'):
+                p = project.capture_files.get(key)
+                if p and os.path.isfile(p):
+                    capture_files.append(p)
+            # Add the .json metadata
+            if 'video' in project.capture_files:
+                vp = project.capture_files['video']
+                base = vp[:-4] if vp.endswith(('.lds', '.ldf')) else os.path.splitext(vp)[0]
+                jp = base + '.json'
+                if os.path.isfile(jp):
+                    capture_files.append(jp)
+        if capture_files:
+            files_by_step['capture'] = capture_files
+
+        # Downstream outputs
+        if hasattr(project, 'output_files'):
+            for key, step_label in (
+                ('compress', 'compress'),
+                ('align', 'align'),
+                ('export', 'export'),
+                ('final', 'final'),
+            ):
+                p = project.output_files.get(key)
+                if p and os.path.isfile(p):
+                    files_by_step[step_label] = [p]
+        return files_by_step
+
+    def handle_hash_project(self, project_num):
+        """Queue checksum jobs for any of project N's files that lack a hash.
+
+        Skips files already recorded with a current (matching size+mtime)
+        hash — that's what 'verify N' is for. The intent is "fill in the gaps
+        for an existing project that was made before auto-checksum existed."
+        """
+        project_idx = project_num - 1
+        if project_idx >= len(self.current_projects):
+            self.message = f"No project at position {project_num}"
+            return
+        project = self.current_projects[project_idx]
+        if not self.job_manager:
+            self.message = "Job manager not available"
+            return
+
+        try:
+            import validation_log
+        except ImportError as e:
+            self.message = f"validation_log not available: {e}"
+            return
+
+        files_by_step = self._project_tracked_files(project)
+        if not files_by_step:
+            self.message = f"No tracked files found for {project.name}"
+            return
+
+        queued = []
+        skipped = []
+        for step_label, paths in files_by_step.items():
+            # Filter to files that don't already have a current hash
+            needs_hash = []
+            for p in paths:
+                state = validation_log.file_state(p)
+                if state == 'no-hash':
+                    needs_hash.append(p)
+                else:
+                    skipped.append(f"{os.path.basename(p)} ({state})")
+            if not needs_hash:
+                continue
+            try:
+                job_id = self.job_manager.add_job_nonblocking(
+                    job_type='checksum',
+                    input_file=needs_hash[0],
+                    output_file=needs_hash[0],
+                    parameters={
+                        'files': needs_hash, 'mode': 'hash', 'step': step_label,
+                    },
+                    priority=4,
+                    project_name=project.name,
+                    timeout=1.0,
+                )
+                if job_id:
+                    queued.append(f"{step_label}: {len(needs_hash)} file(s)")
+            except Exception as e:
+                self.message = f"Failed to queue hash job for {step_label}: {e}"
+                return
+
+        if queued:
+            queued_text = "; ".join(queued)
+            skip_text = f" Skipped {len(skipped)} already-hashed file(s)." if skipped else ""
+            self.message = (
+                f"✓ Queued hash job(s) for {project.name}: {queued_text}.{skip_text}"
+            )
+        else:
+            self.message = (
+                f"All tracked files for {project.name} already have hashes. "
+                f"Use 'verify {project_num}' to re-check them."
+            )
+
+    def handle_verify_project(self, project_num):
+        """Queue a verify-mode checksum job: re-hashes all tracked files and
+        compares against recorded hashes in the log. Mismatches are logged as
+        INVALID and surface in the WCC matrix."""
+        project_idx = project_num - 1
+        if project_idx >= len(self.current_projects):
+            self.message = f"No project at position {project_num}"
+            return
+        project = self.current_projects[project_idx]
+        if not self.job_manager:
+            self.message = "Job manager not available"
+            return
+
+        files_by_step = self._project_tracked_files(project)
+        if not files_by_step:
+            self.message = f"No tracked files found for {project.name}"
+            return
+
+        # Flatten all files into a single verify job so we get one PASS/FAIL
+        # entry per verify run rather than per-step.
+        all_files = []
+        for paths in files_by_step.values():
+            all_files.extend(paths)
+        if not all_files:
+            self.message = f"No files to verify for {project.name}"
+            return
+
+        try:
+            job_id = self.job_manager.add_job_nonblocking(
+                job_type='checksum',
+                input_file=all_files[0],
+                output_file=all_files[0],
+                parameters={
+                    'files': all_files, 'mode': 'verify', 'step': 'verify',
+                },
+                priority=4,
+                project_name=project.name,
+                timeout=1.0,
+            )
+            if job_id:
+                self.message = (
+                    f"✓ Queued verify job for {project.name}: re-hashing "
+                    f"{len(all_files)} file(s). Result will appear in "
+                    f"the validation log; INVALID rows will appear in the "
+                    f"matrix if any hash mismatches are found."
+                )
+            else:
+                self.message = f"Failed to queue verify job for {project.name}"
+        except Exception as e:
+            self.message = f"Error queuing verify job: {e}"
+
     def handle_compress_validate(self, project_num):
         """Option C: Full structural validation of a project's .ldf master.
 
@@ -2753,6 +2918,9 @@ class WorkflowControlCentre:
         print("  clean failed - Remove all failed jobs from history (resets Failed counter)")
         print("  clean cancelled - Remove all cancelled jobs from history")
         print("  clean history - Remove all finished jobs (failed + cancelled + completed)")
+        print("  1mv - Full validation decode of project 1's .ldf (Tier 3)")
+        print("  hash 1 - Hash any of project 1's files that don't yet have a recorded hash")
+        print("  verify 1 - Re-hash project 1's files and check against recorded hashes")
         print("  H - Show this help")
         print("  Q - Quit the Workflow Control Centre")
         
