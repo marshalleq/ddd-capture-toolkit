@@ -1648,6 +1648,31 @@ def start_capture_and_record():
     # Start capture immediately (resources already prepared)
     shared_capture_process_fast(sox_command, audio_delay, capture_duration=None, ddd_command=ddd_command)
 
+    # ----- Post-capture: optional auto-checksum of the 3 originals -----
+    # Capture has fully exited at this point (shared_capture_process_fast
+    # joins both threads before returning). DdD writes the .json sidecar
+    # synchronously as part of its shutdown, so by now all three files
+    # should exist on disk and be safe to hash.
+    try:
+        from config import get_auto_checksum
+        if get_auto_checksum():
+            json_output_path = os.path.join(capture_folder, f"{capture_name}.json")
+            try:
+                from post_capture_hash import prompt_and_hash_originals
+                prompt_and_hash_originals(
+                    lds_path=video_output_path,
+                    flac_path=audio_output_path,
+                    json_path=json_output_path,
+                )
+            except ImportError as e:
+                print(f"\n(auto_checksum on but post_capture_hash module not loadable: {e})")
+            except Exception as e:
+                # Never let a hash failure break the capture flow
+                print(f"\n(post-capture hash failed: {e})")
+    except ImportError:
+        # config module unavailable — skip silently
+        pass
+
 
 def offer_wav_conversion(flac_file=None, wav_file=None):
     """

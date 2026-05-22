@@ -50,7 +50,9 @@ DEFAULT_CONFIG = {
         "default_audio_resample_rate": "96000",  # Default target rate for final-mux audio
         "default_audio_resample_rate_description": "Sample rate for audio in the final muxed output. Options: 'none' (keep clockgen-Lite native 78125 Hz), '48000', '96000', '192000'. 96000 is recommended: closest common standard above 78125 (NLEs like DaVinci Resolve don't accept the native rate) and uses high-quality soxr resampler.",
         "default_audio_format": "flac",  # Default audio codec for final-mux output
-        "default_audio_format_description": "Audio codec for the final muxed output. Options: 'flac' (lossless, compressed, no size limit), 'wav' (lossless, uncompressed, classic 4GB limit). FLAC recommended unless an editor cannot read it. DaVinci Resolve 16+ supports FLAC natively."
+        "default_audio_format_description": "Audio codec for the final muxed output. Options: 'flac' (lossless, compressed, no size limit), 'wav' (lossless, uncompressed, classic 4GB limit). FLAC recommended unless an editor cannot read it. DaVinci Resolve 16+ supports FLAC natively.",
+        "auto_checksum": True,  # Hash files automatically post-capture and post-validation
+        "auto_checksum_description": "If on, the toolkit hashes the 3 capture originals (.lds, .flac, .json) after each capture, and hashes downstream outputs (.ldf, _aligned.flac, etc.) after their respective validation steps pass. Records SHA-256 + mtime + size in <project>_validation.log for later integrity checking via the WCC. The post-capture hash shows a 5-second countdown so you can cancel it; everything else runs as a background job."
     }
 }
 
@@ -367,6 +369,33 @@ def set_compress_use_gpu(enabled):
 
     if save_config(config):
         print(f"Compress GPU acceleration: {'enabled' if enabled else 'disabled'}")
+        return True
+    return False
+
+
+def get_auto_checksum():
+    """
+    Whether the toolkit should hash files automatically after capture and
+    after each validation step. Returns bool. Default True (on) — losing your
+    masters silently is a much worse failure mode than spending a few minutes
+    hashing them. Disable per-project in COMPRESS_FLAGS if needed.
+    """
+    config = load_config()
+    perf_settings = config.get('performance_settings', {})
+    return bool(perf_settings.get('auto_checksum', True))
+
+
+def set_auto_checksum(enabled):
+    """Toggle auto-checksum behaviour globally."""
+    if not isinstance(enabled, bool):
+        print(f"Error: auto_checksum must be bool (got {type(enabled).__name__})")
+        return False
+    config = load_config()
+    if 'performance_settings' not in config:
+        config['performance_settings'] = {}
+    config['performance_settings']['auto_checksum'] = enabled
+    if save_config(config):
+        print(f"Auto-checksum: {'enabled' if enabled else 'disabled'}")
         return True
     return False
 
