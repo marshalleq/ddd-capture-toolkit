@@ -324,11 +324,15 @@ class WorkflowControlCentre:
         from rich.layout import Layout
         from rich.panel import Panel
         
-        # Main layout with input panel at bottom
+        # Main layout with input panel at bottom. command_input is sized so
+        # that even when the terminal is narrow and panel content wraps, the
+        # Status line still has room to render. The bottom panel also surfaces
+        # the most-recent message in its title so even if the body is clipped
+        # the status is still visible.
         layout = Layout()
         layout.split_column(
             Layout(name="top_section", ratio=5),
-            Layout(name="command_input", size=6)
+            Layout(name="command_input", size=9)
         )
         
         # Split top section into main content and side panel
@@ -620,21 +624,41 @@ class WorkflowControlCentre:
         # Show the most recent status message (from command results, validation
         # outcomes, etc.) so background results like 1mv are visible.
         last_message = getattr(self, 'message', '') or ''
+        # Pick a style based on outcome keywords
+        if last_message.startswith('✗') or 'FAIL' in last_message or 'DO NOT DELETE' in last_message:
+            msg_style = "bold red"
+            border_style = "red"
+        elif last_message.startswith('✓') or 'PASS' in last_message:
+            msg_style = "bold green"
+            border_style = "green"
+        elif 'Warning' in last_message or 'Invalid' in last_message:
+            msg_style = "bold yellow"
+            border_style = "yellow"
+        else:
+            msg_style = "white"
+            border_style = "yellow"
+
         if last_message:
             content.append("\n")
-            # Pick a style that catches the eye but doesn't shout for normal info.
-            if last_message.startswith('✗') or 'FAIL' in last_message or 'DO NOT DELETE' in last_message:
-                msg_style = "bold red"
-            elif last_message.startswith('✓') or 'PASS' in last_message:
-                msg_style = "bold green"
-            elif 'Warning' in last_message or 'Invalid' in last_message:
-                msg_style = "bold yellow"
-            else:
-                msg_style = "white"
             content.append("Status: ", style="bold cyan")
             content.append(last_message, style=msg_style)
 
-        return Panel(content, title="Command Input", border_style="yellow")
+        # Always put the most-recent message in the panel TITLE too. Panel
+        # titles render on the border and are never clipped by panel-height
+        # constraints, so even when the terminal is narrow and the body
+        # content wraps off-screen the user can still see what happened.
+        if last_message:
+            # Title is a single line. Truncate aggressively to fit a typical
+            # narrow terminal (~30-50 cols) — full text is still in the body
+            # at wider widths.
+            short = last_message
+            if len(short) > 60:
+                short = short[:57] + "..."
+            title = f"Command Input — {short}"
+        else:
+            title = "Command Input"
+
+        return Panel(content, title=title, border_style=border_style)
     
     def refresh_data(self):
         """Refresh project and job data (non-blocking)"""
