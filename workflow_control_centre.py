@@ -2445,34 +2445,72 @@ class WorkflowControlCentre:
                 proc.wait()
                 elapsed = _t.time() - start
 
+                # Determine pass/fail and craft the status message
+                passed = False
+                detail = ""
                 if lds_path:
                     lds_size = os.path.getsize(lds_path)
                     expected_bytes = lds_size * 4 // 5 * 2  # 16-bit samples
                     ratio = total / expected_bytes if expected_bytes else 0
                     # Allow up to 1 MB slack (FLAC frame boundary alignment)
                     if abs(expected_bytes - total) <= 1_000_000:
+                        passed = True
+                        detail = (f"decoded {total:_} bytes (expected {expected_bytes:_}, "
+                                  f"{ratio*100:.4f}%) in {elapsed:.0f}s")
                         self.message = (
                             f"✓ Validate PASS for {os.path.basename(ldf_path)}: "
-                            f"decoded {total:_} bytes (expected {expected_bytes:_}, "
-                            f"{ratio*100:.4f}%) in {elapsed:.0f}s. Safe to delete .lds."
+                            f"{detail}. Safe to delete .lds."
                         )
                     else:
+                        passed = False
+                        detail = (f"decoded {total:_} bytes, expected {expected_bytes:_} "
+                                  f"({ratio*100:.2f}%)")
                         self.message = (
                             f"✗ Validate FAIL for {os.path.basename(ldf_path)}: "
-                            f"decoded {total:_} bytes, expected {expected_bytes:_} "
-                            f"({ratio*100:.2f}%). DO NOT DELETE .lds."
+                            f"{detail}. DO NOT DELETE .lds."
                         )
                 else:
                     # No .lds to compare; just report exit code
                     if proc.returncode == 0 and total > 0:
+                        passed = True
+                        detail = f"decoded {total:_} bytes in {elapsed:.0f}s, FLAC stream clean"
                         self.message = (
                             f"✓ .ldf decodes cleanly ({total:_} bytes in {elapsed:.0f}s). "
                             f"Integrity intact, but can't verify sample count without source .lds."
                         )
                     else:
-                        self.message = (
-                            f"✗ .ldf decode failed (rc={proc.returncode}, {total:_} bytes)."
-                        )
+                        passed = False
+                        detail = f".ldf decode failed (rc={proc.returncode}, {total:_} bytes)"
+                        self.message = f"✗ {detail}."
+
+                # Compute checksums of the capture originals and write a
+                # validation log entry. This is the user-requested permanent
+                # record of "I validated this at time X and the files looked
+                # like Y" — useful before any destructive action on the .lds.
+                try:
+                    self.message = (
+                        f"Validation decode done — computing checksums of originals "
+                        f"for the validation log (this can take a few minutes)…"
+                    )
+                    import validation_log
+                    file_hashes = validation_log.hash_capture_originals(
+                        ldf_path, skip_lds_hash=False,
+                    )
+                    validation_log.log_tier3(
+                        ldf_path, passed, detail,
+                        file_hashes=file_hashes,
+                        elapsed_seconds=_t.time() - start,
+                    )
+                    log_path = validation_log.get_log_path(ldf_path)
+                    # Re-state the pass/fail message now that the log is written
+                    verdict_icon = "✓" if passed else "✗"
+                    self.message = (
+                        f"{verdict_icon} Validate {'PASS' if passed else 'FAIL'} — "
+                        f"{detail}. Log: {os.path.basename(log_path)}"
+                    )
+                except Exception as log_err:
+                    # Don't lose the validation result if logging fails
+                    self.message += f" (validation log write failed: {log_err})"
             except Exception as e:
                 self.message = f"Validate error: {e}"
 

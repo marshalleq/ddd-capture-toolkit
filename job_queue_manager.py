@@ -2199,6 +2199,14 @@ class JobQueueManager:
                 # reading a small amount; if the seek lands inside the file we
                 # know the compress wrote at least that far.
                 ok, msg = self._validate_ldf_structural(job.input_file, expected_output)
+                try:
+                    import validation_log
+                    validation_log.log_tier1(
+                        expected_output, ok, msg,
+                        lds_path=job.input_file, ldf_path=expected_output,
+                    )
+                except Exception as log_err:
+                    self.logger.warning(f"Could not write validation log: {log_err}")
                 if not ok:
                     error_msg = f"Compress structural check failed: {msg}"
                     self.logger.error(error_msg)
@@ -2215,6 +2223,24 @@ class JobQueueManager:
                 if self._compress_flac_integrity_enabled(job.project_name):
                     self.logger.info("Running FLAC integrity test (compress integrity_check enabled)")
                     ok, msg = self._validate_ldf_flac_integrity(expected_output)
+                    # Also hash the .ldf for the validation log — we just read
+                    # the whole thing anyway, so the cost is just a hash compute
+                    # pass which is fast vs the decode that already happened.
+                    ldf_hash = None
+                    if ok:
+                        try:
+                            import validation_log as _vl
+                            ldf_hash, _ = _vl.compute_file_hash(expected_output)
+                        except Exception as e:
+                            self.logger.warning(f"Could not hash .ldf for log: {e}")
+                    try:
+                        import validation_log
+                        validation_log.log_tier2(
+                            expected_output, ok, msg,
+                            ldf_path=expected_output, ldf_hash=ldf_hash,
+                        )
+                    except Exception as log_err:
+                        self.logger.warning(f"Could not write validation log: {log_err}")
                     if not ok:
                         error_msg = f"Compress FLAC integrity test failed: {msg}"
                         self.logger.error(error_msg)
