@@ -919,15 +919,18 @@ class WorkflowControlCentre:
                         self.message = f"Error retrying {step_name}: {str(e)}"
                 else:
                     self.message = f"Job manager not available - cannot retry {step_name}"
-            elif step_status == StepStatus.COMPLETE:
-                # Check if output file actually exists before declaring it complete
+            elif step_status in (StepStatus.COMPLETE, StepStatus.VALIDATED,
+                                  StepStatus.STALE, StepStatus.INVALID, StepStatus.HASHING):
+                # Step has finished (one way or another). Don't auto-restart;
+                # require 'force' to overwrite.
                 output_exists = self._check_step_output_exists(project, workflow_step)
+                state_label = step_status.value
                 if not output_exists:
-                    # Output file missing - warn user but don't auto-restart
-                    self.message = f"Warning: {step_name} marked complete but output file missing for Project {project_num}. Use 'force {project_num}{step_letter}' to restart"
+                    self.message = (f"Warning: {step_name} marked {state_label} but output file missing "
+                                    f"for Project {project_num}. Use 'force {project_num}{step_letter}' to restart")
                 else:
-                    # Output exists, ask for confirmation to overwrite
-                    self.message = f"Warning: {step_name} complete for Project {project_num}. Use 'force {project_num}{step_letter}' to overwrite"
+                    self.message = (f"Warning: {step_name} {state_label} for Project {project_num}. "
+                                    f"Use 'force {project_num}{step_letter}' to overwrite")
             elif step_status == StepStatus.PROCESSING:
                 self.message = f"{step_name} is already processing for Project {project_num} ({project.name})"
             elif step_status == StepStatus.MISSING:
