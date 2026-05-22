@@ -25,21 +25,38 @@ from datetime import datetime
 
 # ----- Hashing ------------------------------------------------------------
 
-def compute_file_hash(path, algorithm='sha256', chunk_size=64 * 1024 * 1024):
+def compute_file_hash(path, algorithm='sha256', chunk_size=64 * 1024 * 1024,
+                      progress_callback=None):
     """Compute the hash of a file.
 
     Reads in large chunks for throughput. Returns (hex_digest, elapsed_seconds).
     Raises OSError if the file can't be read.
+
+    progress_callback: optional callable(bytes_read, total_bytes) invoked
+    after each chunk — used by the post-capture progress bar.
     """
     h = hashlib.new(algorithm)
     start = time.time()
+    total = os.path.getsize(path)
+    read_so_far = 0
     with open(path, 'rb') as f:
         while True:
             chunk = f.read(chunk_size)
             if not chunk:
                 break
             h.update(chunk)
+            read_so_far += len(chunk)
+            if progress_callback:
+                progress_callback(read_so_far, total)
     return h.hexdigest(), time.time() - start
+
+
+def file_identity(path):
+    """Return (size, mtime_iso) for a file — used to detect later changes
+    cheaply without re-hashing. mtime is rounded to whole seconds since
+    sub-second precision varies across filesystems."""
+    st = os.stat(path)
+    return st.st_size, datetime.fromtimestamp(int(st.st_mtime)).isoformat(timespec='seconds')
 
 
 def find_capture_originals(base_path):
@@ -109,6 +126,43 @@ def _append(log_path, text):
 
 def _ts():
     return datetime.now().isoformat(timespec='seconds')
+
+
+def log_capture_hashes(any_capture_file_path, file_hashes, elapsed_seconds=None,
+                       cancelled=False):
+    """Record the post-capture hashes of the 3 originals (.lds, .flac, .json).
+
+    These files have no validation oracle — they ARE the source of truth — so
+    we just record their checksums + identity (size, mtime) at the moment of
+    capture. Later runs use the recorded identity to cheaply detect whether
+    the file has been modified (STALE state in the WCC).
+
+    file_hashes: dict {role: {'path', 'size', 'mtime', 'hash', 'elapsed'}}.
+    cancelled: if True, the user cancelled the hash mid-way; record what was
+    computed so far and note the cancellation.
+    """
+    log_path = get_log_path(any_capture_file_path)
+    verdict = "CANCELLED" if cancelled else "DONE"
+    lines = [
+        f"[{_ts()}] Capture: post-capture hash of originals  →  {verdict}",
+    ]
+    if elapsed_seconds is not None:
+        lines.append(f"  total elapsed:  {elapsed_seconds:.0f}s")
+
+    if file_hashes:
+        lines.append("")
+        lines.append("  File identity + checksums (SHA-256):")
+        for role, info in file_hashes.items():
+            size = info.get('size', 0)
+            mtime = info.get('mtime', '')
+            h = info.get('hash', '(skipped)')
+            path = info.get('path', '')
+            elapsed = info.get('elapsed')
+            elapsed_str = f"  ({elapsed:.0f}s)" if elapsed is not None else ""
+            lines.append(f"    .{role:<4} {size:>18,} bytes  mtime {mtime}  {h}{elapsed_str}")
+            if path:
+                lines.append(f"          {path}")
+    _append(log_path, "\n".join(lines) + "\n")
 
 
 def log_tier1(any_capture_file_path, passed, message, lds_path=None, ldf_path=None):
