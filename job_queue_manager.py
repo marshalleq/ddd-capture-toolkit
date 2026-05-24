@@ -243,15 +243,56 @@ class JobQueueManager:
             return "heavy"
         return "light"
 
+    # Cores each running vhs-decode consumes (with -t 3: 3 workers + 1 main).
+    # Used to derive the concurrent-decode cap from the CPU topology, so the
+    # affinity allocator can always hand every running decode a dedicated
+    # physical-core slot.
+    _CORES_PER_DECODE = 4
+
+    def get_max_concurrent_decodes(self) -> Optional[int]:
+        """Maximum simultaneous vhs-decode jobs the scheduler will start.
+
+        Derived from the affinity allocator's view of physical cores:
+        floor(physical_cores / _CORES_PER_DECODE). On a 9950X3D (16 cores)
+        this is 4 — beyond that the 5th+ decode would have to share an
+        already-occupied physical core and per-decode fps falls sharply.
+
+        Returns None when the topology is unknown (non-Linux, /sys
+        unavailable). In that case no decode-specific cap is applied and
+        scheduling defers to the existing per-location / category limits.
+        """
+        if self.affinity_allocator is None or not self.affinity_allocator.available:
+            return None
+        total = self.affinity_allocator.total_physical_cores()
+        if total <= 0:
+            return None
+        return max(1, total // self._CORES_PER_DECODE)
+
     def can_schedule_job(self, job: 'QueuedJob', running_jobs: List['QueuedJob']) -> bool:
         """
         Determine if a job can be scheduled based on storage-aware rules.
 
         Rules:
+        - Global cap on concurrent vhs-decodes derived from CPU topology
+          (one decode per physical-core-quartet on Linux; see
+          get_max_concurrent_decodes). Beyond this cap the 5th+ decode
+          would have to share an already-pinned physical core and
+          per-decode fps drops sharply.
         - Heavy I/O jobs (export, final-mux) block other heavy jobs on same storage
         - Light jobs (decode, compress, align) can run with limits
         - Different storage types have different limits (HDD more constrained than SSD)
         """
+        # Decode-specific global cap. Check first so the rest of the
+        # scheduling logic doesn't have to know about CPU topology.
+        if job.job_type == 'vhs-decode':
+            decode_cap = self.get_max_concurrent_decodes()
+            if decode_cap is not None:
+                decodes_running = sum(
+                    1 for j in running_jobs if j.job_type == 'vhs-decode'
+                )
+                if decodes_running >= decode_cap:
+                    return False
+
         location = job.source_location or self.get_location_from_path(job.input_file)
         if not location:
             # Unknown location - use global limit
@@ -284,8 +325,22 @@ class JobQueueManager:
             running_jobs = [j for j in self.jobs if j.status == JobStatus.RUNNING]
             queued_jobs = [j for j in self.jobs if j.status == JobStatus.QUEUED]
 
+        # Top-level: the decode-specific global cap, so the WCC can show
+        # "decodes 3/4 running, 2 queued waiting on cap" rather than the
+        # cap being silently invisible.
+        decode_cap = self.get_max_concurrent_decodes()
+        decodes_running = sum(1 for j in running_jobs if j.job_type == 'vhs-decode')
+        decodes_queued = sum(1 for j in queued_jobs if j.job_type == 'vhs-decode')
+
         # Group by location
-        status = {}
+        status = {
+            "_decode_cap": {
+                "max_concurrent_decodes": decode_cap,
+                "decodes_running": decodes_running,
+                "decodes_queued": decodes_queued,
+                "cores_per_decode": self._CORES_PER_DECODE,
+            },
+        }
         locations = set()
         for job in running_jobs + queued_jobs:
             loc = job.source_location or self.get_location_from_path(job.input_file)
