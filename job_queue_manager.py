@@ -252,15 +252,30 @@ class JobQueueManager:
     def get_max_concurrent_decodes(self) -> Optional[int]:
         """Maximum simultaneous vhs-decode jobs the scheduler will start.
 
-        Derived from the affinity allocator's view of physical cores:
-        floor(physical_cores / _CORES_PER_DECODE). On a 9950X3D (16 cores)
-        this is 4 — beyond that the 5th+ decode would have to share an
-        already-occupied physical core and per-decode fps falls sharply.
-
-        Returns None when the topology is unknown (non-Linux, /sys
-        unavailable). In that case no decode-specific cap is applied and
-        scheduling defers to the existing per-location / category limits.
+        Resolution order:
+          1. Explicit user override from
+             config.performance_settings.max_concurrent_decodes
+             (int >= 1). Honoured even on non-Linux — if the user says 4,
+             they get 4, regardless of whether the affinity allocator can
+             help.
+          2. Auto-detect from the affinity allocator:
+             floor(physical_cores / _CORES_PER_DECODE). On a 9950X3D
+             (16 physical cores) this is 4 — beyond that the 5th+ decode
+             would share a pinned physical core and per-decode fps falls.
+          3. None — topology unknown (non-Linux, /sys absent) AND no
+             override. The scheduler then doesn't apply a decode-specific
+             cap; per-location / category limits still govern.
         """
+        # User override wins
+        try:
+            from config import get_max_concurrent_decodes_override
+            override = get_max_concurrent_decodes_override()
+            if override is not None:
+                return override
+        except ImportError:
+            pass
+
+        # Auto-detect from topology
         if self.affinity_allocator is None or not self.affinity_allocator.available:
             return None
         total = self.affinity_allocator.total_physical_cores()
@@ -675,6 +690,40 @@ class JobQueueManager:
                 self.logger.error(f"Error in job processor: {e}")
                 time.sleep(5)  # Wait longer on error
     
+    def _pin_non_decode_subprocess(self, job):
+        """Set up dynamic affinity for a non-decode CPU-heavy job.
+
+        Returns (preexec_fn, on_started_callback, allowed_cpus).
+          - preexec_fn: pass to subprocess.Popen so the child starts pinned
+            to physical cores not currently held by decodes. None if no
+            pinning could be set up (allocator unavailable).
+          - on_started_callback: call with the subprocess's PID once
+            Popen returns, so future decode start/release can re-affine
+            this job. None if not applicable.
+          - allowed_cpus: the initial pin set (for logging). None if not
+            pinned.
+
+        Caller MUST call self.affinity_allocator.release(job.job_id) in a
+        finally so the allocation is cleaned up on exit/cancel/crash.
+        """
+        if not (self.affinity_allocator and self.affinity_allocator.available):
+            return None, None, None
+        allowed = self.affinity_allocator.reserve_non_decode_set(job.job_id)
+        if not allowed:
+            return None, None, None
+        try:
+            import cpu_affinity
+            preexec_fn = cpu_affinity.make_preexec_fn(allowed)
+        except Exception as e:
+            self.logger.warning(f"Could not build non-decode affinity preexec: {e}")
+            self.affinity_allocator.release(job.job_id)
+            return None, None, None
+
+        def on_started(pid):
+            self.affinity_allocator.register_non_decode_pid(job.job_id, pid)
+
+        return preexec_fn, on_started, allowed
+
     def _execute_job(self, job: QueuedJob):
         """Execute a single job"""
         try:
@@ -1358,6 +1407,17 @@ class JobQueueManager:
             else:
                 self.logger.warning(f"Could not find conda environment with ffmpeg - TBC export may fail")
             
+            # Pin this non-decode subprocess to cores not currently held
+            # by decode jobs. The allocator will dynamically narrow this
+            # job's affinity if a decode starts later. See
+            # _pin_non_decode_subprocess.
+            preexec_fn, on_started, pinned_cpus = self._pin_non_decode_subprocess(job)
+            if pinned_cpus:
+                self.logger.info(
+                    f"Pinning tbc-export {job.job_id} to non-decode CPUs "
+                    f"{pinned_cpus}"
+                )
+
             # start_new_session: see decode launch for rationale (avoid killing parent)
             process = subprocess.Popen(
                 cmd,
@@ -1366,12 +1426,16 @@ class JobQueueManager:
                 text=True,
                 bufsize=1,
                 env=env,
-                start_new_session=True
+                start_new_session=True,
+                preexec_fn=preexec_fn,
             )
-            
+
+            if on_started:
+                on_started(process.pid)
+
             # Track the process for termination
             self.job_processes[job.job_id] = process
-            
+
             # Get total frames from TBC JSON metadata first (similar to VHS decode approach)
             if tbc_json_file:
                 total_frames = self._get_total_frames_from_tbc_json(tbc_json_file)
@@ -1553,7 +1617,13 @@ class JobQueueManager:
             job.error_message = str(e)
             self.logger.error(f"TBC export job error: {e}")
             return False
-    
+        finally:
+            if self.affinity_allocator is not None:
+                try:
+                    self.affinity_allocator.release(job.job_id)
+                except Exception as rel_err:
+                    self.logger.warning(f"Affinity release failed for {job.job_id}: {rel_err}")
+
     def _execute_audio_align_job(self, job: QueuedJob) -> bool:
         """Execute an audio alignment job using the existing mono-based alignment functionality"""
         try:
@@ -1631,6 +1701,15 @@ class JobQueueManager:
                     job.total_frames = input_file_size  # Use bytes as "frames" for progress calc
                     self.save_queue()
 
+                # Pin to non-decode CPU set; allocator re-affines us if a
+                # decode starts later (see _pin_non_decode_subprocess).
+                preexec_fn, on_started, pinned_cpus = self._pin_non_decode_subprocess(job)
+                if pinned_cpus:
+                    self.logger.info(
+                        f"Pinning audio-align {job.job_id} to non-decode CPUs "
+                        f"{pinned_cpus}"
+                    )
+
                 # Run the subprocess with proper output capture.
                 # start_new_session: see decode launch for rationale (avoid killing parent)
                 process = subprocess.Popen(
@@ -1639,8 +1718,12 @@ class JobQueueManager:
                     stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,
-                    start_new_session=True
+                    start_new_session=True,
+                    preexec_fn=preexec_fn,
                 )
+
+                if on_started:
+                    on_started(process.pid)
 
                 # Track the process for termination capability
                 self.job_processes[job.job_id] = process
@@ -1768,7 +1851,13 @@ class JobQueueManager:
             self.logger.error(f"Audio alignment job error: {e}")
             job.error_message = str(e)
             return False
-    
+        finally:
+            if self.affinity_allocator is not None:
+                try:
+                    self.affinity_allocator.release(job.job_id)
+                except Exception as rel_err:
+                    self.logger.warning(f"Affinity release failed for {job.job_id}: {rel_err}")
+
     def _execute_final_mux_job(self, job: QueuedJob) -> bool:
         """Execute a final muxing job using FFmpeg to combine video and audio"""
         try:
@@ -1915,6 +2004,15 @@ class JobQueueManager:
                 job.progress = 20.0
                 self.save_queue()
             
+            # Pin to non-decode CPU set; allocator re-affines us if a
+            # decode starts later (see _pin_non_decode_subprocess).
+            preexec_fn, on_started, pinned_cpus = self._pin_non_decode_subprocess(job)
+            if pinned_cpus:
+                self.logger.info(
+                    f"Pinning final-mux {job.job_id} to non-decode CPUs "
+                    f"{pinned_cpus}"
+                )
+
             # Run FFmpeg process with simple subprocess handling.
             # start_new_session: see decode launch for rationale (avoid killing parent)
             process = subprocess.Popen(
@@ -1923,8 +2021,12 @@ class JobQueueManager:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
-                start_new_session=True
+                start_new_session=True,
+                preexec_fn=preexec_fn,
             )
+
+            if on_started:
+                on_started(process.pid)
 
             # Track the process for termination capability
             self.job_processes[job.job_id] = process
@@ -2077,6 +2179,12 @@ class JobQueueManager:
             self.logger.error(f"Final muxing job error: {e}")
             job.error_message = str(e)
             return False
+        finally:
+            if self.affinity_allocator is not None:
+                try:
+                    self.affinity_allocator.release(job.job_id)
+                except Exception as rel_err:
+                    self.logger.warning(f"Affinity release failed for {job.job_id}: {rel_err}")
 
     # ---- Exact input-side compress progress (cross-platform) -----------
     #
@@ -2420,6 +2528,15 @@ class JobQueueManager:
             if not output_dir:
                 output_dir = os.getcwd()
 
+            # Pin to non-decode CPU set; allocator re-affines us if a
+            # decode starts later (see _pin_non_decode_subprocess).
+            preexec_fn, on_started, pinned_cpus = self._pin_non_decode_subprocess(job)
+            if pinned_cpus:
+                self.logger.info(
+                    f"Pinning lds-compress {job.job_id} to non-decode CPUs "
+                    f"{pinned_cpus}"
+                )
+
             # Run ld-compress. start_new_session puts the bash script and its
             # pipeline children (ld-lds-converter, flaldf/ffmpeg) in their own
             # process group so we can signal the whole group on cancel - otherwise
@@ -2432,8 +2549,12 @@ class JobQueueManager:
                 text=True,
                 bufsize=1,
                 cwd=output_dir,
-                start_new_session=True
+                start_new_session=True,
+                preexec_fn=preexec_fn,
             )
+
+            if on_started:
+                on_started(process.pid)
 
             # Track the process for termination capability
             self.job_processes[job.job_id] = process
@@ -2711,6 +2832,12 @@ class JobQueueManager:
             self.logger.error(f"LDS compression job error: {e}")
             job.error_message = str(e)
             return False
+        finally:
+            if self.affinity_allocator is not None:
+                try:
+                    self.affinity_allocator.release(job.job_id)
+                except Exception as rel_err:
+                    self.logger.warning(f"Affinity release failed for {job.job_id}: {rel_err}")
 
     def _maybe_enqueue_checksum_for(self, finished_job: QueuedJob):
         """If auto_checksum is on, queue a checksum job for the output of the
