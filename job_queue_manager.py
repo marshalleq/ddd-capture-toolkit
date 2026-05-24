@@ -169,7 +169,25 @@ class JobQueueManager:
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
-        
+
+        # CPU-affinity allocator for compute-heavy jobs. Discovers the L3
+        # cache topology from /sys (Linux). On other platforms it's a no-op
+        # — allocate() returns None and the executor runs the subprocess
+        # unpinned. See cpu_affinity.py for the L3-group-preferring strategy.
+        try:
+            import cpu_affinity
+            self.affinity_allocator = cpu_affinity.AffinityAllocator()
+            if self.affinity_allocator.available:
+                self.logger.info(
+                    "CPU affinity allocator initialised:\n%s",
+                    self.affinity_allocator.describe(),
+                )
+            else:
+                self.logger.info("CPU affinity allocator: topology unavailable, pinning disabled")
+        except Exception as e:
+            self.logger.warning(f"Could not initialise CPU affinity allocator: {e}")
+            self.affinity_allocator = None
+
         # Load existing queue after logger is set up
         self.load_queue()
 
@@ -769,11 +787,51 @@ class JobQueueManager:
                 cmd.extend(additional_params.split())
             
             self.logger.info(f"Starting VHS decode: {' '.join(cmd)}")
-            
+
+            # Ask the affinity allocator for a set of physical cores to pin
+            # this decode to. Strategy (see cpu_affinity.py): prefer an empty
+            # L3 group so each decode gets a dedicated L3 cache. On a Zen
+            # X3D this means the first decode lands on the V-Cache CCD, the
+            # second on the other CCD, and so on. Concurrent decodes don't
+            # bounce across CCDs.
+            # cores_wanted = -t threads + 1 (main process + worker pool).
+            try:
+                threads = int(job.parameters.get('threads', 3) or 3)
+            except (TypeError, ValueError):
+                threads = 3
+            cores_wanted = max(2, threads + 1)
+            pinned_cpus = None
+            preexec_fn = None
+            if self.affinity_allocator is not None and self.affinity_allocator.available:
+                pinned_cpus = self.affinity_allocator.allocate(job.job_id, cores_wanted)
+                if pinned_cpus:
+                    try:
+                        import cpu_affinity
+                        preexec_fn = cpu_affinity.make_preexec_fn(pinned_cpus)
+                    except Exception as e:
+                        self.logger.warning(f"Could not build affinity preexec: {e}")
+                        # Best-effort: release immediately so the slots can be reused
+                        self.affinity_allocator.release(job.job_id)
+                        pinned_cpus = None
+                        preexec_fn = None
+
+            if pinned_cpus:
+                self.logger.info(
+                    f"Pinning vhs-decode {job.job_id} to physical CPUs "
+                    f"{pinned_cpus} (no SMT siblings)"
+                )
+            else:
+                self.logger.info(
+                    f"vhs-decode {job.job_id}: running unpinned "
+                    f"(allocator unavailable or no free cores)"
+                )
+
             # Start process. start_new_session puts the subprocess in its own
             # process group so _terminate_job_process can signal the whole group
             # without also killing the parent (which shares the controlling
-            # terminal's group otherwise).
+            # terminal's group otherwise). preexec_fn applies CPU affinity
+            # after fork but before exec, so the affinity is inherited by
+            # vhs-decode and its multiprocessing worker children.
             import subprocess
             process = subprocess.Popen(
                 cmd,
@@ -781,7 +839,8 @@ class JobQueueManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                start_new_session=True
+                start_new_session=True,
+                preexec_fn=preexec_fn,
             )
 
             # Track the process for termination capability
@@ -861,12 +920,21 @@ class JobQueueManager:
                         self.logger.error(f"VHS decode failed: output files not created or empty: {', '.join(missing_files)}")
             
             return return_code == 0 and output_files_exist
-            
+
         except Exception as e:
             job.error_message = str(e)
             self.logger.error(f"VHS decode job error: {e}")
             return False
-    
+        finally:
+            # Always return the CPU affinity slots to the pool, so a crash
+            # or early return doesn't permanently consume them. release() is
+            # idempotent and a no-op if no allocation was made for this job.
+            if self.affinity_allocator is not None:
+                try:
+                    self.affinity_allocator.release(job.job_id)
+                except Exception as rel_err:
+                    self.logger.warning(f"Affinity release failed for {job.job_id}: {rel_err}")
+
     def _get_total_frames_from_tbc_json(self, tbc_json_file: str) -> int:
         """Extract total frame count from TBC JSON metadata file"""
         try:
