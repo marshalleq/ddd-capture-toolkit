@@ -351,7 +351,7 @@ class ProgressDisplayUtils:
 
                 # Track which job type this is so the formatter can render the
                 # rate field with the right unit (frames/sec vs MB/s).
-                rate_unit_label = "MB/s" if step_type in ("lds-compress", "audio-align") else "fps"
+                rate_unit_label = "MB/s" if step_type in ("lds-compress", "audio-align", "compress-validate") else "fps"
 
                 # Fallback ETA calculation using progress rate
                 if eta_seconds is None and runtime_seconds > 30 and progress_percentage > 0:
@@ -608,7 +608,7 @@ def extract_specific_job_progress_info(job_manager, project_name: str, step_type
 
     # For byte-rate jobs the `fps` field carries bytes/sec, so the cell
     # renderer needs to format it as MB/s rather than frames/sec.
-    rate_unit_label = "MB/s" if step_type in ("lds-compress", "audio-align") else "fps"
+    rate_unit_label = "MB/s" if step_type in ("lds-compress", "audio-align", "compress-validate") else "fps"
 
     return {
         'percentage': progress_percentage,
