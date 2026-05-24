@@ -37,6 +37,8 @@ class StepStatus(Enum):
     VALIDATED = "validated"        # Step complete AND hash recorded AND file size+mtime unchanged
     STALE = "stale"                # Hash recorded but file has changed (size/mtime differs from log)
     INVALID = "invalid"            # Explicit verify revealed a hash mismatch — file may be corrupt
+    # Archive staging
+    ARCHIVED = "archived"          # Project's intermediate files have been moved into <basename>.intermediate/
 
 @dataclass
 class WorkflowStatus:
@@ -69,6 +71,7 @@ class WorkflowAnalyzer:
         'validated': 'bright_green',    # subtly brighter than 'complete'
         'stale': 'yellow',              # file changed since last hash
         'invalid': 'bold red',          # explicit verify revealed mismatch
+        'archived': 'bright_magenta',   # staged for archive — intermediates moved aside
     }
 
     # Status descriptions
@@ -84,6 +87,7 @@ class WorkflowAnalyzer:
         'validated': 'Step complete and hash matches recorded value (file unchanged since hash)',
         'stale': 'Hash recorded but file has been modified since (size/mtime differ) — re-hash or verify',
         'invalid': 'Verify revealed a hash mismatch — file may be corrupt',
+        'archived': 'Project staged for archive — intermediate files moved into <basename>.intermediate/',
     }
     
     def __init__(self, job_manager: Optional[JobQueueManager] = None):
@@ -98,27 +102,50 @@ class WorkflowAnalyzer:
     def analyze_project_workflow(self, project: Project) -> WorkflowStatus:
         """
         Analyze all workflow steps for a project
-        
+
         Args:
             project: Project to analyze
-            
+
         Returns:
             WorkflowStatus with status of all steps
         """
         workflow_status = WorkflowStatus(project_name=project.name)
-        
+
+        # If this project has been staged for archive (the .intermediate/
+        # subfolder exists), every step shows ARCHIVED and we skip the
+        # per-step analysis. Without this short-circuit the matrix would
+        # incorrectly read missing intermediates (the .tbc, _ffv1.mkv, etc.
+        # are inside the subfolder, not at the top level) as "step broken".
+        if self._is_project_archived(project):
+            for step in WorkflowStep:
+                workflow_status.steps[step] = StepStatus.ARCHIVED
+            return workflow_status
+
         # Analyze each workflow step
         for step in WorkflowStep:
             step_status = self.get_step_status(step, project)
             workflow_status.steps[step] = step_status
-            
+
             # Add details for failed/processing steps
             if step_status == StepStatus.FAILED:
                 workflow_status.step_details[step] = self._get_failure_reason(step, project)
             elif step_status == StepStatus.PROCESSING:
                 workflow_status.step_details[step] = "Processing..."
-                
+
         return workflow_status
+
+    @staticmethod
+    def _is_project_archived(project: Project) -> bool:
+        """Check whether the project has been staged for archive — i.e. its
+        <basename>.intermediate/ subfolder exists next to the capture files.
+        Presence of that folder means the WCC's `stage N` command has moved
+        intermediates aside and the project should be displayed as ARCHIVED.
+        """
+        source_dir = getattr(project, 'source_directory', None)
+        name = getattr(project, 'name', None)
+        if not source_dir or not name:
+            return False
+        return os.path.isdir(os.path.join(source_dir, name + '.intermediate'))
     
     def get_step_status(self, step: WorkflowStep, project: Project) -> StepStatus:
         """
