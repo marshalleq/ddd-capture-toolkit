@@ -179,14 +179,21 @@ class WorkflowAnalyzer:
         # Invalid > Stale > Validated > Complete > Ready > Missing
 
         # 0. Is this the COMPRESS row of a project whose .ldf is currently
-        # being validated by Nmv (ldf round-trip)? Override whatever the
-        # underlying state would be, since the user has explicitly asked
-        # to re-validate and that's the relevant in-flight activity. The
-        # cell flips back to VALIDATED (or COMPLETE) when the worker
-        # clears the in-progress flag.
-        if (step == WorkflowStep.COMPRESS
-                and project.name in self.ldf_validation_in_progress):
-            return StepStatus.VERIFYING
+        # being validated? Two paths trigger this:
+        #   - Nmv (manual ldf round-trip) populates the analyzer's
+        #     ldf_validation_in_progress dict.
+        #   - The auto-enqueued compress-validate job (Tier 2 FLAC
+        #     integrity after every successful compress) shows up in
+        #     the queue as a RUNNING 'compress-validate'.
+        # Either one overrides the underlying state, since the user
+        # has explicit validation work in flight; the cell flips back
+        # to VALIDATED (or whatever the post-completion state is) when
+        # both signals clear.
+        if step == WorkflowStep.COMPRESS:
+            if project.name in self.ldf_validation_in_progress:
+                return StepStatus.VERIFYING
+            if self._is_compress_validate_running(project):
+                return StepStatus.VERIFYING
 
         # 1. Step itself currently running (decode, compress, etc.)
         if self._is_step_running(step, project):
@@ -223,6 +230,24 @@ class WorkflowAnalyzer:
         # 6. Default: missing prerequisites
         return StepStatus.MISSING
     
+    def _is_compress_validate_running(self, project: Project) -> bool:
+        """Check whether a 'compress-validate' (Tier 2 FLAC integrity) job is
+        currently RUNNING in the queue for this project. Used to flip the
+        COMPRESS cell to VERIFYING during the auto-queued post-compress
+        verification.
+        """
+        if not self.job_manager:
+            return False
+        running = self.job_manager.get_jobs_nonblocking(JobStatus.RUNNING, timeout=0.1)
+        if running is None:
+            return False
+        for job in running:
+            if job.job_type != 'compress-validate':
+                continue
+            if self._is_job_for_project(job, project):
+                return True
+        return False
+
     def _is_step_running(self, step: WorkflowStep, project: Project) -> bool:
         """Check if step is currently running via job queue"""
         if not self.job_manager:
