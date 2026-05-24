@@ -2060,13 +2060,19 @@ class JobQueueManager:
                 ]
 
             # Estimated final output size as a fraction of input. Used to convert
-            # bytes-on-disk into a percentage. The ld-decode wiki cites ~0.70 for
-            # FLAC level 11 on RF, but observed reality on this toolkit's captures
-            # is closer to 0.80-0.86 (varies with RF noise floor and content).
-            # Bias the default toward the high end so progress doesn't hit the cap
-            # too early; the dynamic-expansion logic below handles outliers.
-            EXPECTED_RATIO = 0.85
+            # bytes-on-disk into a percentage during the write phase. The
+            # ld-decode wiki cites ~0.70 for FLAC level 11 on RF; observed
+            # captures here land in the 0.65–0.78 range depending on content.
+            # 0.70 is a reasonable middle. Dynamic-expansion below handles
+            # captures that compress worse than this (e.g. mostly clean signal).
+            EXPECTED_RATIO = 0.70
             expected_output_bytes = int(input_size * EXPECTED_RATIO)
+
+            # Progress budget: write phase owns 0–89%, post-write verification
+            # (Tier 1 + Tier 2) owns 90–99%, COMPLETED snaps to 100%. The cap
+            # at 89 means even a capture that hits the EXPECTED_RATIO exactly
+            # leaves room for "finalising" to show distinctly.
+            WRITE_PHASE_CAP = 89.0
 
             # Stash bytes in the existing per-job progress fields. They are
             # documented as type-dependent (frames for decode/export, bytes here).
@@ -2122,11 +2128,12 @@ class JobQueueManager:
                             with self.lock:
                                 job.total_frames = expected_output_bytes
 
-                        # Real percentage. Cap at 99 until the process exits so we
-                        # don't claim 100% before the rename / verify steps run.
+                        # Real percentage during the write phase. Cap at
+                        # WRITE_PHASE_CAP (89) so the post-write verification
+                        # phase has its own visible budget (90–99).
                         if expected_output_bytes > 0:
                             real_progress = (current_output_bytes / expected_output_bytes) * 100.0
-                            real_progress = min(real_progress, 99.0)
+                            real_progress = min(real_progress, WRITE_PHASE_CAP)
                         else:
                             real_progress = 0.0
 
@@ -2201,6 +2208,17 @@ class JobQueueManager:
                 self.logger.info(f"LDS compression completed: {expected_output}")
                 self.logger.info(f"Output size: {output_size:.2f} GB (compression ratio: {compression_ratio:.1f}%)")
 
+                # File is fully written. Jump to 90% so the matrix and the
+                # job line clearly show "writing done, finalising" instead
+                # of stranding at the write-phase ratio (which used to look
+                # like the job had crashed at ~87% during the long Tier 2
+                # FLAC integrity check). Verification runs 90→99 below.
+                with self.lock:
+                    job.progress = 90.0
+                    job.current_fps = 0.0
+                    job.status_message = "Verifying (Tier 1 structural check)…"
+                    self._save_queue_async()
+
                 # ----- Option A (always on): structural completeness check -----
                 # ld-compress has been observed to exit 0 even when truncated
                 # mid-stream (the progress jumps from N% to "completed" without
@@ -2233,7 +2251,26 @@ class JobQueueManager:
                 # project via the X menu (COMPRESS_FLAGS.flac_integrity_check).
                 if self._compress_flac_integrity_enabled(job.project_name):
                     self.logger.info("Running FLAC integrity test (compress integrity_check enabled)")
-                    ok, msg = self._validate_ldf_flac_integrity(expected_output)
+                    # Tier 2 progress callback: maps bytes-decoded-so-far over
+                    # expected (derived from .lds size, exact) into the 90–99
+                    # progress slot. Without this the cell sits at 90% silently
+                    # for the entire decode — minutes on a long capture.
+                    with self.lock:
+                        job.status_message = "Verifying (Tier 2 FLAC integrity)…"
+                    def _tier2_cb(bytes_done, expected_bytes, mbps):
+                        with self.lock:
+                            if expected_bytes > 0:
+                                frac = min(bytes_done / expected_bytes, 1.0)
+                                job.progress = 90.0 + frac * 9.0
+                            job.current_frame = bytes_done
+                            # current_fps is bytes/sec; the matrix renders as MB/s
+                            job.current_fps = mbps * 1024 * 1024
+                            job.status_message = (
+                                f"Tier 2 verifying integrity ({mbps:.0f} MB/s)"
+                            )
+                    ok, msg = self._validate_ldf_flac_integrity(
+                        expected_output, progress_callback=_tier2_cb,
+                    )
                     # The .ldf hash itself is now recorded by the post-job
                     # auto-checksum hook (see _maybe_enqueue_checksum_for),
                     # which queues a checksum job after this executor returns
@@ -2583,33 +2620,70 @@ class JobQueueManager:
             f"file extends to expected length"
         )
 
-    def _validate_ldf_flac_integrity(self, ldf_path: str) -> tuple:
+    def _validate_ldf_flac_integrity(self, ldf_path: str, progress_callback=None) -> tuple:
         """Option B: Stream the .ldf through ld-ldf-reader; if it exits 0 the
         FLAC frame CRCs are all valid end-to-end.
 
         Returns (ok: bool, message: str). Slow — minutes to ~30 min depending
         on hardware and capture length. Disable per-project via the X menu.
+
+        progress_callback: optional callable(bytes_streamed: int,
+        expected_bytes: int, mbps: float) invoked roughly every 2 s while the
+        decode runs. Lets the caller surface live progress (e.g. update
+        job.progress) instead of staring at a frozen UI for the whole run.
+        expected_bytes is derived from the .lds size if available, else 0.
         """
         import shutil
         tool = shutil.which('ld-ldf-reader')
         if not tool:
             return True, "ld-ldf-reader not on PATH; skipping integrity test"
 
+        # Derive the expected decoded byte count so the caller can scale
+        # progress against it. 0 if the .lds isn't around — caller copes.
+        expected_bytes = 0
+        if ldf_path.endswith('.ldf'):
+            lds_candidate = ldf_path[:-4] + '.lds'
+            if os.path.isfile(lds_candidate):
+                try:
+                    expected_bytes = os.path.getsize(lds_candidate) * 4 // 5 * 2
+                except OSError:
+                    expected_bytes = 0
+
         start = time.time()
         try:
-            with open(os.devnull, 'wb') as devnull:
-                rc = subprocess.call(
-                    [tool, ldf_path, '0'],
-                    stdout=devnull,
-                    stderr=subprocess.DEVNULL,
-                )
+            proc = subprocess.Popen(
+                [tool, ldf_path, '0'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
         except Exception as e:
             return False, f"ld-ldf-reader failed: {e}"
 
+        total = 0
+        last_cb = 0.0
+        try:
+            while True:
+                chunk = proc.stdout.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                now = time.time()
+                if progress_callback and (now - last_cb) >= 2.0:
+                    last_cb = now
+                    el = now - start
+                    mbps = (total / el / 1e6) if el > 0 else 0.0
+                    try:
+                        progress_callback(total, expected_bytes, mbps)
+                    except Exception:
+                        # Never let a callback fault break the integrity check
+                        pass
+        finally:
+            proc.wait()
         elapsed = time.time() - start
-        if rc != 0:
+
+        if proc.returncode != 0:
             return False, (
-                f"ld-ldf-reader exit code {rc} after {elapsed:.0f}s — "
+                f"ld-ldf-reader exit code {proc.returncode} after {elapsed:.0f}s — "
                 f"FLAC stream has decode errors. DO NOT DELETE THE SOURCE .lds."
             )
         return True, f"end-to-end FLAC decode clean ({elapsed:.0f}s)"
