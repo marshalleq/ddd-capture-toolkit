@@ -102,11 +102,18 @@ class WorkflowAnalyzer:
             job_manager: Optional job queue manager for status integration
         """
         self.job_manager = job_manager
-        # Project names currently being validated by Nmv (ldf round-trip).
-        # The WCC's validation worker adds/removes from this set; the
-        # matrix queries it to flip the COMPRESS cell to VERIFYING for
-        # the duration of the run.
-        self.ldf_validation_in_progress: Set[str] = set()
+        # Projects currently being validated by Nmv (ldf round-trip).
+        # Key: project name. Value: dict with the same shape the matrix
+        # progress renderer expects from the job queue:
+        #   {'percentage': float,         # 0–100
+        #    'fps': float,                # bytes/sec (rendered as MB/s)
+        #    'rate_unit_label': 'MB/s',
+        #    'runtime_seconds': float}
+        # The WCC's validation worker writes a fresh dict every ~2 s and
+        # pops the key in a finally on exit. The matrix queries it to (a)
+        # render VERIFYING for the COMPRESS cell and (b) populate that
+        # cell with bar / percent / rate / ETA.
+        self.ldf_validation_in_progress: Dict[str, Dict[str, float]] = {}
 
 
     def analyze_project_workflow(self, project: Project) -> WorkflowStatus:

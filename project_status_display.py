@@ -174,76 +174,82 @@ class ProjectStatusDisplay:
                 self._debug_log(f"Step {step.value} for {project.name} status={step_status.value} - simple text")
             return self._create_simple_status_text(step_status, project, step)
         
-        # Second check: Only show progress for steps that are actually processing or queued
-        if step_status in [StepStatus.PROCESSING, StepStatus.QUEUED] and self.analyzer.job_manager:
-            # Get job type mapping for progress extraction
-            job_type = self.analyzer._get_job_type_for_step(step)
-            
-            if debug_enabled:
-                self._debug_log(f"Job type for {step.value}: {job_type}")
-            
-            if job_type:
-                try:
-                    # Use specific job progress extraction to find the exact job for this project+step cell
-                    from shared.progress_display_utils import extract_specific_job_progress_info
-                    progress_info = extract_specific_job_progress_info(
-                        self.analyzer.job_manager, project.name, job_type)
-                    
-                    if debug_enabled:
-                        self._debug_log(f"Progress info: {progress_info}")
-                    
-                    if progress_info:
+        # Second check: Show progress for in-flight states. PROCESSING/QUEUED
+        # source from the job queue; VERIFYING (Nmv ldf round-trip) sources
+        # from the analyzer's ldf_validation_in_progress dict, which the WCC
+        # validation worker updates every ~2 s with the same key shape the
+        # queue extractor produces.
+        progress_states = (StepStatus.PROCESSING, StepStatus.QUEUED, StepStatus.VERIFYING)
+        if step_status in progress_states:
+            progress_info = None
+
+            if step_status == StepStatus.VERIFYING:
+                progress_info = self.analyzer.ldf_validation_in_progress.get(project.name)
+                if debug_enabled:
+                    self._debug_log(f"VERIFYING progress for {project.name}: {progress_info}")
+            elif self.analyzer.job_manager:
+                job_type = self.analyzer._get_job_type_for_step(step)
+                if debug_enabled:
+                    self._debug_log(f"Job type for {step.value}: {job_type}")
+                if job_type:
+                    try:
+                        from shared.progress_display_utils import extract_specific_job_progress_info
+                        progress_info = extract_specific_job_progress_info(
+                            self.analyzer.job_manager, project.name, job_type)
                         if debug_enabled:
-                            self._debug_log(f"Creating progress display with {progress_info.get('percentage', 0)}% progress")
+                            self._debug_log(f"Progress info: {progress_info}")
+                    except Exception as e:
+                        if debug_enabled:
+                            self._debug_log(f"Exception extracting progress info: {e}")
+                        progress_info = None
 
-                        # Auto-sizing bar fills whatever width Rich allocates
-                        # to the cell, so it stays in sync with the percentage
-                        # text even when the window is narrow.
-                        bar = AutoSizingProgressBar(progress_info['percentage'])
+            if progress_info:
+                if debug_enabled:
+                    self._debug_log(f"Creating progress display with {progress_info.get('percentage', 0)}% progress")
 
-                        # Percentage line
-                        percentage_line = Text(
-                            f"{progress_info['percentage']:.1f}%",
-                            style="cyan", no_wrap=True, overflow="crop",
-                        )
+                # Auto-sizing bar fills whatever width Rich allocates
+                # to the cell, so it stays in sync with the percentage
+                # text even when the window is narrow.
+                bar = AutoSizingProgressBar(progress_info['percentage'])
 
-                        # Rate line (FPS or MB/s depending on job type)
-                        rate_unit = progress_info.get('rate_unit_label', 'fps')
-                        if progress_info.get('fps') and progress_info['fps'] > 0:
-                            if rate_unit == 'MB/s':
-                                rate_str = f"{progress_info['fps'] / (1024 * 1024):.1f}MB/s"
-                            else:
-                                rate_str = f"{progress_info['fps']:.1f}{rate_unit}"
-                            rate_line = Text(rate_str, style="bright_green", no_wrap=True, overflow="crop")
-                        else:
-                            placeholder = f"--{rate_unit}" if rate_unit != 'MB/s' else "--MB/s"
-                            rate_line = Text(placeholder, style="dim", no_wrap=True, overflow="crop")
+                # Percentage line
+                percentage_line = Text(
+                    f"{progress_info['percentage']:.1f}%",
+                    style="cyan", no_wrap=True, overflow="crop",
+                )
 
-                        # ETA line
-                        eta_text = ""
-                        if (progress_info.get('fps') and progress_info['fps'] > 0 and
-                            progress_info.get('percentage', 0) > 0):
-                            remaining_percent = 100 - progress_info['percentage']
-                            if progress_info.get('runtime_seconds', 0) > 30:
-                                eta_seconds = (remaining_percent / progress_info['percentage']) * progress_info['runtime_seconds']
-                                if eta_seconds > 0:
-                                    eta_text = f"ETA {ProgressDisplayUtils.format_time(int(eta_seconds))}"
-                        if not eta_text and progress_info.get('runtime_seconds', 0) < 30:
-                            eta_text = "Starting..."
+                # Rate line (FPS or MB/s depending on job type)
+                rate_unit = progress_info.get('rate_unit_label', 'fps')
+                if progress_info.get('fps') and progress_info['fps'] > 0:
+                    if rate_unit == 'MB/s':
+                        rate_str = f"{progress_info['fps'] / (1024 * 1024):.1f}MB/s"
+                    else:
+                        rate_str = f"{progress_info['fps']:.1f}{rate_unit}"
+                    rate_line = Text(rate_str, style="bright_green", no_wrap=True, overflow="crop")
+                else:
+                    placeholder = f"--{rate_unit}" if rate_unit != 'MB/s' else "--MB/s"
+                    rate_line = Text(placeholder, style="dim", no_wrap=True, overflow="crop")
 
-                        if eta_text:
-                            eta_line = Text(eta_text, style="yellow", no_wrap=True, overflow="crop")
-                        else:
-                            eta_line = Text("ETA: --:--", style="dim", no_wrap=True, overflow="crop")
+                # ETA line
+                eta_text = ""
+                if (progress_info.get('fps') and progress_info['fps'] > 0 and
+                    progress_info.get('percentage', 0) > 0):
+                    remaining_percent = 100 - progress_info['percentage']
+                    if progress_info.get('runtime_seconds', 0) > 30:
+                        eta_seconds = (remaining_percent / progress_info['percentage']) * progress_info['runtime_seconds']
+                        if eta_seconds > 0:
+                            eta_text = f"ETA {ProgressDisplayUtils.format_time(int(eta_seconds))}"
+                if not eta_text and progress_info.get('runtime_seconds', 0) < 30:
+                    eta_text = "Starting..."
 
-                        return Group(bar, percentage_line, rate_line, eta_line)
-                        
-                except Exception as e:
-                    if debug_enabled:
-                        self._debug_log(f"Exception extracting progress info: {e}")
-                    # Fall back to simple status text on error
-                    pass
-                    
+                if eta_text:
+                    eta_line = Text(eta_text, style="yellow", no_wrap=True, overflow="crop")
+                else:
+                    eta_line = Text("ETA: --:--", style="dim", no_wrap=True, overflow="crop")
+
+                return Group(bar, percentage_line, rate_line, eta_line)
+
+
         
         # Return simple status for non-processing states or when no progress data available
         return self._create_simple_status_text(step_status, project, step)
