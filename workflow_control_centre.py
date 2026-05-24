@@ -2647,27 +2647,61 @@ class WorkflowControlCentre:
                     return
 
                 import time as _t
+
+                # Precompute the expected decoded byte count so we can show
+                # live progress against it (and reuse it for the pass/fail
+                # comparison below).
+                lds_size = os.path.getsize(lds_path)
+                expected_bytes = lds_size * 4 // 5 * 2  # 16-bit samples
+                basename = os.path.basename(ldf_path)
+
                 start = _t.time()
                 proc = subprocess.Popen(
                     [tool, ldf_path, '0'],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                 )
-                # Stream and count bytes
+
+                def _fmt_eta(s):
+                    s = max(0, int(s))
+                    if s < 60:
+                        return f"{s}s"
+                    if s < 3600:
+                        return f"{s // 60}m{s % 60:02d}s"
+                    return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+
+                # Stream and count bytes. Update self.message every ~2 s so
+                # the status bar reflects live progress instead of going
+                # silent for the 10–30 min the decode takes.
                 total = 0
+                last_msg_update = 0.0
                 while True:
                     chunk = proc.stdout.read(1024 * 1024)
                     if not chunk:
                         break
                     total += len(chunk)
+                    now = _t.time()
+                    if now - last_msg_update >= 2.0:
+                        last_msg_update = now
+                        elapsed_so_far = now - start
+                        pct = (total / expected_bytes * 100) if expected_bytes else 0
+                        rate_mbs = (total / elapsed_so_far / 1e6) if elapsed_so_far > 0 else 0
+                        if rate_mbs > 0 and total < expected_bytes:
+                            eta = (expected_bytes - total) / (rate_mbs * 1e6)
+                            eta_str = _fmt_eta(eta)
+                        else:
+                            eta_str = "?"
+                        self.message = (
+                            f"Validating {basename}: {pct:5.1f}%  "
+                            f"{total / 1e9:.1f}/{expected_bytes / 1e9:.1f} GB  "
+                            f"{rate_mbs:.0f} MB/s  ETA {eta_str}"
+                        )
                 proc.wait()
                 elapsed = _t.time() - start
 
                 # Tier 3 sample-count comparison. The only path to passed=True
                 # is decoded-bytes vs expected-from-lds-size within slack;
                 # any other outcome is a fail.
-                lds_size = os.path.getsize(lds_path)
-                expected_bytes = lds_size * 4 // 5 * 2  # 16-bit samples
                 ratio = total / expected_bytes if expected_bytes else 0
                 # Allow up to 1 MB slack (FLAC frame boundary alignment)
                 if abs(expected_bytes - total) <= 1_000_000:
