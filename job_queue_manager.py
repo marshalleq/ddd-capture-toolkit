@@ -1945,6 +1945,91 @@ class JobQueueManager:
             job.error_message = str(e)
             return False
 
+    @staticmethod
+    def _proc_read_lds_consumed_bytes(parent_pid, lds_inode, lds_dev, cached=None):
+        """Exact input-side progress for lds-compress, via Linux /proc.
+
+        ld-compress is a bash script that spawns a pipeline ending in
+        ld-lds-converter reading the .lds. The kernel knows exactly how
+        many bytes that reader has consumed — it's the file offset of
+        the open fd, available as 'pos:' in /proc/<pid>/fdinfo/<fd>.
+        Dividing that by the .lds size gives EXACT progress, with no
+        dependency on the compressed output size or the compression
+        ratio.
+
+        Args:
+            parent_pid: PID of the bash subprocess we spawned. We walk
+                its descendants to find the reader.
+            lds_inode, lds_dev: identify the .lds by inode/device so
+                bind mounts and symlinks don't trip us up.
+            cached: optional (pid, fd_num) tuple from a previous call,
+                to skip the descendant walk while the reader's PID/fd
+                are stable.
+
+        Returns:
+            (offset_bytes, (pid, fd_num)) on success. The second element
+            is the discovered location, suitable to pass back as
+            `cached` next time. (None, cached) if the offset cannot be
+            determined right now (e.g. reader hasn't started, has
+            exited, or we're not on Linux). Caller should fall back to
+            the estimated-output progress path on None.
+        """
+        if not os.path.isdir('/proc'):
+            return None, cached
+
+        def _read_offset(pid, fd_num):
+            try:
+                with open(f'/proc/{pid}/fdinfo/{fd_num}') as f:
+                    for line in f:
+                        if line.startswith('pos:'):
+                            return int(line.split()[1])
+            except (OSError, ValueError, IndexError):
+                pass
+            return None
+
+        # Fast path: re-read the previously-discovered (pid, fd)
+        if cached is not None:
+            offset = _read_offset(*cached)
+            if offset is not None:
+                return offset, cached
+            # Cache stale — process gone or fd closed; fall through to rediscover
+
+        # BFS descendants of parent_pid looking for an fd whose stat
+        # matches the .lds inode/dev.
+        seen = set()
+        queue = [parent_pid]
+        while queue:
+            pid = queue.pop(0)
+            if pid in seen:
+                continue
+            seen.add(pid)
+            # Enqueue this pid's children
+            try:
+                with open(f'/proc/{pid}/task/{pid}/children') as f:
+                    for c in f.read().split():
+                        if c.isdigit():
+                            queue.append(int(c))
+            except OSError:
+                pass
+            # Scan this pid's open fds for the .lds
+            fd_dir = f'/proc/{pid}/fd'
+            try:
+                fd_names = os.listdir(fd_dir)
+            except OSError:
+                continue
+            for fd_name in fd_names:
+                try:
+                    st = os.stat(os.path.join(fd_dir, fd_name))
+                    if st.st_ino == lds_inode and st.st_dev == lds_dev:
+                        fd_num = int(fd_name)
+                        offset = _read_offset(pid, fd_num)
+                        if offset is not None:
+                            return offset, (pid, fd_num)
+                except (OSError, ValueError):
+                    continue
+
+        return None, cached
+
     def _execute_lds_compress_job(self, job: QueuedJob) -> bool:
         """Execute an LDS compression job using ld-compress to convert .lds to .ldf"""
         try:
@@ -2059,23 +2144,35 @@ class JobQueueManager:
                     os.path.join(output_dir, base + '.flac.ldf'),
                 ]
 
-            # Estimated final output size as a fraction of input. Used to convert
-            # bytes-on-disk into a percentage during the write phase. The
-            # ld-decode wiki cites ~0.70 for FLAC level 11 on RF; observed
-            # captures here land in the 0.65–0.78 range depending on content.
-            # 0.70 is a reasonable middle. Dynamic-expansion below handles
-            # captures that compress worse than this (e.g. mostly clean signal).
+            # Progress budget: write phase owns 0–89%, post-write verification
+            # (Tier 1 + Tier 2) owns 90–99%, COMPLETED snaps to 100%. The cap
+            # at 89 leaves room for "finalising" to show distinctly.
+            WRITE_PHASE_CAP = 89.0
+
+            # Preferred progress source: EXACT input-offset from /proc. We
+            # locate the descendant process reading the .lds and read its
+            # file-descriptor position. This gives a precise "fraction of
+            # input consumed", with no dependency on how compressible the
+            # content is. See _proc_read_lds_consumed_bytes for details.
+            try:
+                _lds_stat = os.stat(job.input_file)
+                lds_inode, lds_dev = _lds_stat.st_ino, _lds_stat.st_dev
+            except OSError:
+                lds_inode, lds_dev = None, None
+            fd_cache = None
+            last_input_offset = 0
+
+            # Fallback progress source: estimated output bytes vs an
+            # estimated compression ratio. Used while the /proc helper
+            # can't find the reader yet (process not spawned) and on
+            # non-Linux. ~0.70 is the median observed ratio for FLAC
+            # level 11 on this toolkit's captures; dynamic-expansion
+            # below handles less-compressible captures.
             EXPECTED_RATIO = 0.70
             expected_output_bytes = int(input_size * EXPECTED_RATIO)
 
-            # Progress budget: write phase owns 0–89%, post-write verification
-            # (Tier 1 + Tier 2) owns 90–99%, COMPLETED snaps to 100%. The cap
-            # at 89 means even a capture that hits the EXPECTED_RATIO exactly
-            # leaves room for "finalising" to show distinctly.
-            WRITE_PHASE_CAP = 89.0
-
-            # Stash bytes in the existing per-job progress fields. They are
-            # documented as type-dependent (frames for decode/export, bytes here).
+            # Stash a starting estimate in total_frames; this gets refined
+            # only by the dynamic-expansion fallback path below.
             with self.lock:
                 job.total_frames = expected_output_bytes
                 job.current_frame = 0
@@ -2104,55 +2201,78 @@ class JobQueueManager:
                 except Exception as e:
                     self.logger.debug(f"Error reading ld-compress output: {e}")
 
-                # Update progress from output file size every ~1s
+                # Update progress every ~1s. Prefer the exact /proc-based
+                # input offset; fall back to the estimated output-bytes path
+                # only while the reader isn't locatable yet (early startup)
+                # or we're on a platform without /proc.
                 current_time = time.time()
                 if current_time - last_progress_update > 1.0:
                     try:
-                        # Find whichever output file currently exists
-                        current_output_bytes = 0
-                        for candidate in output_candidates:
-                            if os.path.exists(candidate):
-                                current_output_bytes = os.path.getsize(candidate)
-                                break
-
-                        # Compute throughput as bytes-per-second over the last interval
                         dt = current_time - last_sample_time
-                        bytes_per_sec = ((current_output_bytes - last_output_bytes) / dt) if dt > 0 else 0.0
 
-                        # If the file is compressing worse than our default ratio,
-                        # extend the estimate so progress keeps moving instead of
-                        # parking at 99%. We push the estimate to current+10% so
-                        # the percentage drops a bit but resumes climbing.
-                        if expected_output_bytes > 0 and current_output_bytes > expected_output_bytes:
-                            expected_output_bytes = int(current_output_bytes * 1.10)
-                            with self.lock:
-                                job.total_frames = expected_output_bytes
+                        input_offset = None
+                        if lds_inode is not None and input_size > 0:
+                            input_offset, fd_cache = self._proc_read_lds_consumed_bytes(
+                                process.pid, lds_inode, lds_dev, cached=fd_cache,
+                            )
 
-                        # Real percentage during the write phase. Cap at
-                        # WRITE_PHASE_CAP (89) so the post-write verification
-                        # phase has its own visible budget (90–99).
-                        if expected_output_bytes > 0:
-                            real_progress = (current_output_bytes / expected_output_bytes) * 100.0
+                        if input_offset is not None and input_size > 0:
+                            # EXACT PATH — input bytes consumed / input size
+                            real_progress = (input_offset / input_size) * 100.0
                             real_progress = min(real_progress, WRITE_PHASE_CAP)
+                            bytes_per_sec = ((input_offset - last_input_offset) / dt) if dt > 0 else 0.0
+                            displayed_bytes = input_offset
+                            displayed_total = input_size
+                            last_input_offset = input_offset
+                            progress_source = 'input-offset'
+                            # Also pull the latest output size for the log
+                            # line, so it stays informative.
+                            for candidate in output_candidates:
+                                if os.path.exists(candidate):
+                                    last_output_bytes = os.path.getsize(candidate)
+                                    break
                         else:
-                            real_progress = 0.0
+                            # FALLBACK PATH — estimated output bytes vs
+                            # estimated output size.
+                            current_output_bytes = 0
+                            for candidate in output_candidates:
+                                if os.path.exists(candidate):
+                                    current_output_bytes = os.path.getsize(candidate)
+                                    break
+                            bytes_per_sec = ((current_output_bytes - last_output_bytes) / dt) if dt > 0 else 0.0
+
+                            # Dynamic-expand the estimate if the output has
+                            # already exceeded it (poorly-compressing capture).
+                            if expected_output_bytes > 0 and current_output_bytes > expected_output_bytes:
+                                expected_output_bytes = int(current_output_bytes * 1.10)
+                                with self.lock:
+                                    job.total_frames = expected_output_bytes
+
+                            if expected_output_bytes > 0:
+                                real_progress = (current_output_bytes / expected_output_bytes) * 100.0
+                                real_progress = min(real_progress, WRITE_PHASE_CAP)
+                            else:
+                                real_progress = 0.0
+                            displayed_bytes = current_output_bytes
+                            displayed_total = expected_output_bytes
+                            last_output_bytes = current_output_bytes
+                            progress_source = 'output-estimate'
 
                         with self.lock:
                             job.progress = real_progress
-                            job.current_frame = current_output_bytes
+                            job.current_frame = displayed_bytes
                             job.current_fps = bytes_per_sec
                             self._save_queue_async()
 
-                        last_output_bytes = current_output_bytes
                         last_sample_time = current_time
 
                         elapsed = current_time - start_time
                         if int(elapsed) % 10 == 0:
                             mbps = bytes_per_sec / (1024 * 1024)
                             self.logger.debug(
-                                f"Compress progress: {real_progress:.1f}% "
-                                f"({current_output_bytes / (1024**3):.2f} GB / "
-                                f"~{expected_output_bytes / (1024**3):.2f} GB est) "
+                                f"Compress progress ({progress_source}): {real_progress:.1f}% "
+                                f"({displayed_bytes / (1024**3):.2f} GB / "
+                                f"~{displayed_total / (1024**3):.2f} GB) "
                                 f"@ {mbps:.1f} MB/s, elapsed {elapsed:.0f}s"
                             )
                     except Exception as e:
