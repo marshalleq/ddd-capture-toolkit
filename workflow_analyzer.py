@@ -39,6 +39,8 @@ class StepStatus(Enum):
     INVALID = "invalid"            # Explicit verify revealed a hash mismatch — file may be corrupt
     # Archive staging
     ARCHIVED = "archived"          # Project's intermediate files have been moved into <basename>.intermediate/
+    # Tier 3 validation in progress
+    VERIFYING = "verifying"        # A Tier 3 ldf-vs-lds sample-count validation is running for this step
 
 @dataclass
 class WorkflowStatus:
@@ -72,6 +74,7 @@ class WorkflowAnalyzer:
         'stale': 'yellow',              # file changed since last hash
         'invalid': 'bold red',          # explicit verify revealed mismatch
         'archived': 'bright_magenta',   # staged for archive — intermediates moved aside
+        'verifying': 'bright_yellow',   # Tier 3 ldf-vs-lds round-trip in progress
     }
 
     # Status descriptions
@@ -88,17 +91,24 @@ class WorkflowAnalyzer:
         'stale': 'Hash recorded but file has been modified since (size/mtime differ) — re-hash or verify',
         'invalid': 'Verify revealed a hash mismatch — file may be corrupt',
         'archived': 'Project staged for archive — intermediate files moved into <basename>.intermediate/',
+        'verifying': 'Nmv ldf validation in progress — decoding .ldf and comparing byte count vs .lds',
     }
     
     def __init__(self, job_manager: Optional[JobQueueManager] = None):
         """
         Initialize workflow analyzer
-        
+
         Args:
             job_manager: Optional job queue manager for status integration
         """
         self.job_manager = job_manager
-        
+        # Project names currently being validated by Nmv (ldf round-trip).
+        # The WCC's validation worker adds/removes from this set; the
+        # matrix queries it to flip the COMPRESS cell to VERIFYING for
+        # the duration of the run.
+        self.ldf_validation_in_progress: Set[str] = set()
+
+
     def analyze_project_workflow(self, project: Project) -> WorkflowStatus:
         """
         Analyze all workflow steps for a project
@@ -158,7 +168,18 @@ class WorkflowAnalyzer:
         Returns:
             StepStatus for the step
         """
-        # Priority: Running > Queued > Failed > Hashing > Invalid > Stale > Validated > Complete > Ready > Missing
+        # Priority: Verifying (Nmv) > Running > Queued > Failed > Hashing >
+        # Invalid > Stale > Validated > Complete > Ready > Missing
+
+        # 0. Is this the COMPRESS row of a project whose .ldf is currently
+        # being validated by Nmv (ldf round-trip)? Override whatever the
+        # underlying state would be, since the user has explicitly asked
+        # to re-validate and that's the relevant in-flight activity. The
+        # cell flips back to VALIDATED (or COMPLETE) when the worker
+        # clears the in-progress flag.
+        if (step == WorkflowStep.COMPRESS
+                and project.name in self.ldf_validation_in_progress):
+            return StepStatus.VERIFYING
 
         # 1. Step itself currently running (decode, compress, etc.)
         if self._is_step_running(step, project):
