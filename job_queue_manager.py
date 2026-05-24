@@ -1945,35 +1945,37 @@ class JobQueueManager:
             job.error_message = str(e)
             return False
 
+    # ---- Exact input-side compress progress (cross-platform) -----------
+    #
+    # ld-compress is a bash script that spawns a pipeline ending in
+    # ld-lds-converter reading the .lds. The kernel knows exactly how many
+    # bytes that reader has consumed — it's the file offset of the open fd.
+    # Dividing offset / lds_size gives EXACT progress, with no dependency
+    # on the compressed output size or the compression ratio. Each platform
+    # exposes the offset differently; the dispatcher picks the right one.
+
     @staticmethod
-    def _proc_read_lds_consumed_bytes(parent_pid, lds_inode, lds_dev, cached=None):
-        """Exact input-side progress for lds-compress, via Linux /proc.
+    def _read_lds_consumed_bytes(parent_pid, lds_inode, lds_dev, cached=None):
+        """Cross-platform dispatcher. Returns (offset, cache_token).
 
-        ld-compress is a bash script that spawns a pipeline ending in
-        ld-lds-converter reading the .lds. The kernel knows exactly how
-        many bytes that reader has consumed — it's the file offset of
-        the open fd, available as 'pos:' in /proc/<pid>/fdinfo/<fd>.
-        Dividing that by the .lds size gives EXACT progress, with no
-        dependency on the compressed output size or the compression
-        ratio.
-
-        Args:
-            parent_pid: PID of the bash subprocess we spawned. We walk
-                its descendants to find the reader.
-            lds_inode, lds_dev: identify the .lds by inode/device so
-                bind mounts and symlinks don't trip us up.
-            cached: optional (pid, fd_num) tuple from a previous call,
-                to skip the descendant walk while the reader's PID/fd
-                are stable.
-
-        Returns:
-            (offset_bytes, (pid, fd_num)) on success. The second element
-            is the discovered location, suitable to pass back as
-            `cached` next time. (None, cached) if the offset cannot be
-            determined right now (e.g. reader hasn't started, has
-            exited, or we're not on Linux). Caller should fall back to
-            the estimated-output progress path on None.
+        Returns (None, cached) on platforms with no exact mechanism — caller
+        falls back to the output-bytes-vs-estimated-ratio path.
         """
+        import sys
+        plat = sys.platform
+        if plat.startswith('linux'):
+            return JobQueueManager._linux_read_lds_consumed_bytes(
+                parent_pid, lds_inode, lds_dev, cached,
+            )
+        if plat == 'darwin':
+            return JobQueueManager._macos_read_lds_consumed_bytes(
+                parent_pid, lds_inode, lds_dev, cached,
+            )
+        return None, cached
+
+    @staticmethod
+    def _linux_read_lds_consumed_bytes(parent_pid, lds_inode, lds_dev, cached=None):
+        """Linux implementation via /proc/<pid>/fdinfo/<fd>."""
         if not os.path.isdir('/proc'):
             return None, cached
 
@@ -2003,7 +2005,6 @@ class JobQueueManager:
             if pid in seen:
                 continue
             seen.add(pid)
-            # Enqueue this pid's children
             try:
                 with open(f'/proc/{pid}/task/{pid}/children') as f:
                     for c in f.read().split():
@@ -2011,7 +2012,6 @@ class JobQueueManager:
                             queue.append(int(c))
             except OSError:
                 pass
-            # Scan this pid's open fds for the .lds
             fd_dir = f'/proc/{pid}/fd'
             try:
                 fd_names = os.listdir(fd_dir)
@@ -2027,6 +2027,181 @@ class JobQueueManager:
                             return offset, (pid, fd_num)
                 except (OSError, ValueError):
                     continue
+
+        return None, cached
+
+    @staticmethod
+    def _macos_read_lds_consumed_bytes(parent_pid, lds_inode, lds_dev, cached=None):
+        """macOS implementation via libproc.dylib.
+
+        Uses three libproc calls:
+          - proc_listpids(PROC_PPID_ONLY, ppid, ...)         direct children
+          - proc_pidinfo(pid, PROC_PIDLISTFDS, ...)          a pid's fd list
+          - proc_pidfdinfo(pid, fd, PROC_PIDFDVNODEPATHINFO) vnode inode/dev
+          - proc_pidfdinfo(pid, fd, PROC_PIDFDFILEINFO)      fd byte offset
+
+        Matches on inode + dev (same as the Linux path) so symlinks and
+        firmlinks don't trip us up. Any libproc failure returns
+        (None, cached) so the caller falls back to the output-bytes
+        estimate path — i.e. on macOS this is best-effort exact, with a
+        safe degradation.
+
+        NOTE: this code has not been tested on macOS from the development
+        environment; structural correctness was verified against Apple's
+        published <sys/proc_info.h> headers. The defensive try/except
+        wrapping every libproc call ensures any layout mismatch returns
+        (None, cached) instead of raising — at worst macOS users get the
+        same output-estimate progress they had before.
+        """
+        try:
+            import ctypes
+            import struct
+        except ImportError:
+            return None, cached
+
+        try:
+            libproc = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+        except OSError:
+            return None, cached
+
+        # Constants from <sys/proc_info.h>
+        PROC_PPID_ONLY = 6
+        PROC_PIDLISTFDS = 1
+        PROC_PIDFDFILEINFO = 1
+        PROC_PIDFDVNODEPATHINFO = 2
+        PROX_FDTYPE_VNODE = 1
+
+        # Buffer sizes chosen generously to absorb any per-arch padding.
+        # We parse only the offsets we need; the kernel writes the rest.
+        VNODE_PATH_INFO_BUF = 2048   # > sizeof(vnode_fdinfowithpath)
+        FILE_INFO_BUF = 64           # > sizeof(proc_fileinfo) (~24 B)
+
+        # Offsets within vnode_fdinfowithpath (output of PROC_PIDFDVNODEPATHINFO):
+        #   proc_fdinfo (8B: proc_fd(4) + proc_fdtype(4))
+        #   vnode_info_path:
+        #     vnode_info:
+        #       vinfo_stat:
+        #         vst_dev   uint32 at +0  →  absolute +8
+        #         vst_mode  uint16 at +4
+        #         vst_nlink uint16 at +6
+        #         vst_ino   uint64 at +8  →  absolute +16
+        # (everything after vst_ino is fine to ignore — the kernel still
+        # writes the whole struct into our oversized buffer)
+        OFFSET_VST_DEV = 8
+        OFFSET_VST_INO = 16
+
+        # Offset within proc_fileinfo (output of PROC_PIDFDFILEINFO):
+        #   fi_openflags uint32 at +0
+        #   fi_status    uint32 at +4
+        #   fi_offset    off_t  at +8 (signed 64-bit)
+        OFFSET_FI_OFFSET = 8
+
+        def _read_fd_info(pid, fd):
+            """Return (ino, dev, offset) for the fd, or None."""
+            try:
+                vbuf = ctypes.create_string_buffer(VNODE_PATH_INFO_BUF)
+                n = libproc.proc_pidfdinfo(
+                    ctypes.c_int(pid), ctypes.c_int(fd),
+                    ctypes.c_int(PROC_PIDFDVNODEPATHINFO),
+                    ctypes.byref(vbuf), ctypes.c_int(VNODE_PATH_INFO_BUF),
+                )
+                if n <= OFFSET_VST_INO + 8:
+                    return None
+                vst_dev, = struct.unpack_from('<i', vbuf.raw, OFFSET_VST_DEV)
+                vst_ino, = struct.unpack_from('<Q', vbuf.raw, OFFSET_VST_INO)
+
+                obuf = ctypes.create_string_buffer(FILE_INFO_BUF)
+                n = libproc.proc_pidfdinfo(
+                    ctypes.c_int(pid), ctypes.c_int(fd),
+                    ctypes.c_int(PROC_PIDFDFILEINFO),
+                    ctypes.byref(obuf), ctypes.c_int(FILE_INFO_BUF),
+                )
+                if n <= OFFSET_FI_OFFSET + 8:
+                    return None
+                fi_offset, = struct.unpack_from('<q', obuf.raw, OFFSET_FI_OFFSET)
+                return vst_ino, vst_dev, fi_offset
+            except (struct.error, OSError, ValueError):
+                return None
+
+        # Fast path: re-read the previously-discovered (pid, fd)
+        if cached is not None:
+            info = _read_fd_info(*cached)
+            if info is not None:
+                ino_c, dev_c, off_c = info
+                if ino_c == lds_inode and dev_c == lds_dev:
+                    return off_c, cached
+            # Stale — fall through to rediscover
+
+        def _direct_children(ppid):
+            """Return the direct children PIDs of ppid via proc_listpids."""
+            try:
+                n = libproc.proc_listpids(
+                    ctypes.c_uint32(PROC_PPID_ONLY), ctypes.c_uint32(ppid),
+                    None, ctypes.c_int(0),
+                )
+                if n <= 0:
+                    return []
+                buf = ctypes.create_string_buffer(n + 256)
+                nbytes = libproc.proc_listpids(
+                    ctypes.c_uint32(PROC_PPID_ONLY), ctypes.c_uint32(ppid),
+                    ctypes.byref(buf), ctypes.c_int(len(buf)),
+                )
+                if nbytes <= 0:
+                    return []
+                count = nbytes // 4
+                out = []
+                for i in range(count):
+                    pid_val, = struct.unpack_from('<i', buf.raw, i * 4)
+                    if pid_val > 0:
+                        out.append(pid_val)
+                return out
+            except (struct.error, OSError, ValueError):
+                return []
+
+        def _list_fds(pid):
+            """Return [(fd, fdtype), ...] for this pid's open file descriptors."""
+            try:
+                n = libproc.proc_pidinfo(
+                    ctypes.c_int(pid), ctypes.c_int(PROC_PIDLISTFDS),
+                    ctypes.c_uint64(0), None, ctypes.c_int(0),
+                )
+                if n <= 0:
+                    return []
+                buf = ctypes.create_string_buffer(n + 256)
+                nbytes = libproc.proc_pidinfo(
+                    ctypes.c_int(pid), ctypes.c_int(PROC_PIDLISTFDS),
+                    ctypes.c_uint64(0), ctypes.byref(buf), ctypes.c_int(len(buf)),
+                )
+                if nbytes <= 0:
+                    return []
+                # Each proc_fdinfo entry is 8 bytes (proc_fd int32 + proc_fdtype uint32)
+                count = nbytes // 8
+                out = []
+                for i in range(count):
+                    fd, fdtype = struct.unpack_from('<iI', buf.raw, i * 8)
+                    out.append((fd, fdtype))
+                return out
+            except (struct.error, OSError, ValueError):
+                return []
+
+        # BFS descendants of parent_pid, scanning each pid's vnode fds.
+        seen = set()
+        queue = [parent_pid]
+        while queue:
+            pid = queue.pop(0)
+            if pid in seen:
+                continue
+            seen.add(pid)
+            queue.extend(c for c in _direct_children(pid) if c not in seen)
+            for fd, fdtype in _list_fds(pid):
+                if fdtype != PROX_FDTYPE_VNODE:
+                    continue
+                info = _read_fd_info(pid, fd)
+                if info is None:
+                    continue
+                ino, dev, offset = info
+                if ino == lds_inode and dev == lds_dev:
+                    return offset, (pid, fd)
 
         return None, cached
 
@@ -2212,7 +2387,7 @@ class JobQueueManager:
 
                         input_offset = None
                         if lds_inode is not None and input_size > 0:
-                            input_offset, fd_cache = self._proc_read_lds_consumed_bytes(
+                            input_offset, fd_cache = self._read_lds_consumed_bytes(
                                 process.pid, lds_inode, lds_dev, cached=fd_cache,
                             )
 
