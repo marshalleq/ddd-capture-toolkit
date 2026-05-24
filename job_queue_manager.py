@@ -2392,9 +2392,14 @@ class JobQueueManager:
                             )
 
                         if input_offset is not None and input_size > 0:
-                            # EXACT PATH — input bytes consumed / input size
-                            real_progress = (input_offset / input_size) * 100.0
-                            real_progress = min(real_progress, WRITE_PHASE_CAP)
+                            # EXACT PATH — input bytes consumed / input size.
+                            # Linear-mapped into the write-phase budget so the
+                            # bar advances smoothly all the way to WRITE_PHASE_CAP
+                            # as the last byte of .lds is consumed. (An earlier
+                            # implementation used min(raw, CAP), which froze the
+                            # percent for the trailing input chunk while MB/s
+                            # was still going — the "stuck at 89%" symptom.)
+                            real_progress = (input_offset / input_size) * WRITE_PHASE_CAP
                             bytes_per_sec = ((input_offset - last_input_offset) / dt) if dt > 0 else 0.0
                             displayed_bytes = input_offset
                             displayed_total = input_size
@@ -2424,8 +2429,10 @@ class JobQueueManager:
                                     job.total_frames = expected_output_bytes
 
                             if expected_output_bytes > 0:
-                                real_progress = (current_output_bytes / expected_output_bytes) * 100.0
-                                real_progress = min(real_progress, WRITE_PHASE_CAP)
+                                # Linear-map output progress into the
+                                # write-phase budget. See the exact path
+                                # above for why this is not a min() cap.
+                                real_progress = (current_output_bytes / expected_output_bytes) * WRITE_PHASE_CAP
                             else:
                                 real_progress = 0.0
                             displayed_bytes = current_output_bytes
