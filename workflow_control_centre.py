@@ -2601,14 +2601,15 @@ class WorkflowControlCentre:
             self.message = f"No .ldf file found for {project.name}"
             return
         if not lds_path or not os.path.exists(lds_path):
-            # User has already deleted the .lds. Can still verify decode-ability
-            # but can't compare sample counts. Fall back to integrity test.
+            # Tier 3 is a comparison against the source .lds. Without it,
+            # there is no comparison to perform — only the weaker FLAC-
+            # integrity check, which Tier 2 already runs post-compress.
+            # Refuse rather than waste 10+ minutes on a result that
+            # cannot honestly claim "safe to delete the .lds".
             self.message = (
-                f"Source .lds missing — running FLAC integrity check on .ldf only "
-                f"(can't verify sample count without the source). "
-                f"This may take several minutes…"
+                f"Cannot run Tier 3 for {project.name}: source .lds is missing. "
+                f"Tier 3 requires the .lds to compare decoded sample counts against."
             )
-            self._run_compress_validate_background(ldf_path, lds_path=None)
             return
 
         self.message = (
@@ -2619,7 +2620,13 @@ class WorkflowControlCentre:
 
     def _run_compress_validate_background(self, ldf_path, lds_path):
         """Run the full ldf validation in a background thread so the UI stays
-        responsive. Posts result via self.message when done."""
+        responsive. Posts result via self.message when done.
+
+        lds_path is required; handle_compress_validate refuses upfront when it
+        is missing, since without the source .lds there is no Tier 3
+        comparison to perform (only a Tier 2-style FLAC integrity check,
+        which the post-compress pipeline already runs).
+        """
         import threading
         import shutil
         import subprocess
@@ -2648,52 +2655,29 @@ class WorkflowControlCentre:
                 proc.wait()
                 elapsed = _t.time() - start
 
-                # Determine pass/fail and craft the status message.
-                # sample_count_passed tracks whether this was a true Tier 3
-                # comparison (lds present, decoded byte count matches expected).
-                # A Tier 2-only fallback (lds already deleted, only ld-ldf-reader
-                # exit code checked) sets passed=True but NOT sample_count_passed
-                # — and only sample_count_passed gates the .verified sidecar.
-                passed = False
-                sample_count_passed = False
-                detail = ""
-                lds_size = None
-                expected_bytes = None
-                if lds_path:
-                    lds_size = os.path.getsize(lds_path)
-                    expected_bytes = lds_size * 4 // 5 * 2  # 16-bit samples
-                    ratio = total / expected_bytes if expected_bytes else 0
-                    # Allow up to 1 MB slack (FLAC frame boundary alignment)
-                    if abs(expected_bytes - total) <= 1_000_000:
-                        passed = True
-                        sample_count_passed = True
-                        detail = (f"decoded {total:_} bytes (expected {expected_bytes:_}, "
-                                  f"{ratio*100:.4f}%) in {elapsed:.0f}s")
-                        self.message = (
-                            f"✓ Validate PASS for {os.path.basename(ldf_path)}: "
-                            f"{detail}. Safe to delete .lds."
-                        )
-                    else:
-                        passed = False
-                        detail = (f"decoded {total:_} bytes, expected {expected_bytes:_} "
-                                  f"({ratio*100:.2f}%)")
-                        self.message = (
-                            f"✗ Validate FAIL for {os.path.basename(ldf_path)}: "
-                            f"{detail}. DO NOT DELETE .lds."
-                        )
+                # Tier 3 sample-count comparison. The only path to passed=True
+                # is decoded-bytes vs expected-from-lds-size within slack;
+                # any other outcome is a fail.
+                lds_size = os.path.getsize(lds_path)
+                expected_bytes = lds_size * 4 // 5 * 2  # 16-bit samples
+                ratio = total / expected_bytes if expected_bytes else 0
+                # Allow up to 1 MB slack (FLAC frame boundary alignment)
+                if abs(expected_bytes - total) <= 1_000_000:
+                    passed = True
+                    detail = (f"decoded {total:_} bytes (expected {expected_bytes:_}, "
+                              f"{ratio*100:.4f}%) in {elapsed:.0f}s")
+                    self.message = (
+                        f"✓ Validate PASS for {os.path.basename(ldf_path)}: "
+                        f"{detail}. Safe to delete .lds."
+                    )
                 else:
-                    # No .lds to compare; just report exit code
-                    if proc.returncode == 0 and total > 0:
-                        passed = True
-                        detail = f"decoded {total:_} bytes in {elapsed:.0f}s, FLAC stream clean"
-                        self.message = (
-                            f"✓ .ldf decodes cleanly ({total:_} bytes in {elapsed:.0f}s). "
-                            f"Integrity intact, but can't verify sample count without source .lds."
-                        )
-                    else:
-                        passed = False
-                        detail = f".ldf decode failed (rc={proc.returncode}, {total:_} bytes)"
-                        self.message = f"✗ {detail}."
+                    passed = False
+                    detail = (f"decoded {total:_} bytes, expected {expected_bytes:_} "
+                              f"({ratio*100:.2f}%)")
+                    self.message = (
+                        f"✗ Validate FAIL for {os.path.basename(ldf_path)}: "
+                        f"{detail}. DO NOT DELETE .lds."
+                    )
 
                 # Compute checksums of the capture originals and write a
                 # validation log entry. This is the user-requested permanent
@@ -2724,15 +2708,10 @@ class WorkflowControlCentre:
                     # Don't lose the validation result if logging fails
                     self.message += f" (validation log write failed: {log_err})"
 
-                # Write the .ldf.verified sidecar — ONLY on a real Tier 3
-                # sample-count PASS. A Tier 2-only FLAC-integrity pass (no
-                # source .lds present to compare against) is NOT enough to
-                # claim a verified round-trip, so no sidecar in that case.
-                # On any non-sample-count outcome (FAIL or Tier 2-only PASS)
-                # remove any prior sidecar so it doesn't keep claiming a
-                # stale verification.
+                # Write the .ldf.verified sidecar on PASS; remove any prior
+                # one on FAIL so it can't keep claiming a stale verification.
                 try:
-                    if sample_count_passed:
+                    if passed:
                         sidecar_path = validation_log.write_verified_sidecar(
                             ldf_path,
                             lds_path=lds_path,
