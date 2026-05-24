@@ -2648,9 +2648,17 @@ class WorkflowControlCentre:
                 proc.wait()
                 elapsed = _t.time() - start
 
-                # Determine pass/fail and craft the status message
+                # Determine pass/fail and craft the status message.
+                # sample_count_passed tracks whether this was a true Tier 3
+                # comparison (lds present, decoded byte count matches expected).
+                # A Tier 2-only fallback (lds already deleted, only ld-ldf-reader
+                # exit code checked) sets passed=True but NOT sample_count_passed
+                # — and only sample_count_passed gates the .verified sidecar.
                 passed = False
+                sample_count_passed = False
                 detail = ""
+                lds_size = None
+                expected_bytes = None
                 if lds_path:
                     lds_size = os.path.getsize(lds_path)
                     expected_bytes = lds_size * 4 // 5 * 2  # 16-bit samples
@@ -2658,6 +2666,7 @@ class WorkflowControlCentre:
                     # Allow up to 1 MB slack (FLAC frame boundary alignment)
                     if abs(expected_bytes - total) <= 1_000_000:
                         passed = True
+                        sample_count_passed = True
                         detail = (f"decoded {total:_} bytes (expected {expected_bytes:_}, "
                                   f"{ratio*100:.4f}%) in {elapsed:.0f}s")
                         self.message = (
@@ -2714,6 +2723,35 @@ class WorkflowControlCentre:
                 except Exception as log_err:
                     # Don't lose the validation result if logging fails
                     self.message += f" (validation log write failed: {log_err})"
+
+                # Write the .ldf.verified sidecar — ONLY on a real Tier 3
+                # sample-count PASS. A Tier 2-only FLAC-integrity pass (no
+                # source .lds present to compare against) is NOT enough to
+                # claim a verified round-trip, so no sidecar in that case.
+                # On any non-sample-count outcome (FAIL or Tier 2-only PASS)
+                # remove any prior sidecar so it doesn't keep claiming a
+                # stale verification.
+                try:
+                    if sample_count_passed:
+                        sidecar_path = validation_log.write_verified_sidecar(
+                            ldf_path,
+                            lds_path=lds_path,
+                            lds_size=lds_size,
+                            lds_mtime=os.path.getmtime(lds_path),
+                            ldf_size=os.path.getsize(ldf_path),
+                            ldf_mtime=os.path.getmtime(ldf_path),
+                            decoded_bytes=total,
+                            expected_bytes=expected_bytes,
+                            slack_bytes=1_000_000,
+                            elapsed_seconds=elapsed,
+                            file_hashes=file_hashes,
+                        )
+                        self.message += f"  Sidecar: {os.path.basename(sidecar_path)}"
+                    else:
+                        validation_log.remove_verified_sidecar(ldf_path)
+                except Exception as sidecar_err:
+                    # Don't lose the validation result if the sidecar fails
+                    self.message += f" (sidecar write failed: {sidecar_err})"
             except Exception as e:
                 self.message = f"Validate error: {e}"
 

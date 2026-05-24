@@ -418,3 +418,141 @@ def hash_capture_originals(any_capture_file_path, skip_lds_hash=False,
             result[role] = {'path': path, 'size': 0,
                             'hash': f'(error: {e})', 'elapsed': None}
     return result
+
+
+# ----- Verified sidecar (.ldf.verified) -----------------------------------
+#
+# A standalone <ldf>.verified file written next to a .ldf when Tier 3 has
+# passed for that specific .ldf. Presence of this file is the operator's
+# at-a-glance gate for "the .lds may be safely deleted." Absence means the
+# .ldf has not been Tier 3 verified against its source .lds.
+#
+# The content is substantive on purpose: the comparison numbers, sizes,
+# hashes, and tolerance are recorded so a future reader can re-derive
+# the verdict from the data, not just trust a token.
+
+def get_verified_sidecar_path(ldf_path):
+    """Return the path to the .verified sidecar for this .ldf."""
+    return ldf_path + '.verified'
+
+
+def write_verified_sidecar(ldf_path, *, lds_path, lds_size, lds_mtime,
+                           ldf_size, ldf_mtime,
+                           decoded_bytes, expected_bytes, slack_bytes,
+                           elapsed_seconds, file_hashes=None):
+    """Write the <ldf>.verified sidecar after a Tier 3 PASS.
+
+    Only call this when an actual sample-count comparison succeeded —
+    i.e. lds_path was present, ld-ldf-reader streamed the .ldf, and
+    abs(decoded_bytes - expected_bytes) <= slack_bytes. Do not call this
+    on a Tier 2-only pass (FLAC integrity without source comparison);
+    the whole point of the sidecar is the .lds-vs-.ldf gate.
+
+    Writes atomically via a .tmp + rename so a crashed write can't leave
+    a half-written file claiming verification.
+    """
+    sidecar = get_verified_sidecar_path(ldf_path)
+    diff = decoded_bytes - expected_bytes
+    ratio = (ldf_size / lds_size * 100) if lds_size else 0.0
+
+    def _fmt_mtime(mtime):
+        if mtime is None:
+            return '(unknown)'
+        try:
+            return datetime.fromtimestamp(mtime).isoformat(timespec='seconds')
+        except (OSError, OverflowError, ValueError):
+            return '(unknown)'
+
+    def _hash_for(role):
+        if not file_hashes or role not in file_hashes:
+            return '(not recorded)'
+        return file_hashes[role].get('hash', '(not recorded)')
+
+    log_basename = os.path.basename(get_log_path(ldf_path))
+
+    lines = [
+        "ldf-verified  v1",
+        "=" * 70,
+        "",
+        "This file's presence means the adjacent .ldf has been streamed",
+        "end-to-end through ld-ldf-reader and produced the same number of",
+        "decoded bytes as expected from the source .lds. The .lds may be",
+        "safely deleted while this file accompanies the .ldf.",
+        "",
+        "Absence of this file means the .ldf has NOT been Tier 3 verified.",
+        "",
+        f"Verified at:        {_ts()}",
+        "Verifier:           ld-ldf-reader (Tier 3 sample-count comparison)",
+        f"Elapsed:            {elapsed_seconds:.0f} seconds",
+        "",
+        "Source .lds (at time of verification)",
+        f"  path:             {lds_path or '(unknown)'}",
+        f"  size:             {lds_size:,} bytes",
+        f"  mtime:            {_fmt_mtime(lds_mtime)}",
+        f"  sha-256:          {_hash_for('lds')}",
+        "",
+        "Compressed .ldf (this file's neighbour)",
+        f"  path:             {ldf_path}",
+        f"  size:             {ldf_size:,} bytes",
+        f"  mtime:            {_fmt_mtime(ldf_mtime)}",
+        f"  sha-256:          {_hash_for('ldf')}",
+        f"  compression:      {ratio:.2f}% of source",
+        "",
+        "Sample-count comparison (the gate)",
+        f"  expected:         {expected_bytes:,} bytes (lds_size * 4 / 5 * 2)",
+        f"  actual:           {decoded_bytes:,} bytes",
+        f"  difference:       {diff:+,} bytes",
+        f"  tolerance:        ±{slack_bytes:,} bytes (FLAC frame alignment)",
+        "  result:           PASS",
+        "",
+        "Companion files in this capture set",
+    ]
+    for role, label in (('flac', '.flac (audio capture)'),
+                        ('json', '.json (capture metadata)')):
+        if file_hashes and role in file_hashes:
+            info = file_hashes[role]
+            lines.append(f"  {label}")
+            lines.append(f"    path:           {info.get('path', '')}")
+            lines.append(f"    size:           {info.get('size', 0):,} bytes")
+            lines.append(f"    sha-256:        {info.get('hash', '(not recorded)')}")
+    lines.append(f"  validation log:  {log_basename}")
+    lines.append("    (full Tier 1/2/3 history for this capture, append-only)")
+    lines.append("")
+    lines.extend([
+        "Notes",
+        "  - This sidecar describes ONE specific .ldf. If the .ldf is",
+        "    renamed, moved without this file, or overwritten, the",
+        "    verification no longer applies — delete this sidecar.",
+        "  - When copying to archive storage, use rsync -a (or another",
+        "    flag set that preserves mtime). A copy without -t / -a will",
+        "    update mtimes and cause hash re-checks against the validation",
+        "    log to report STALE on otherwise-identical files.",
+        "  - Re-running Tier 3 (Nmv in the WCC) on this .ldf will overwrite",
+        "    this sidecar on PASS, or remove it on FAIL.",
+    ])
+
+    content = "\n".join(lines) + "\n"
+    tmp = sidecar + '.tmp'
+    with open(tmp, 'w') as f:
+        f.write(content)
+    os.rename(tmp, sidecar)
+    return sidecar
+
+
+def remove_verified_sidecar(ldf_path):
+    """Remove the .verified sidecar for this .ldf if present.
+
+    Called when a Tier 3 validation FAILs (so a stale PASS doesn't keep
+    claiming this .ldf is verified), or when the .ldf itself is about
+    to be re-compressed / overwritten.
+
+    Returns True if a file was removed, False otherwise.
+    """
+    sidecar = get_verified_sidecar_path(ldf_path)
+    try:
+        if os.path.isfile(sidecar):
+            os.remove(sidecar)
+            return True
+    except OSError:
+        pass
+    return False
