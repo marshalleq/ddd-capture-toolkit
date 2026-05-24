@@ -617,6 +617,8 @@ class JobQueueManager:
                 success = self._execute_final_mux_job(job)
             elif job.job_type == "lds-compress":
                 success = self._execute_lds_compress_job(job)
+            elif job.job_type == "compress-validate":
+                success = self._execute_compress_validate_job(job)
             elif job.job_type == "checksum":
                 success = self._execute_checksum_job(job)
             else:
@@ -645,6 +647,14 @@ class JobQueueManager:
             # storage-aware scheduling and doesn't bog down the main pipeline.
             if success and job.status == JobStatus.COMPLETED and job.job_type != 'checksum':
                 self._maybe_enqueue_checksum_for(job)
+
+            # After a successful lds-compress, also queue the Tier 2 FLAC
+            # integrity check as its own job. That gives it its own visible
+            # progress bar (matrix flips the COMPRESS cell to VERIFYING) and
+            # cleanly separates "write phase 100%" from "validation done".
+            if (success and job.status == JobStatus.COMPLETED
+                    and job.job_type == 'lds-compress'):
+                self._maybe_enqueue_compress_validate_for(job)
         
         except Exception as e:
             self.logger.error(f"Error executing job {job.job_id}: {e}")
@@ -2319,10 +2329,12 @@ class JobQueueManager:
                     os.path.join(output_dir, base + '.flac.ldf'),
                 ]
 
-            # Progress budget: write phase owns 0–89%, post-write verification
-            # (Tier 1 + Tier 2) owns 90–99%, COMPLETED snaps to 100%. The cap
-            # at 89 leaves room for "finalising" to show distinctly.
-            WRITE_PHASE_CAP = 89.0
+            # Compress's progress bar now represents ONLY the write phase
+            # (0–100% of input consumed). Post-write verification (Tier 2
+            # FLAC integrity) has its own job and its own progress bar —
+            # see _execute_compress_validate_job and the VERIFYING state
+            # in the matrix. Tier 1 structural check still runs inline
+            # below because it's instantaneous.
 
             # Preferred progress source: EXACT input-offset from /proc. We
             # locate the descendant process reading the .lds and read its
@@ -2392,14 +2404,19 @@ class JobQueueManager:
                             )
 
                         if input_offset is not None and input_size > 0:
-                            # EXACT PATH — input bytes consumed / input size.
-                            # Linear-mapped into the write-phase budget so the
-                            # bar advances smoothly all the way to WRITE_PHASE_CAP
-                            # as the last byte of .lds is consumed. (An earlier
-                            # implementation used min(raw, CAP), which froze the
-                            # percent for the trailing input chunk while MB/s
-                            # was still going — the "stuck at 89%" symptom.)
-                            real_progress = (input_offset / input_size) * WRITE_PHASE_CAP
+                            # EXACT PATH — input bytes consumed / input size,
+                            # full 0–100 range. The bar fills smoothly through
+                            # the entire write phase and reaches exactly 100
+                            # when the last byte of .lds is consumed. Post-
+                            # write verification is a separate job, with its
+                            # own progress bar (see compress-validate).
+                            real_progress = (input_offset / input_size) * 100.0
+                            # Cap at 99.5 until the subprocess actually exits
+                            # so we don't snap to 100 while flac is still
+                            # finalising frames — the final tick after exit
+                            # writes the true 100.
+                            if real_progress > 99.5:
+                                real_progress = 99.5
                             bytes_per_sec = ((input_offset - last_input_offset) / dt) if dt > 0 else 0.0
                             displayed_bytes = input_offset
                             displayed_total = input_size
@@ -2429,10 +2446,13 @@ class JobQueueManager:
                                     job.total_frames = expected_output_bytes
 
                             if expected_output_bytes > 0:
-                                # Linear-map output progress into the
-                                # write-phase budget. See the exact path
-                                # above for why this is not a min() cap.
-                                real_progress = (current_output_bytes / expected_output_bytes) * WRITE_PHASE_CAP
+                                # Output-bytes fallback (non-Linux, or
+                                # bootstrap window). Full 0–100 range —
+                                # post-write verification is now its own
+                                # job, so we don't reserve any budget here.
+                                real_progress = (current_output_bytes / expected_output_bytes) * 100.0
+                                if real_progress > 99.5:
+                                    real_progress = 99.5
                             else:
                                 real_progress = 0.0
                             displayed_bytes = current_output_bytes
@@ -2510,25 +2530,16 @@ class JobQueueManager:
                 self.logger.info(f"LDS compression completed: {expected_output}")
                 self.logger.info(f"Output size: {output_size:.2f} GB (compression ratio: {compression_ratio:.1f}%)")
 
-                # File is fully written. Jump to 90% so the matrix and the
-                # job line clearly show "writing done, finalising" instead
-                # of stranding at the write-phase ratio (which used to look
-                # like the job had crashed at ~87% during the long Tier 2
-                # FLAC integrity check). Verification runs 90→99 below.
-                with self.lock:
-                    job.progress = 90.0
-                    job.current_fps = 0.0
-                    job.status_message = "Verifying (Tier 1 structural check)…"
-                    self._save_queue_async()
-
-                # ----- Option A (always on): structural completeness check -----
+                # ----- Tier 1 (always on): structural completeness check -----
                 # ld-compress has been observed to exit 0 even when truncated
                 # mid-stream (the progress jumps from N% to "completed" without
                 # actually finishing). A silent partial compress is dangerous if
                 # the user then deletes the source .lds. Verify the .ldf actually
                 # extends to the expected length by seeking to near the end and
                 # reading a small amount; if the seek lands inside the file we
-                # know the compress wrote at least that far.
+                # know the compress wrote at least that far. Cheap — runs in a
+                # second or two even on huge files, so we keep it inline here
+                # rather than spinning up a separate job for it.
                 ok, msg = self._validate_ldf_structural(job.input_file, expected_output)
                 try:
                     import validation_log
@@ -2545,57 +2556,14 @@ class JobQueueManager:
                     return False
                 self.logger.info(f"Compress structural check passed: {msg}")
 
-                # ----- Option B (per-project, default on): FLAC integrity test -----
-                # Streams the .ldf through ld-ldf-reader to /dev/null; if the
-                # decoder exits 0 the FLAC frame CRCs all checked. Slower
-                # (~real-time-of-tape ÷ ~3 on this hardware) but catches mid-file
-                # corruption that the structural check can miss. Disable per
-                # project via the X menu (COMPRESS_FLAGS.flac_integrity_check).
-                if self._compress_flac_integrity_enabled(job.project_name):
-                    self.logger.info("Running FLAC integrity test (compress integrity_check enabled)")
-                    # Tier 2 progress callback: maps bytes-decoded-so-far over
-                    # expected (derived from .lds size, exact) into the 90–99
-                    # progress slot. Without this the cell sits at 90% silently
-                    # for the entire decode — minutes on a long capture.
-                    with self.lock:
-                        job.status_message = "Verifying (Tier 2 FLAC integrity)…"
-                    def _tier2_cb(bytes_done, expected_bytes, mbps):
-                        with self.lock:
-                            if expected_bytes > 0:
-                                frac = min(bytes_done / expected_bytes, 1.0)
-                                job.progress = 90.0 + frac * 9.0
-                            job.current_frame = bytes_done
-                            # current_fps is bytes/sec; the matrix renders as MB/s
-                            job.current_fps = mbps * 1024 * 1024
-                            job.status_message = (
-                                f"Tier 2 verifying integrity ({mbps:.0f} MB/s)"
-                            )
-                    ok, msg = self._validate_ldf_flac_integrity(
-                        expected_output, progress_callback=_tier2_cb,
-                    )
-                    # The .ldf hash itself is now recorded by the post-job
-                    # auto-checksum hook (see _maybe_enqueue_checksum_for),
-                    # which queues a checksum job after this executor returns
-                    # True. Keeping the hashing in a separate job means the
-                    # main compress pipeline isn't blocked on hash compute
-                    # and the WCC matrix shows HASHING then VALIDATED in the
-                    # compress column as that job runs.
-                    try:
-                        import validation_log
-                        validation_log.log_tier2(
-                            expected_output, ok, msg, ldf_path=expected_output,
-                        )
-                    except Exception as log_err:
-                        self.logger.warning(f"Could not write validation log: {log_err}")
-                    if not ok:
-                        error_msg = f"Compress FLAC integrity test failed: {msg}"
-                        self.logger.error(error_msg)
-                        job.error_message = error_msg
-                        return False
-                    self.logger.info(f"FLAC integrity test passed: {msg}")
-
+                # Compress job is done. Tier 2 (the slow FLAC integrity test)
+                # is now a separate compress-validate job, auto-queued by
+                # _maybe_enqueue_compress_validate_for once we return True.
+                # That job shows its own progress bar; the matrix flips the
+                # COMPRESS cell to VERIFYING for the duration.
                 with self.lock:
                     job.progress = 100.0
+                    job.status_message = ""
 
                 return True
             else:
@@ -2697,6 +2665,96 @@ class JobQueueManager:
         except Exception as e:
             # Hashing should never block the workflow — log and move on
             self.logger.warning(f"Could not enqueue checksum job for {step_label}: {e}")
+
+    def _maybe_enqueue_compress_validate_for(self, finished_job: QueuedJob):
+        """After a successful lds-compress, queue the Tier 2 FLAC integrity
+        check as its own job so it has a visible progress bar in the matrix
+        and isn't lumped into the compress job's progress.
+
+        Honours the per-project flac_integrity_check flag — if disabled, no
+        verify job is queued (the user has opted out of Tier 2 for this
+        project).
+        """
+        try:
+            if not self._compress_flac_integrity_enabled(finished_job.project_name):
+                return
+            ldf_path = finished_job.output_file
+            if not ldf_path or not os.path.isfile(ldf_path):
+                return
+            job_id = self.add_job_nonblocking(
+                job_type='compress-validate',
+                input_file=ldf_path,
+                output_file=ldf_path,
+                parameters={'ldf_path': ldf_path, 'lds_path': finished_job.input_file},
+                priority=4,                       # higher than checksum, lower than user pipeline
+                project_name=finished_job.project_name,
+                timeout=2.0,
+            )
+            if job_id:
+                self.logger.info(
+                    f"Queued compress-validate job {job_id} for "
+                    f"{os.path.basename(ldf_path)}"
+                )
+        except Exception as e:
+            # Verify shouldn't block the rest of the pipeline — log and move on
+            self.logger.warning(f"Could not enqueue compress-validate job: {e}")
+
+    def _execute_compress_validate_job(self, job: QueuedJob) -> bool:
+        """Tier 2 FLAC integrity verification, run as its own queued job.
+
+        Streams the .ldf through ld-ldf-reader and reports byte-based progress
+        0–100% on the job. The matrix flips the COMPRESS cell to VERIFYING for
+        the duration (yellow bar). Writes the result to the project's
+        _validation.log as a Tier 2 entry. Failure marks the job FAILED, so
+        the matrix's failed-job machinery surfaces it to the user.
+        """
+        ldf_path = job.parameters.get('ldf_path') or job.input_file
+        if not ldf_path or not os.path.isfile(ldf_path):
+            job.error_message = f"compress-validate: .ldf not found: {ldf_path}"
+            return False
+
+        with self.lock:
+            job.progress = 0.0
+            job.current_frame = 0
+            job.current_fps = 0.0
+            job.status_message = "Tier 2 FLAC integrity (streaming .ldf)…"
+            self._save_queue_async()
+
+        def _progress_cb(bytes_done, expected_bytes, mbps):
+            with self.lock:
+                if expected_bytes > 0:
+                    frac = min(bytes_done / expected_bytes, 1.0)
+                    job.progress = frac * 100.0
+                    job.total_frames = expected_bytes
+                else:
+                    # Without a .lds we can't compute an exact percentage;
+                    # show the bytes streamed and leave progress alone.
+                    job.total_frames = max(job.total_frames, bytes_done)
+                job.current_frame = bytes_done
+                # current_fps stored as bytes/sec; matrix renders as MB/s
+                job.current_fps = mbps * 1024 * 1024
+                job.status_message = f"Tier 2 verifying ({mbps:.0f} MB/s)"
+
+        ok, msg = self._validate_ldf_flac_integrity(
+            ldf_path, progress_callback=_progress_cb,
+        )
+
+        # Always log the result to the validation log
+        try:
+            import validation_log
+            validation_log.log_tier2(ldf_path, ok, msg, ldf_path=ldf_path)
+        except Exception as log_err:
+            self.logger.warning(f"Could not write validation log: {log_err}")
+
+        if not ok:
+            job.error_message = msg
+            return False
+
+        with self.lock:
+            job.progress = 100.0
+            job.status_message = ""
+        self.logger.info(f"compress-validate passed: {msg}")
+        return True
 
     def _execute_checksum_job(self, job: QueuedJob) -> bool:
         """Hash a list of files and record the results in the validation log.
