@@ -2624,22 +2624,32 @@ class WorkflowControlCentre:
             f"Validating {os.path.basename(ldf_path)} — streaming full decode "
             f"and counting samples. This may take 10+ min per hour of capture…"
         )
-        self._run_compress_validate_background(ldf_path, lds_path)
+        self._run_compress_validate_background(ldf_path, lds_path, project.name)
 
-    def _run_compress_validate_background(self, ldf_path, lds_path):
+    def _run_compress_validate_background(self, ldf_path, lds_path, project_name):
         """Run the full ldf validation in a background thread so the UI stays
         responsive. Posts result via self.message when done.
 
         lds_path is required; handle_compress_validate refuses upfront when it
-        is missing, since without the source .lds there is no Tier 3
-        comparison to perform (only a Tier 2-style FLAC integrity check,
-        which the post-compress pipeline already runs).
+        is missing, since without the source .lds there is no Nmv comparison
+        to perform (only the lighter FLAC integrity check, which the
+        post-compress pipeline already runs).
+
+        project_name is used to flag this project's COMPRESS row as
+        VERIFYING in the matrix for the duration of the run.
         """
         import threading
         import shutil
         import subprocess
 
+        analyzer = self.workflow_analyzer
+
         def worker():
+            # Register so the matrix flips this project's COMPRESS row to
+            # VERIFYING for the duration. Always deregister in a finally
+            # so a crash mid-run doesn't leave the row stuck in VERIFYING.
+            if analyzer is not None:
+                analyzer.ldf_validation_in_progress.add(project_name)
             try:
                 tool = shutil.which('ld-ldf-reader')
                 if not tool:
@@ -2775,6 +2785,14 @@ class WorkflowControlCentre:
                     self.message += f" (sidecar write failed: {sidecar_err})"
             except Exception as e:
                 self.message = f"Validate error: {e}"
+            finally:
+                # Clear the in-progress flag so the matrix's COMPRESS row
+                # returns to its post-validation state (VALIDATED if the
+                # hash log is happy, otherwise whatever the underlying
+                # check resolves to). Use discard so a duplicate clear
+                # is harmless.
+                if analyzer is not None:
+                    analyzer.ldf_validation_in_progress.discard(project_name)
 
         threading.Thread(target=worker, daemon=True).start()
 
