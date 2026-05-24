@@ -764,6 +764,10 @@ class WorkflowControlCentre:
         # 'hash N' / 'verify N' — checksum operations on a whole project
         hash_match = re.match(r'^hash\s+(\d+)$', cmd)
         verify_match = re.match(r'^verify\s+(\d+)$', cmd)
+        # 'stage N' / 'unstage N' — archive staging (move intermediates into
+        # <basename>.intermediate/ subfolder, or restore them).
+        stage_match = re.match(r'^stage\s+(\d+)$', cmd)
+        unstage_match = re.match(r'^unstage\s+(\d+)$', cmd)
         job_match = re.match(r'^j(\d+)$', cmd)
         if coord_match:
             project_num = int(coord_match.group(1))
@@ -784,6 +788,10 @@ class WorkflowControlCentre:
             self.handle_hash_project(int(hash_match.group(1)))
         elif verify_match:
             self.handle_verify_project(int(verify_match.group(1)))
+        elif stage_match:
+            self.handle_stage_project(int(stage_match.group(1)))
+        elif unstage_match:
+            self.handle_unstage_project(int(unstage_match.group(1)))
 
         # Project selection (any positive integer)
         elif cmd.isdigit() and int(cmd) >= 1:
@@ -2734,6 +2742,199 @@ class WorkflowControlCentre:
             except Exception as e:
                 self.message = f"Validate error: {e}"
 
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ----- Archive staging -----------------------------------------------
+    #
+    # 'stage N' moves a project's intermediate files into a <basename>.intermediate/
+    # subfolder, leaving only the archive set (.ldf, .ldf.verified, .flac,
+    # .json, .capture.log, _final.mkv, _validation.log) at the top level.
+    # The move is non-destructive — nothing is deleted, and 'unstage N'
+    # restores everything. The .ldf.verified sidecar is the gate: staging
+    # is refused without it, so the Tier 3 round-trip has demonstrably
+    # passed before any intermediate is set aside.
+
+    # Filenames (relative to project source dir, given a base name) that
+    # move out of the top level when a project is staged for archive.
+    # Anything not in this list stays at the top level.
+    _ARCHIVE_INTERMEDIATE_SUFFIXES = (
+        '.lds',                          # raw RF capture (covered by .ldf+.verified)
+        '.tbc',                          # decoded TBC (regenerable from .ldf)
+        '.tbc.json',                     # TBC metadata
+        '_chroma.tbc',                   # chroma plane
+        '.log',                          # vhs-decode's own log
+        '_ffv1.mkv',                     # intermediate export
+        '_aligned.flac',                 # aligned audio
+        '_aligned.flac.watchdog.log',    # align watchdog log
+    )
+
+    def _stage_intermediate_dir(self, project):
+        """Return the path to this project's .intermediate/ subfolder."""
+        source_dir = getattr(project, 'source_directory', None)
+        name = getattr(project, 'name', None)
+        if not source_dir or not name:
+            return None
+        return os.path.join(source_dir, name + '.intermediate')
+
+    def _find_ldf_path(self, project):
+        """Locate a project's .ldf path (compressed master), or None."""
+        if hasattr(project, 'output_files') and 'compress' in project.output_files:
+            return project.output_files['compress']
+        if hasattr(project, 'capture_files') and 'video' in project.capture_files:
+            cap = project.capture_files['video']
+            if cap.endswith('.ldf'):
+                return cap
+            if cap.endswith('.lds'):
+                return cap[:-4] + '.ldf'
+        return None
+
+    def handle_stage_project(self, project_num):
+        """Move a project's intermediate files into <basename>.intermediate/.
+
+        Refuses unless the .ldf.verified sidecar is present (the Tier 3
+        gate). Non-destructive: every file is mv'd, not deleted, so a
+        later 'unstage N' restores the original layout. The .lds moves
+        too — once Tier 3 has passed it's safely droppable, but mv-not-rm
+        defers the actual delete to the user's own schedule.
+        """
+        project_idx = project_num - 1
+        if project_idx >= len(self.current_projects):
+            self.message = f"No project at position {project_num}"
+            return
+        project = self.current_projects[project_idx]
+
+        ldf_path = self._find_ldf_path(project)
+        if not ldf_path or not os.path.exists(ldf_path):
+            self.message = f"Cannot stage {project.name}: no .ldf file found."
+            return
+
+        sidecar = ldf_path + '.verified'
+        if not os.path.isfile(sidecar):
+            self.message = (
+                f"Refusing to stage {project.name}: {os.path.basename(sidecar)} "
+                f"missing. Run {project_num}mv first to verify the .ldf against "
+                f"its source .lds."
+            )
+            return
+
+        source_dir = os.path.dirname(ldf_path)
+        base = project.name
+        intermediate_dir = self._stage_intermediate_dir(project)
+        if not intermediate_dir:
+            self.message = f"Cannot stage {project.name}: source directory unknown."
+            return
+
+        # Build the move list — only files that actually exist
+        to_move = []
+        for suffix in self._ARCHIVE_INTERMEDIATE_SUFFIXES:
+            candidate = os.path.join(source_dir, base + suffix)
+            if os.path.isfile(candidate):
+                to_move.append((base + suffix, candidate))
+
+        if not to_move:
+            self.message = f"No intermediate files to stage for {project.name}."
+            return
+
+        # Run in a background thread — moving the .lds is metadata-only on
+        # the same filesystem but can be slow if mounts differ, and we
+        # don't want to block the UI.
+        import threading
+
+        def worker():
+            try:
+                os.makedirs(intermediate_dir, exist_ok=True)
+                moved = []
+                failed = []
+                for name, src in to_move:
+                    dst = os.path.join(intermediate_dir, name)
+                    try:
+                        os.rename(src, dst)
+                        moved.append(name)
+                    except OSError as e:
+                        failed.append((name, str(e)))
+                if failed:
+                    self.message = (
+                        f"Staged {project.name}: moved {len(moved)}, "
+                        f"failed {len(failed)} (first: {failed[0][0]} — {failed[0][1]})"
+                    )
+                else:
+                    self.message = (
+                        f"✓ Staged {project.name}: {len(moved)} files moved into "
+                        f"{os.path.basename(intermediate_dir)}/"
+                    )
+            except OSError as e:
+                self.message = f"Stage error for {project.name}: {e}"
+
+        self.message = (
+            f"Staging {project.name}: moving {len(to_move)} intermediate files…"
+        )
+        threading.Thread(target=worker, daemon=True).start()
+
+    def handle_unstage_project(self, project_num):
+        """Reverse of stage: move files back from <basename>.intermediate/
+        into the project root and remove the (now empty) subfolder.
+
+        Refuses to clobber a file that exists at the top level (e.g. a
+        new run produced a fresh .tbc while the old one was staged) —
+        that one stays in intermediate/ and gets reported.
+        """
+        project_idx = project_num - 1
+        if project_idx >= len(self.current_projects):
+            self.message = f"No project at position {project_num}"
+            return
+        project = self.current_projects[project_idx]
+
+        intermediate_dir = self._stage_intermediate_dir(project)
+        if not intermediate_dir or not os.path.isdir(intermediate_dir):
+            self.message = f"No staging folder to undo for {project.name}."
+            return
+
+        source_dir = project.source_directory
+
+        import threading
+
+        def worker():
+            try:
+                entries = sorted(os.listdir(intermediate_dir))
+                moved = []
+                failed = []
+                for name in entries:
+                    src = os.path.join(intermediate_dir, name)
+                    dst = os.path.join(source_dir, name)
+                    if os.path.exists(dst):
+                        failed.append((name, "top-level file with same name exists; not clobbering"))
+                        continue
+                    try:
+                        os.rename(src, dst)
+                        moved.append(name)
+                    except OSError as e:
+                        failed.append((name, str(e)))
+                # Remove the subfolder if empty; leave it otherwise.
+                try:
+                    os.rmdir(intermediate_dir)
+                    folder_gone = True
+                except OSError:
+                    folder_gone = False
+                if failed:
+                    self.message = (
+                        f"Unstaged {project.name}: restored {len(moved)}, "
+                        f"failed {len(failed)} (first: {failed[0][0]} — {failed[0][1]}). "
+                        f"{os.path.basename(intermediate_dir)}/ still present."
+                    )
+                elif folder_gone:
+                    self.message = (
+                        f"✓ Unstaged {project.name}: {len(moved)} files restored, "
+                        f"{os.path.basename(intermediate_dir)}/ removed."
+                    )
+                else:
+                    self.message = (
+                        f"✓ Unstaged {project.name}: {len(moved)} files restored; "
+                        f"{os.path.basename(intermediate_dir)}/ kept (not empty)."
+                    )
+            except OSError as e:
+                self.message = f"Unstage error for {project.name}: {e}"
+
+        self.message = f"Unstaging {project.name}…"
         threading.Thread(target=worker, daemon=True).start()
 
     def _check_step_output_exists(self, project, workflow_step):
