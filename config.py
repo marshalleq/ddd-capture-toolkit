@@ -52,7 +52,9 @@ DEFAULT_CONFIG = {
         "default_audio_format": "flac",  # Default audio codec for final-mux output
         "default_audio_format_description": "Audio codec for the final muxed output. Options: 'flac' (lossless, compressed, no size limit), 'wav' (lossless, uncompressed, classic 4GB limit). FLAC recommended unless an editor cannot read it. DaVinci Resolve 16+ supports FLAC natively.",
         "auto_checksum": True,  # Hash files automatically post-capture and post-validation
-        "auto_checksum_description": "If on, the toolkit hashes the 3 capture originals (.lds, .flac, .json) after each capture, and hashes downstream outputs (.ldf, _aligned.flac, etc.) after their respective validation steps pass. Records SHA-256 + mtime + size in <project>_validation.log for later integrity checking via the WCC. The post-capture hash shows a 5-second countdown so you can cancel it; everything else runs as a background job."
+        "auto_checksum_description": "If on, the toolkit hashes the 3 capture originals (.lds, .flac, .json) after each capture, and hashes downstream outputs (.ldf, _aligned.flac, etc.) after their respective validation steps pass. Records SHA-256 + mtime + size in <project>_validation.log for later integrity checking via the WCC. The post-capture hash shows a 5-second countdown so you can cancel it; everything else runs as a background job.",
+        "max_concurrent_decodes": None,  # Override the auto-detected concurrent-decode cap; null = auto
+        "max_concurrent_decodes_description": "Maximum number of vhs-decode jobs the queue scheduler will run at once. null (default) = auto-detect from CPU topology as floor(physical_cores / 4) — each decode wants ~4 physical cores so the CPU-affinity allocator can hand it a dedicated L3-cache-isolated slot. Set an integer to override (lower if you want CPU headroom for other work; higher if you accept fps loss for more parallelism). The auto-detected value is what's used when this is null."
     }
 }
 
@@ -396,6 +398,60 @@ def set_auto_checksum(enabled):
     config['performance_settings']['auto_checksum'] = enabled
     if save_config(config):
         print(f"Auto-checksum: {'enabled' if enabled else 'disabled'}")
+        return True
+    return False
+
+
+def get_max_concurrent_decodes_override():
+    """User override for the concurrent-decode cap.
+
+    Returns an int (1+) when the user has explicitly set a value, or None
+    to use the auto-detected default (floor(physical_cores / 4)). The job
+    scheduler consults this; auto-detection lives in
+    JobQueueManager.get_max_concurrent_decodes.
+    """
+    config = load_config()
+    perf = config.get('performance_settings', {})
+    value = perf.get('max_concurrent_decodes', None)
+    if value is None:
+        return None
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return None
+    if value < 1:
+        return None
+    return value
+
+
+def set_max_concurrent_decodes(value):
+    """Set the concurrent-decode cap override.
+
+    Pass None (or 0) to clear the override and fall back to auto-detection
+    from CPU topology. Pass an int >= 1 to set an explicit cap.
+    """
+    config = load_config()
+    if 'performance_settings' not in config:
+        config['performance_settings'] = {}
+    if value is None or value == 0:
+        config['performance_settings']['max_concurrent_decodes'] = None
+        cleared = True
+    else:
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            print(f"Error: max_concurrent_decodes must be an int (got {type(value).__name__})")
+            return False
+        if value < 1:
+            print("Error: max_concurrent_decodes must be >= 1 (use None / 0 to clear)")
+            return False
+        config['performance_settings']['max_concurrent_decodes'] = value
+        cleared = False
+    if save_config(config):
+        if cleared:
+            print("Max concurrent decodes: cleared override (using auto-detected value)")
+        else:
+            print(f"Max concurrent decodes: capped at {value}")
         return True
     return False
 
