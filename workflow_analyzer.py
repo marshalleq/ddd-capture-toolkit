@@ -419,17 +419,42 @@ class WorkflowAnalyzer:
         return True
     
     def _is_decode_complete(self, project: Project) -> bool:
-        """Check if decode step is complete"""
+        """Check if decode step is complete.
+
+        Beyond file existence + size, also require the most-recent decode
+        job (if any is recorded in the queue) to have COMPLETED. A FAILED
+        or CANCELLED decode can leave a many-MB partial .tbc behind that
+        the bare size check can't distinguish from a real finished decode
+        — and a partial like that then incorrectly satisfies prerequisites
+        for downstream steps (export, etc.). RUNNING/QUEUED would normally
+        be picked up by higher-priority checks in get_step_status, but
+        treating them as 'not complete' here is the safer default — the
+        file isn't a finished output yet.
+        """
         if 'decode' not in project.output_files:
             return False
-            
+
         tbc_file = project.output_files['decode']
         if not os.path.exists(tbc_file):
             return False
-            
-        # Check file size is reasonable
-        tbc_size = os.path.getsize(tbc_file)
-        return tbc_size > 1024 * 1024  # Should be at least 1MB
+
+        if os.path.getsize(tbc_file) <= 1024 * 1024:  # Should be at least 1MB
+            return False
+
+        if self.job_manager:
+            all_jobs = self.job_manager.get_jobs_nonblocking(timeout=0.1)
+            if all_jobs is not None:
+                matching = [
+                    j for j in all_jobs
+                    if j.job_type == 'vhs-decode'
+                    and self._is_job_for_project(j, project)
+                ]
+                if matching:
+                    latest = max(matching, key=lambda j: j.created_at)
+                    if latest.status != JobStatus.COMPLETED:
+                        return False
+
+        return True
     
     def _is_compress_complete(self, project: Project) -> bool:
         """Check if compress step is complete (LDS -> LDF compression)"""
