@@ -1725,6 +1725,33 @@ class WorkflowControlCentre:
             self.message = f"Warning: Job submission taking too long - continuing in background"
             return True  # Assume success to avoid blocking UI
     
+    @staticmethod
+    def _remove_decode_outputs(tbc_file: str) -> None:
+        """Delete the files vhs-decode produces alongside a .tbc.
+
+        Called by the force-decode path so the matrix doesn't keep showing
+        a partial leftover as COMPLETE while the new vhs-decode is still
+        starting up. Safe to call when some/all files are missing — silently
+        skips them.
+        """
+        if not tbc_file.endswith('.tbc'):
+            return
+        base = tbc_file[:-len('.tbc')]
+        candidates = [
+            tbc_file,                  # Project.tbc
+            base + '_chroma.tbc',      # Project_chroma.tbc
+            base + '.tbc.json',        # Project.tbc.json
+            base + '.log',             # Project.log (vhs-decode's own log)
+        ]
+        for p in candidates:
+            try:
+                if os.path.isfile(p):
+                    os.remove(p)
+            except OSError:
+                # Don't abort the force command on a delete failure;
+                # vhs-decode will simply overwrite when it opens its outputs.
+                pass
+
     def _submit_workflow_job_background(self, project, workflow_step, force_overwrite, result_queue, video_format=None):
         """Background thread implementation of job submission with filesystem operations"""
         try:
@@ -1753,7 +1780,15 @@ class WorkflowControlCentre:
                     tbc_file = rf_file.replace('.ldf', '.tbc')
                 else:
                     tbc_file = rf_file + '.tbc'
-                
+
+                # On explicit overwrite, remove any leftover decode outputs from
+                # prior runs BEFORE submitting the new job. Otherwise a partial
+                # .tbc left behind by a crashed/cancelled decode keeps fooling
+                # the matrix into showing COMPLETE during the brief window
+                # before vhs-decode opens (and truncates) the new output.
+                if force_overwrite:
+                    self._remove_decode_outputs(tbc_file)
+
                 # Determine video format: use override if provided, else config default
                 if video_format:
                     selected_format = video_format
