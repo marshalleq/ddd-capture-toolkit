@@ -2646,10 +2646,17 @@ class WorkflowControlCentre:
 
         def worker():
             # Register so the matrix flips this project's COMPRESS row to
-            # VERIFYING for the duration. Always deregister in a finally
-            # so a crash mid-run doesn't leave the row stuck in VERIFYING.
+            # VERIFYING for the duration AND can render bar/percent/rate/ETA
+            # from the same dict the job-queue progress path uses. Always
+            # remove the entry in a finally so a crash mid-run doesn't leave
+            # the row stuck in VERIFYING.
             if analyzer is not None:
-                analyzer.ldf_validation_in_progress.add(project_name)
+                analyzer.ldf_validation_in_progress[project_name] = {
+                    'percentage': 0.0,
+                    'fps': 0.0,
+                    'rate_unit_label': 'MB/s',
+                    'runtime_seconds': 0.0,
+                }
             try:
                 tool = shutil.which('ld-ldf-reader')
                 if not tool:
@@ -2706,6 +2713,16 @@ class WorkflowControlCentre:
                             f"{total / 1e9:.1f}/{expected_bytes / 1e9:.1f} GB  "
                             f"{rate_mbs:.0f} MB/s  ETA {eta_str}"
                         )
+                        # Also feed the matrix-cell progress renderer.
+                        # 'fps' is bytes/sec; rate_unit_label='MB/s' makes
+                        # the renderer convert and format correctly.
+                        if analyzer is not None:
+                            analyzer.ldf_validation_in_progress[project_name] = {
+                                'percentage': pct,
+                                'fps': rate_mbs * 1e6,
+                                'rate_unit_label': 'MB/s',
+                                'runtime_seconds': elapsed_so_far,
+                            }
                 proc.wait()
                 elapsed = _t.time() - start
 
@@ -2786,13 +2803,13 @@ class WorkflowControlCentre:
             except Exception as e:
                 self.message = f"Validate error: {e}"
             finally:
-                # Clear the in-progress flag so the matrix's COMPRESS row
+                # Clear the in-progress entry so the matrix's COMPRESS row
                 # returns to its post-validation state (VALIDATED if the
                 # hash log is happy, otherwise whatever the underlying
-                # check resolves to). Use discard so a duplicate clear
+                # check resolves to). pop(..., None) so a duplicate clear
                 # is harmless.
                 if analyzer is not None:
-                    analyzer.ldf_validation_in_progress.discard(project_name)
+                    analyzer.ldf_validation_in_progress.pop(project_name, None)
 
         threading.Thread(target=worker, daemon=True).start()
 
