@@ -8654,7 +8654,7 @@ def display_performance_settings_menu():
         from config import (
             get_ffmpeg_threads, get_compress_use_gpu,
             get_default_audio_resample_rate, get_default_audio_format,
-            get_auto_checksum,
+            get_auto_checksum, get_auto_tier3_validate,
         )
 
         current_threads = get_ffmpeg_threads()
@@ -8662,6 +8662,7 @@ def display_performance_settings_menu():
         audio_rate = get_default_audio_resample_rate()
         audio_format = get_default_audio_format()
         auto_checksum = get_auto_checksum()
+        auto_tier3 = get_auto_tier3_validate()
 
         print("\nPERFORMANCE SETTINGS")
         print("=" * 25)
@@ -8679,6 +8680,9 @@ def display_performance_settings_menu():
         print(f"   (Default audio codec used by final-mux; per-project audio flags can override)")
         print(f"Auto-checksum: {'ON' if auto_checksum else 'OFF'}")
         print(f"   (Hash files after capture and after each validated step; results in <project>_validation.log)")
+        print(f"Auto Tier 3 validate: {'ON' if auto_tier3 else 'OFF'}")
+        print(f"   (After every successful compress, auto-run the .ldf-vs-.lds round-trip — same as 1mv —")
+        print(f"   and on PASS write the .ldf.validated sidecar; the .lds is then safe to delete unattended)")
         print()
         print("PERFORMANCE OPTIONS:")
         print("=" * 25)
@@ -8687,11 +8691,12 @@ def display_performance_settings_menu():
         print("3. Configure Audio Resample Rate")
         print("4. Configure Audio Format")
         print("5. Toggle Auto-checksum")
-        print("6. View Performance Status")
-        print("7. Reset to Defaults")
+        print("6. Toggle Auto Tier 3 validate")
+        print("7. View Performance Status")
+        print("8. Reset to Defaults")
         print("e. Return to Settings Menu")
 
-        selection = input("\nSelect option (1-7/e): ").strip().lower()
+        selection = input("\nSelect option (1-8/e): ").strip().lower()
 
         if selection == '1':
             configure_ffmpeg_threads()
@@ -8704,13 +8709,15 @@ def display_performance_settings_menu():
         elif selection == '5':
             toggle_auto_checksum()
         elif selection == '6':
-            view_performance_status()
+            toggle_auto_tier3_validate()
         elif selection == '7':
+            view_performance_status()
+        elif selection == '8':
             reset_performance_defaults()
         elif selection == 'e':
             break  # Return to settings menu
         else:
-            print("Invalid selection. Please enter 1-7 or e.")
+            print("Invalid selection. Please enter 1-8 or e.")
             time.sleep(1)
 
 
@@ -8737,12 +8744,55 @@ def toggle_auto_checksum():
     print("HASHING (flashing) → VALIDATED (green) per project step.")
     print()
     print("When OFF, no automatic hashing happens. You can still manually hash a")
-    print("project at any time via the WCC's 'hash N' / 'verify N' commands.")
+    print("project at any time via the WCC's 'hash N' / 'check N' commands.")
     print()
 
     choice = input(f"{'Disable' if current else 'Enable'} auto-checksum? (y/N): ").strip().lower()
     if choice in ('y', 'yes'):
         set_auto_checksum(not current)
+        time.sleep(1)
+    else:
+        print("No changes made.")
+        time.sleep(1)
+
+
+def toggle_auto_tier3_validate():
+    """Toggle the global Auto Tier 3 validate setting."""
+    clear_screen()
+    display_header()
+    print("\nAUTO TIER 3 VALIDATE")
+    print("=" * 25)
+
+    sys.path.append('.')
+    from config import get_auto_tier3_validate, set_auto_tier3_validate
+
+    current = get_auto_tier3_validate()
+    print(f"Current setting: {'ON' if current else 'OFF'}")
+    print()
+    print("When ON, after every successful compress the toolkit auto-queues a")
+    print("Tier 3 validation — the same .ldf-vs-.lds sample-count check as the")
+    print("manual 1mv command — and on PASS writes the .ldf.validated sidecar.")
+    print("The .lds is then safe to delete with no further user action.")
+    print()
+    print("Tier 3 is a strict superset of Tier 2 (FLAC integrity), so when ON")
+    print("this supersedes the per-project flac_integrity_check flag — Tier 2")
+    print("is not run when Tier 3 is auto-running (avoiding ~45 min of redundant")
+    print("work per capture).")
+    print()
+    print("If the source .lds is missing when compress finishes, Tier 3 is")
+    print("skipped with a loud warning in the project's _validation.log. There")
+    print("is NO silent fallback to Tier 2 — the absence of the .ldf.validated")
+    print("sidecar is the deliberate signal that the gate did not pass.")
+    print()
+    print("When OFF, Tier 3 must be run manually via 1mv; Tier 2 runs after")
+    print("compress if flac_integrity_check is on for the project.")
+    print()
+    print("Per-project override available via the WCC: 1X → COMPRESS FLAGS.")
+    print()
+
+    choice = input(f"{'Disable' if current else 'Enable'} auto Tier 3 validate? (y/N): ").strip().lower()
+    if choice in ('y', 'yes'):
+        set_auto_tier3_validate(not current)
         time.sleep(1)
     else:
         print("No changes made.")

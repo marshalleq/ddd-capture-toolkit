@@ -53,6 +53,8 @@ DEFAULT_CONFIG = {
         "default_audio_format_description": "Audio codec for the final muxed output. Options: 'flac' (lossless, compressed, no size limit), 'wav' (lossless, uncompressed, classic 4GB limit). FLAC recommended unless an editor cannot read it. DaVinci Resolve 16+ supports FLAC natively.",
         "auto_checksum": True,  # Hash files automatically post-capture and post-validation
         "auto_checksum_description": "If on, the toolkit hashes the 3 capture originals (.lds, .flac, .json) after each capture, and hashes downstream outputs (.ldf, _aligned.flac, etc.) after their respective validation steps pass. Records SHA-256 + mtime + size in <project>_validation.log for later integrity checking via the WCC. The post-capture hash shows a 5-second countdown so you can cancel it; everything else runs as a background job.",
+        "auto_tier3_validate": True,  # Auto-run Tier 3 (.ldf vs .lds sample-count comparison) after every successful compress
+        "auto_tier3_validate_description": "If on, after every successful compress the toolkit auto-queues a Tier 3 validation — the same .ldf-vs-.lds sample-count check the manual 1mv command runs — and on PASS writes the .ldf.validated sidecar that gates safe .lds deletion. Tier 3 is a strict superset of Tier 2 (FLAC integrity), so this auto-mode supersedes the per-project flac_integrity_check flag when active (no point running both back-to-back). Requires the source .lds to still be on disk when compress finishes; if it isn't, the validation is skipped with a loud warning in the project's _validation.log (no silent fallback to Tier 2). On by default for batch archival workflows. Per-project override available via 1X → COMPRESS FLAGS → auto_tier3_validate.",
         "max_concurrent_decodes": None,  # Override the auto-detected concurrent-decode cap; null = auto
         "max_concurrent_decodes_description": "Maximum number of vhs-decode jobs the queue scheduler will run at once. null (default) = auto-detect from CPU topology as floor(physical_cores / 4) — each decode wants ~4 physical cores so the CPU-affinity allocator can hand it a dedicated L3-cache-isolated slot. Set an integer to override (lower if you want CPU headroom for other work; higher if you accept fps loss for more parallelism). The auto-detected value is what's used when this is null."
     }
@@ -398,6 +400,34 @@ def set_auto_checksum(enabled):
     config['performance_settings']['auto_checksum'] = enabled
     if save_config(config):
         print(f"Auto-checksum: {'enabled' if enabled else 'disabled'}")
+        return True
+    return False
+
+
+def get_auto_tier3_validate():
+    """Global default for ``auto_tier3_validate`` (run Tier 3 after every
+    successful compress). Returns bool. Default True (on) — for the typical
+    batch archival use case, having the .lds become safely deletable as
+    soon as compress finishes is the desired behaviour.
+
+    Per-project flags can override this via COMPRESS_FLAGS['auto_tier3_validate'].
+    """
+    config = load_config()
+    perf_settings = config.get('performance_settings', {})
+    return bool(perf_settings.get('auto_tier3_validate', True))
+
+
+def set_auto_tier3_validate(enabled):
+    """Toggle the auto_tier3_validate global default."""
+    if not isinstance(enabled, bool):
+        print(f"Error: auto_tier3_validate must be bool (got {type(enabled).__name__})")
+        return False
+    config = load_config()
+    if 'performance_settings' not in config:
+        config['performance_settings'] = {}
+    config['performance_settings']['auto_tier3_validate'] = enabled
+    if save_config(config):
+        print(f"Auto Tier 3 validate: {'enabled' if enabled else 'disabled'}")
         return True
     return False
 

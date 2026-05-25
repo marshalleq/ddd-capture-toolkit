@@ -741,6 +741,8 @@ class JobQueueManager:
                 success = self._execute_lds_compress_job(job)
             elif job.job_type == "compress-validate":
                 success = self._execute_compress_validate_job(job)
+            elif job.job_type == "compress-validate-tier3":
+                success = self._execute_compress_validate_tier3_job(job)
             elif job.job_type == "checksum":
                 success = self._execute_checksum_job(job)
             else:
@@ -770,13 +772,22 @@ class JobQueueManager:
             if success and job.status == JobStatus.COMPLETED and job.job_type != 'checksum':
                 self._maybe_enqueue_checksum_for(job)
 
-            # After a successful lds-compress, also queue the Tier 2 FLAC
-            # integrity check as its own job. That gives it its own visible
-            # progress bar (matrix flips the COMPRESS cell to VERIFYING) and
-            # cleanly separates "write phase 100%" from "validation done".
+            # After a successful lds-compress, queue post-compress validation.
+            # The two paths are mutually exclusive (no fallback):
+            #   - auto_tier3_validate ON  → run Tier 3 (which subsumes Tier 2's
+            #     work). If Tier 3 *cannot* run (e.g. .lds missing), the toolkit
+            #     records a LOUD warning in the project's _validation.log and
+            #     leaves the COMPRESS step without a .ldf.validated sidecar —
+            #     it does NOT silently downgrade to Tier 2, because that would
+            #     mask the fact that the user-requested validation didn't happen.
+            #   - auto_tier3_validate OFF → run Tier 2 if flac_integrity_check
+            #     is on for this project (the existing default).
             if (success and job.status == JobStatus.COMPLETED
                     and job.job_type == 'lds-compress'):
-                self._maybe_enqueue_compress_validate_for(job)
+                if self._compress_auto_tier3_enabled(job.project_name):
+                    self._enqueue_compress_validate_tier3_or_warn(job)
+                else:
+                    self._maybe_enqueue_compress_validate_for(job)
         
         except Exception as e:
             self.logger.error(f"Error executing job {job.job_id}: {e}")
@@ -2916,6 +2927,107 @@ class JobQueueManager:
             # Hashing should never block the workflow — log and move on
             self.logger.warning(f"Could not enqueue checksum job for {step_label}: {e}")
 
+    def _enqueue_compress_validate_tier3_or_warn(self, finished_job: QueuedJob) -> None:
+        """After a successful lds-compress with auto_tier3_validate ENABLED,
+        enqueue the Tier 3 (sample-count comparison) job — or, if Tier 3
+        cannot run because the source .lds isn't on disk, record a LOUD
+        warning in the project's _validation.log and leave the COMPRESS
+        step without a .ldf.validated sidecar.
+
+        Deliberately does NOT fall back to Tier 2: the user enabled the
+        Tier 3 gate, and silently substituting a lesser check (Tier 2
+        PASS doesn't get you .lds-deletable) would mask the fact that
+        their requested validation did not happen. The absence of the
+        .ldf.validated sidecar is the visible signal; the validation log
+        entry is the audit trail.
+        """
+        ldf_path = finished_job.output_file
+        lds_path = finished_job.input_file
+        project_name = finished_job.project_name
+
+        # Sanity: the .ldf must exist to validate at all. If compress
+        # succeeded but the output file is gone, that's a different bug.
+        if not ldf_path or not os.path.isfile(ldf_path):
+            self.logger.warning(
+                f"auto Tier 3 wanted for {project_name} but .ldf not found: {ldf_path}"
+            )
+            self._log_tier3_skipped(
+                ldf_path, project_name,
+                reason=f".ldf not found on disk: {ldf_path}",
+            )
+            return
+
+        # The actual precondition we expect to sometimes miss: .lds gone.
+        if not lds_path or not os.path.isfile(lds_path):
+            msg = (
+                f"auto Tier 3 wanted for {project_name} but the source .lds "
+                f"is not on disk ({lds_path!r}). NO .ldf.validated SIDECAR "
+                f"WILL BE WRITTEN. Tier 3 has not run; do not delete any .lds. "
+                f"Run 1mv manually once the .lds is back, or accept this .ldf "
+                f"as Tier-1-only and decide based on downstream pipeline use."
+            )
+            self.logger.warning(msg)
+            self._log_tier3_skipped(ldf_path, project_name, reason=msg)
+            return
+
+        try:
+            job_id = self.add_job_nonblocking(
+                job_type='compress-validate-tier3',
+                input_file=ldf_path,
+                output_file=ldf_path,
+                parameters={'ldf_path': ldf_path, 'lds_path': lds_path},
+                priority=4,                       # same band as Tier 2
+                project_name=project_name,
+                timeout=2.0,
+            )
+            if job_id:
+                self.logger.info(
+                    f"Queued compress-validate-tier3 job {job_id} for "
+                    f"{os.path.basename(ldf_path)} (auto, .lds vs .ldf round-trip)"
+                )
+            else:
+                # Queue refused to take it (transient lock contention, etc.).
+                # Log loudly — do NOT substitute a different validation.
+                self.logger.warning(
+                    f"auto Tier 3 wanted for {project_name} but the queue "
+                    f"refused the job. Manual 1mv required."
+                )
+                self._log_tier3_skipped(
+                    ldf_path, project_name,
+                    reason="job queue refused the Tier 3 job (transient).",
+                )
+        except Exception as e:
+            self.logger.warning(
+                f"auto Tier 3 wanted for {project_name} but could not be "
+                f"enqueued: {e}. Manual 1mv required."
+            )
+            self._log_tier3_skipped(
+                ldf_path, project_name,
+                reason=f"exception while queuing Tier 3 job: {e}",
+            )
+
+    def _log_tier3_skipped(self, ldf_path, project_name, reason):
+        """Record a Tier 3 skip entry in the project's _validation.log so
+        the user has an audit trail of "Tier 3 was wanted but did not run."
+        Used when auto_tier3_validate is enabled but a precondition isn't met.
+        """
+        try:
+            import validation_log
+            from datetime import datetime
+            log_path = validation_log.get_log_path(ldf_path)
+            entry = (
+                f"[{datetime.now().isoformat(timespec='seconds')}] "
+                f"Tier 3 (auto): SKIPPED — {reason}\n"
+                f"  Project:        {project_name}\n"
+                f"  .ldf:           {ldf_path}\n"
+                f"  Consequence:    no .ldf.validated sidecar written; the .lds is\n"
+                f"                  NOT yet certified safe to delete by Tier 3.\n"
+            )
+            # Append directly via the same helper log_tier{1,2,3} uses.
+            validation_log._append(log_path, entry)
+        except Exception as e:
+            self.logger.warning(f"Could not write Tier 3 SKIPPED entry: {e}")
+
     def _maybe_enqueue_compress_validate_for(self, finished_job: QueuedJob):
         """After a successful lds-compress, queue the Tier 2 FLAC integrity
         check as its own job so it has a visible progress bar in the matrix
@@ -3004,6 +3116,173 @@ class JobQueueManager:
             job.progress = 100.0
             job.status_message = ""
         self.logger.info(f"compress-validate passed: {msg}")
+        return True
+
+    def _execute_compress_validate_tier3_job(self, job: QueuedJob) -> bool:
+        """Tier 3 full validation, run as a queued job.
+
+        Streams the entire .ldf through ld-ldf-reader, counts decoded bytes,
+        and compares to the expected count from the source .lds size. On
+        PASS writes the <basename>.ldf.validated sidecar (the gate the
+        stage N archive command checks) and a Tier 3 entry in the project's
+        _validation.log; on FAIL removes any prior sidecar and logs FAIL.
+
+        This is the same comparison the WCC's 1mv command performs in a
+        WCC background thread — the difference here is that the job-queue
+        path can be auto-triggered after a successful compress (via the
+        ``auto_tier3_validate`` per-project flag) so a batch archival run
+        doesn't need a human at the keyboard between compress and "delete
+        the .lds".
+        """
+        import shutil
+        import subprocess
+        import time as _t
+
+        ldf_path = job.parameters.get('ldf_path') or job.input_file
+        lds_path = job.parameters.get('lds_path') or job.input_file
+        if not ldf_path or not os.path.isfile(ldf_path):
+            job.error_message = f"compress-validate-tier3: .ldf not found: {ldf_path}"
+            return False
+        if not lds_path or not os.path.isfile(lds_path):
+            job.error_message = (
+                f"compress-validate-tier3: .lds not found at {lds_path}. "
+                f"Tier 3 requires the source .lds for the sample-count comparison."
+            )
+            return False
+
+        tool = shutil.which('ld-ldf-reader')
+        if not tool:
+            job.error_message = "ld-ldf-reader not on PATH — cannot run Tier 3"
+            return False
+
+        try:
+            import validation_log
+        except ImportError as e:
+            job.error_message = f"validation_log module not available: {e}"
+            return False
+
+        lds_size = os.path.getsize(lds_path)
+        ldf_size = os.path.getsize(ldf_path)
+        # .lds is 10-bit packed (4 samples in 5 bytes); ld-ldf-reader emits
+        # 16-bit (2-byte) samples → expected decoded = lds_size * 4/5 * 2.
+        expected_bytes = lds_size * 4 // 5 * 2
+        basename = os.path.basename(ldf_path)
+
+        with self.lock:
+            job.progress = 0.0
+            job.current_frame = 0
+            job.total_frames = expected_bytes
+            job.current_fps = 0.0
+            job.status_message = "Tier 3 sample-count validation (streaming .ldf)…"
+            self._save_queue_async()
+
+        start = _t.time()
+        proc = subprocess.Popen(
+            [tool, ldf_path, '0'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+        total = 0
+        last_progress = 0.0
+        try:
+            while True:
+                chunk = proc.stdout.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                now = _t.time()
+                if now - last_progress >= 1.0:
+                    last_progress = now
+                    elapsed = now - start
+                    rate_bps = total / elapsed if elapsed > 0 else 0
+                    pct = (total / expected_bytes * 100) if expected_bytes else 0
+                    with self.lock:
+                        job.current_frame = total
+                        job.progress = min(pct, 100.0)
+                        job.current_fps = rate_bps     # matrix renders as MB/s
+                        job.status_message = (
+                            f"Tier 3 validating ({rate_bps / 1e6:.0f} MB/s)"
+                        )
+            proc.wait()
+        finally:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except OSError:
+                pass
+
+        elapsed = _t.time() - start
+        # Allow up to 1 MB slack (FLAC frame boundary alignment).
+        slack = 1_000_000
+        passed = abs(expected_bytes - total) <= slack
+        ratio = total / expected_bytes if expected_bytes else 0
+        if passed:
+            detail = (f"decoded {total:_} bytes (expected {expected_bytes:_}, "
+                      f"{ratio*100:.4f}%) in {elapsed:.0f}s")
+        else:
+            detail = (f"decoded {total:_} bytes, expected {expected_bytes:_} "
+                      f"({ratio*100:.2f}%)")
+
+        # Compute SHA-256 of the capture originals for the Tier 3 log entry.
+        # Same call the manual 1mv path makes; takes a couple of extra minutes
+        # but produces the definitive "I trust this archive at time X" record.
+        try:
+            with self.lock:
+                job.status_message = (
+                    "Tier 3 decode done — hashing capture originals for the log…"
+                )
+            file_hashes = validation_log.hash_capture_originals(
+                ldf_path, skip_lds_hash=False,
+            )
+        except Exception as h_err:
+            self.logger.warning(f"Tier 3: hash_capture_originals failed: {h_err}")
+            file_hashes = None
+
+        try:
+            validation_log.log_tier3(
+                ldf_path, passed, detail,
+                file_hashes=file_hashes,
+                elapsed_seconds=_t.time() - start,
+            )
+        except Exception as log_err:
+            self.logger.warning(f"Tier 3: could not write validation log: {log_err}")
+
+        # Sidecar gate: written on PASS, removed on FAIL so a previous PASS
+        # can't keep claiming a now-failing .ldf is validated.
+        try:
+            if passed:
+                validation_log.write_validated_sidecar(
+                    ldf_path,
+                    lds_path=lds_path,
+                    lds_size=lds_size,
+                    lds_mtime=os.path.getmtime(lds_path),
+                    ldf_size=ldf_size,
+                    ldf_mtime=os.path.getmtime(ldf_path),
+                    decoded_bytes=total,
+                    expected_bytes=expected_bytes,
+                    slack_bytes=slack,
+                    elapsed_seconds=elapsed,
+                    file_hashes=file_hashes,
+                )
+            else:
+                validation_log.remove_validated_sidecar(ldf_path)
+        except Exception as sc_err:
+            self.logger.warning(f"Tier 3: sidecar write/remove failed: {sc_err}")
+
+        if not passed:
+            job.error_message = (
+                f"✗ Tier 3 FAIL for {basename}: {detail}. DO NOT DELETE .lds."
+            )
+            return False
+
+        with self.lock:
+            job.progress = 100.0
+            job.status_message = ""
+        self.logger.info(
+            f"compress-validate-tier3 passed: {basename}: {detail}. "
+            f"Sidecar: {basename}.validated"
+        )
         return True
 
     def _execute_checksum_job(self, job: QueuedJob) -> bool:
@@ -3318,6 +3597,35 @@ class JobQueueManager:
             return bool(compress_flags.get('flac_integrity_check', True))
         except Exception:
             return True
+
+    def _compress_auto_tier3_enabled(self, project_name: str) -> bool:
+        """Return True if Tier 3 should auto-run after this project's compress.
+
+        Resolution order:
+          1. Per-project flag (``COMPRESS_FLAGS.auto_tier3_validate``) if
+             the user has explicitly set it for this project.
+          2. Otherwise the global default (``performance_settings.auto_tier3_validate``,
+             toggled via the Performance Settings menu). Default ON.
+        """
+        # Global default (Performance Settings menu).
+        try:
+            from config import get_auto_tier3_validate
+            global_default = get_auto_tier3_validate()
+        except Exception:
+            global_default = True  # docs say default ON; if config is broken, honour that
+
+        if not PROJECT_FLAGS_AVAILABLE or not project_name:
+            return global_default
+        try:
+            flags_manager = ProjectFlagsManager()
+            compress_flags = flags_manager.get_project_flags(project_name, 'compress')
+            per_project = compress_flags.get('auto_tier3_validate', None)
+            # `None` means "no explicit per-project value" → inherit global.
+            if per_project is None:
+                return global_default
+            return bool(per_project)
+        except Exception:
+            return global_default
 
     def save_queue(self):
         """Save queue to persistent storage"""
