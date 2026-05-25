@@ -10,7 +10,9 @@ to:
   2. If not cancelled, hash the .lds, .flac, .json sequentially with a linear
      progress bar (one file at a time).
   3. Record the results to the project's ``_validation.log`` so later runs
-     can detect STALE vs VALIDATED via mtime+size comparison.
+     can detect TOUCHED/CHANGED vs VALIDATED via mtime+size comparison.
+     Also writes a portable ``<file>.sha256`` sidecar next to each hashed
+     file in standard ``sha256sum -c`` format.
 
 This is the only inline hashing in the toolkit — every other hash flows
 through the job queue. We do it inline here because (a) the user is sitting
