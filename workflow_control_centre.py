@@ -89,7 +89,13 @@ class WorkflowControlCentre:
         self.dir_manager = DirectoryManager() if COMPONENTS_AVAILABLE else None
         self.job_manager = get_job_queue_manager() if COMPONENTS_AVAILABLE else None
         self.workflow_analyzer = WorkflowAnalyzer(self.job_manager) if COMPONENTS_AVAILABLE else None
-        
+        # Back-reference so the auto-Tier-3 executor (running on the job
+        # queue thread) can drive matrix-cell phase state — see
+        # JobQueueManager.attach_analyzer and the ldf_validation_in_progress
+        # dict on the analyzer.
+        if self.job_manager and self.workflow_analyzer:
+            self.job_manager.attach_analyzer(self.workflow_analyzer)
+
         # Console setup
         self.console = Console() if RICH_AVAILABLE else None
         
@@ -2930,9 +2936,10 @@ class WorkflowControlCentre:
                         return f"{s // 60}m{s % 60:02d}s"
                     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
-                # Stream and count bytes. Update self.message every ~2 s so
-                # the status bar reflects live progress instead of going
-                # silent for the 10–30 min the decode takes.
+                # Phase 1: stream the .ldf and count decoded bytes.
+                # Each phase tracks its own 0–100 % so the cell label and
+                # bar both reflect the current activity. Phase 2 (hashing
+                # the capture originals) runs after this loop exits.
                 total = 0
                 last_msg_update = 0.0
                 while True:
@@ -2957,10 +2964,12 @@ class WorkflowControlCentre:
                             f"{rate_mbs:.0f} MB/s  ETA {eta_str}"
                         )
                         # Also feed the matrix-cell progress renderer.
-                        # 'fps' is bytes/sec; rate_unit_label='MB/s' makes
-                        # the renderer convert and format correctly.
+                        # 'phase' = 'decode' keeps the cell on the VFY
+                        # (yellow) signal; flipped to 'hash' below for
+                        # phase 2 so the cell switches to HASH (cyan).
                         if analyzer is not None:
                             analyzer.ldf_validation_in_progress[project_name] = {
+                                'phase': 'decode',
                                 'percentage': pct,
                                 'fps': rate_mbs * 1e6,
                                 'rate_unit_label': 'MB/s',
@@ -2991,18 +3000,63 @@ class WorkflowControlCentre:
                         f"{detail}. DO NOT DELETE .lds."
                     )
 
-                # Compute checksums of the capture originals and write a
-                # validation log entry. This is the user-requested permanent
-                # record of "I validated this at time X and the files looked
-                # like Y" — useful before any destructive action on the .lds.
+                # Phase 2: compute checksums of the capture originals.
+                # This is the user-requested permanent record of "I
+                # validated this at time X and the files looked like Y"
+                # — useful before any destructive action on the .lds.
+                # The cell flips from VFY (decode) to HASH (hashing)
+                # for the duration of this phase, so the user sees the
+                # activity rather than a stuck 100 % bar.
                 try:
-                    self.message = (
-                        f"Validation decode done — computing checksums of originals "
-                        f"for the validation log (this can take a few minutes)…"
-                    )
                     import validation_log
+                    hash_phase_start = _t.time()
+                    last_hash_update = [0.0]   # closed-over mutable counter
+
+                    def hash_progress_cb(bytes_done, bytes_total, current_role):
+                        now = _t.time()
+                        if now - last_hash_update[0] < 2.0:
+                            return
+                        last_hash_update[0] = now
+                        pct = (bytes_done / bytes_total * 100) if bytes_total else 0
+                        hash_elapsed = now - hash_phase_start
+                        rate_mbs = (bytes_done / hash_elapsed / 1e6) if hash_elapsed > 0 else 0
+                        eta_str = "?"
+                        if rate_mbs > 0 and bytes_done < bytes_total:
+                            eta = (bytes_total - bytes_done) / (rate_mbs * 1e6)
+                            eta_str = _fmt_eta(eta)
+                        self.message = (
+                            f"Hashing originals ({current_role}) for {basename}: "
+                            f"{pct:5.1f}%  "
+                            f"{bytes_done / 1e9:.1f}/{bytes_total / 1e9:.1f} GB  "
+                            f"{rate_mbs:.0f} MB/s  ETA {eta_str}"
+                        )
+                        if analyzer is not None:
+                            analyzer.ldf_validation_in_progress[project_name] = {
+                                'phase': 'hash',
+                                'percentage': pct,
+                                'fps': rate_mbs * 1e6,
+                                'rate_unit_label': 'MB/s',
+                                'runtime_seconds': hash_elapsed,
+                            }
+
+                    # Initial cell update so the user sees the phase
+                    # flip immediately, before the first chunk callback.
+                    if analyzer is not None:
+                        analyzer.ldf_validation_in_progress[project_name] = {
+                            'phase': 'hash',
+                            'percentage': 0.0,
+                            'fps': 0.0,
+                            'rate_unit_label': 'MB/s',
+                            'runtime_seconds': 0.0,
+                        }
+                    self.message = (
+                        f"Validation decode done — hashing capture originals "
+                        f"for the log…"
+                    )
+
                     file_hashes = validation_log.hash_capture_originals(
                         ldf_path, skip_lds_hash=False,
+                        byte_progress_callback=hash_progress_cb,
                     )
                     validation_log.log_tier3(
                         ldf_path, passed, detail,

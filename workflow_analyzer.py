@@ -185,18 +185,29 @@ class WorkflowAnalyzer:
         # Invalid > Changed > Touched > Validated > Complete > Ready > Missing
 
         # 0. Is this the COMPRESS row of a project whose .ldf is currently
-        # being validated? Two paths trigger this:
+        # being validated? Three paths trigger this:
         #   - Nmv (manual ldf round-trip) populates the analyzer's
-        #     ldf_validation_in_progress dict.
+        #     ldf_validation_in_progress dict. The dict carries a
+        #     'phase' field: 'decode' during the ld-ldf-reader pass
+        #     (cell shows VERIFYING) and 'hash' during the subsequent
+        #     hashing of capture originals (cell flips to HASHING — same
+        #     visible signal as any other hashing operation in the
+        #     toolkit, since hashing is hashing regardless of who
+        #     triggered it).
         #   - The auto-enqueued compress-validate job (Tier 2 FLAC
         #     integrity after every successful compress) shows up in
         #     the queue as a RUNNING 'compress-validate'.
+        #   - The auto-enqueued compress-validate-tier3 job (auto Tier 3
+        #     when auto_tier3_validate is on) — same logic.
         # Either one overrides the underlying state, since the user
         # has explicit validation work in flight; the cell flips back
         # to VALIDATED (or whatever the post-completion state is) when
         # both signals clear.
         if step == WorkflowStep.COMPRESS:
-            if project.name in self.ldf_validation_in_progress:
+            in_progress = self.ldf_validation_in_progress.get(project.name)
+            if in_progress is not None:
+                if in_progress.get('phase') == 'hash':
+                    return StepStatus.HASHING
                 return StepStatus.VERIFYING
             if self._is_compress_validate_running(project):
                 return StepStatus.VERIFYING

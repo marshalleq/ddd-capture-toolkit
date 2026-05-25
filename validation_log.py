@@ -539,7 +539,8 @@ def log_tier3(any_capture_file_path, passed, message, file_hashes=None,
 # ----- Convenience: compute all hashes for a project ----------------------
 
 def hash_capture_originals(any_capture_file_path, skip_lds_hash=False,
-                          progress_callback=None):
+                          progress_callback=None,
+                          byte_progress_callback=None):
     """Compute SHA-256 of the 3 capture originals (lds, flac, json) plus the
     .ldf if it exists.
 
@@ -549,10 +550,32 @@ def hash_capture_originals(any_capture_file_path, skip_lds_hash=False,
     a long capture). Useful when the .lds is so large that hashing it would
     dominate the validation time and the user just wants the smaller files.
 
-    progress_callback: optional callable(role: str, status: str) for UI updates
-    during long hash operations.
+    progress_callback: optional callable(role: str, status: str) — coarse,
+    fires once per file at start. Useful for "now hashing .lds…" style
+    UI breadcrumbs.
+
+    byte_progress_callback: optional callable(bytes_done_overall: int,
+    bytes_total_overall: int, current_role: str) — fine-grained, fires once
+    per ~64 MB chunk read across all files. Used by long-running validation
+    paths (e.g. Tier 3) to keep a UI progress bar moving smoothly during the
+    originals-hash phase rather than freezing the bar at 100 % while several
+    minutes of hashing run "under the hood."
     """
     originals = find_capture_originals(any_capture_file_path)
+
+    # Pre-compute total bytes across all files we're going to hash, so the
+    # byte-level callback can report cumulative percentage. Skipped files
+    # are excluded from the total.
+    total_bytes = 0
+    for role, path in originals.items():
+        if role == 'lds' and skip_lds_hash:
+            continue
+        try:
+            total_bytes += os.path.getsize(path)
+        except OSError:
+            pass
+
+    bytes_done_overall = 0
     result = {}
     for role, path in originals.items():
         if role == 'lds' and skip_lds_hash:
@@ -563,8 +586,23 @@ def hash_capture_originals(any_capture_file_path, skip_lds_hash=False,
         if progress_callback:
             progress_callback(role, f"hashing .{role}…")
         try:
-            digest, elapsed = compute_file_hash(path)
-            result[role] = {'path': path, 'size': os.path.getsize(path),
+            size = os.path.getsize(path)
+
+            def per_file_cb(bytes_in_file, file_total,
+                            _role=role, _bytes_done=bytes_done_overall):
+                # Default-arg capture pins _role and _bytes_done to their
+                # values at the start of this iteration (Python closures
+                # otherwise see the loop variable's latest value, which is
+                # fine here since the callback runs synchronously within
+                # compute_file_hash — but the explicit capture is safer
+                # and self-documenting).
+                if byte_progress_callback:
+                    byte_progress_callback(_bytes_done + bytes_in_file,
+                                            total_bytes, _role)
+
+            digest, elapsed = compute_file_hash(path, progress_callback=per_file_cb)
+            bytes_done_overall += size
+            result[role] = {'path': path, 'size': size,
                             'hash': digest, 'elapsed': elapsed}
         except OSError as e:
             result[role] = {'path': path, 'size': 0,
