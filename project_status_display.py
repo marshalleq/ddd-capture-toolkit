@@ -186,21 +186,28 @@ class ProjectStatusDisplay:
             progress_info = None
 
             if step_status == StepStatus.VERIFYING:
-                # Two possible sources of in-flight validation progress:
+                # Three possible sources of in-flight validation progress:
                 #   1. The analyzer's dict (populated by Nmv, in-process).
                 #   2. A 'compress-validate' job in the queue (post-compress
-                #      Tier 2). The matrix's VERIFYING detection already
-                #      checks for both; here we read whichever has data.
+                #      Tier 2).
+                #   3. A 'compress-validate-tier3' job in the queue
+                #      (auto-Tier-3 after compress, when auto_tier3_validate
+                #      is on for the project).
+                # The matrix's VERIFYING detection already accepts any of
+                # these; here we read whichever has data.
                 progress_info = self.analyzer.ldf_validation_in_progress.get(project.name)
                 if progress_info is None and self.analyzer.job_manager:
-                    try:
-                        from shared.progress_display_utils import extract_specific_job_progress_info
-                        progress_info = extract_specific_job_progress_info(
-                            self.analyzer.job_manager, project.name, 'compress-validate')
-                    except Exception as e:
-                        if debug_enabled:
-                            self._debug_log(f"compress-validate progress extract failed: {e}")
-                        progress_info = None
+                    for job_type in ('compress-validate', 'compress-validate-tier3'):
+                        try:
+                            from shared.progress_display_utils import extract_specific_job_progress_info
+                            progress_info = extract_specific_job_progress_info(
+                                self.analyzer.job_manager, project.name, job_type)
+                            if progress_info:
+                                break
+                        except Exception as e:
+                            if debug_enabled:
+                                self._debug_log(f"{job_type} progress extract failed: {e}")
+                            progress_info = None
                 if debug_enabled:
                     self._debug_log(f"VERIFYING progress for {project.name}: {progress_info}")
             elif self.analyzer.job_manager:
