@@ -218,91 +218,161 @@ class WorkflowControlCentre:
         self.run_enhanced_interactive_mode()
     
     def run_enhanced_interactive_mode(self):
-        """Run enhanced interactive mode with Live display and visible command input"""
+        """Run enhanced interactive mode with Live display and visible command input.
+
+        Loop design (after the May 2026 input-lag fix):
+
+          * **Input is drained per tick.** Every iteration that has data on
+            stdin consumes *all* queued characters, not just one. Previously
+            a single read per tick meant fast typing (or any tick that took
+            longer than ~50 ms — common when many jobs are running and
+            refresh_data is heavy) coalesced multiple keystrokes into a
+            visible burst the next render or two later.
+
+          * **Data refresh is decoupled from the render loop.** The expensive
+            refresh_data() call (project discovery + job queue queries)
+            now runs on its own ~500 ms cadence, while the tick wakeup is
+            kept fast (~65 ms) for responsive input handling and a steady
+            cursor blink. Render cost stops dragging on input throughput.
+
+          * **Cursor blink is wall-clock driven**, not toggled per-iteration.
+            int(time.time() * 2) % 2 gives a 2 Hz cadence (0.25 s on, 0.25 s
+            off) regardless of how long any given iteration took or whether
+            the user just pressed a key — so the blink no longer betrays
+            load or typing rhythm.
+
+          * **Rich Live runs at 15 Hz** so the worst-case visible lag between
+            a state change and the redraw is ~65 ms.
+        """
         try:
             import termios
             import tty
-            
+
             # Initialize command input buffer
             self.current_input = ""
             self.input_cursor_blink = True
-            
+
             # Save original terminal settings
             old_settings = termios.tcgetattr(sys.stdin)
             tty.setcbreak(sys.stdin.fileno())
-            
-            with Live(self.create_enhanced_layout(), refresh_per_second=4) as live:  # Higher refresh for cursor blink
-                while self.running:
-                    if self.auto_refresh:
-                        self.refresh_data()
-                    
-                    # Update cursor blink state
-                    self.input_cursor_blink = not self.input_cursor_blink
-                    live.update(self.create_enhanced_layout())
-                    
-                    # Non-blocking input check with multi-character support
-                    if select.select([sys.stdin], [], [], 0.25)[0]:  # Shorter timeout for responsiveness
-                        key = sys.stdin.read(1)
-                        
-                        if key == '\r' or key == '\n':  # Enter key
-                            if self.current_input.strip():
-                                # Process the complete command
-                                cmd = self.current_input.strip().lower()
-                                self.current_input = ""  # Clear input buffer
-                                
-                                if cmd == 'q':
-                                    self.running = False
-                                elif cmd == 'h':
-                                    # Show help - temporarily stop live display
-                                    live.stop()
-                                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-                                    self.show_help()
-                                    tty.setcbreak(sys.stdin.fileno())
-                                    live.start()
-                                elif cmd == 'd':
-                                    # Show details - temporarily stop live display
-                                    live.stop()
-                                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-                                    self.show_details()
-                                    tty.setcbreak(sys.stdin.fileno())
-                                    live.start()
-                                elif (flags_match := re.match(r'^(\d+)x$', cmd)):
-                                    # Show flags dialog - temporarily stop live display
-                                    live.stop()
-                                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-                                    self.show_flags_dialog(int(flags_match.group(1)))
-                                    tty.setcbreak(sys.stdin.fileno())
-                                    live.start()
-                                else:
-                                    # Handle command through existing command handler
-                                    self.handle_command(cmd)
-                                
-                                live.update(self.create_enhanced_layout())
-                            else:
-                                # Empty command - just clear input
-                                self.current_input = ""
-                                live.update(self.create_enhanced_layout())
-                                
-                        elif key == '\x7f' or key == '\x08':  # Backspace
-                            if self.current_input:
-                                self.current_input = self.current_input[:-1]
-                                live.update(self.create_enhanced_layout())
-                                
-                        elif key == '\x03':  # Ctrl+C
+
+            # Cadences:
+            #   tick_timeout — how long select() blocks each iteration. Drives
+            #     responsiveness and the cursor-blink resolution. Short.
+            #   refresh_interval — how often refresh_data() is allowed to run.
+            #     Independent of tick_timeout. The expensive scan only fires
+            #     this often even if the tick loop spins much faster.
+            tick_timeout = 0.066          # ~15 Hz tick
+            refresh_interval = 0.5
+            last_refresh = 0.0
+
+            def _drain_stdin_to_keys():
+                """Read every character currently available on stdin, returning
+                them in order. The first read uses tick_timeout (so an idle
+                loop doesn't busy-spin); subsequent reads are non-blocking and
+                stop as soon as the kernel input buffer is empty. This is the
+                fix for the "press one key, two come up together" symptom — a
+                fast typist queues several characters during a slow render
+                tick and we now consume them all instead of one per tick.
+                """
+                ready, _, _ = select.select([sys.stdin], [], [], tick_timeout)
+                if not ready:
+                    return []
+                chars = [sys.stdin.read(1)]
+                while True:
+                    more, _, _ = select.select([sys.stdin], [], [], 0)
+                    if not more:
+                        break
+                    chars.append(sys.stdin.read(1))
+                return chars
+
+            def _handle_key(key, live):
+                """Process one keystroke. Returns True if the caller should
+                bail out of the rest of this tick (e.g. self.running became
+                False, or a live.stop()/live.start() cycle was performed and
+                a fresh render is already in flight)."""
+                if key == '\r' or key == '\n':  # Enter
+                    if self.current_input.strip():
+                        cmd = self.current_input.strip().lower()
+                        self.current_input = ""
+                        if cmd == 'q':
                             self.running = False
-                            
-                        elif key == '\x1b':  # Escape key
-                            self.current_input = ""
-                            live.update(self.create_enhanced_layout())
-                            
-                        elif key.isprintable() and len(self.current_input) < 50:  # Limit input length
-                            self.current_input += key
-                            live.update(self.create_enhanced_layout())
-                    
-                    # Shorter sleep for better responsiveness
-                    if not self.auto_refresh:
-                        time.sleep(0.5)
-                        
+                            return True
+                        elif cmd == 'h':
+                            live.stop()
+                            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                            self.show_help()
+                            tty.setcbreak(sys.stdin.fileno())
+                            live.start()
+                            return True
+                        elif cmd == 'd':
+                            live.stop()
+                            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                            self.show_details()
+                            tty.setcbreak(sys.stdin.fileno())
+                            live.start()
+                            return True
+                        elif (flags_match := re.match(r'^(\d+)x$', cmd)):
+                            live.stop()
+                            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                            self.show_flags_dialog(int(flags_match.group(1)))
+                            tty.setcbreak(sys.stdin.fileno())
+                            live.start()
+                            return True
+                        else:
+                            self.handle_command(cmd)
+                    else:
+                        self.current_input = ""
+                elif key == '\x7f' or key == '\x08':  # Backspace
+                    if self.current_input:
+                        self.current_input = self.current_input[:-1]
+                elif key == '\x03':                  # Ctrl+C
+                    self.running = False
+                    return True
+                elif key == '\x1b':                  # Escape
+                    self.current_input = ""
+                elif key.isprintable() and len(self.current_input) < 50:
+                    self.current_input += key
+                return False
+
+            with Live(self.create_enhanced_layout(), refresh_per_second=15) as live:
+                while self.running:
+                    now = time.time()
+
+                    # Refresh project / job state on its own cadence, not
+                    # every tick — refresh_data() can take a long time when
+                    # many jobs are running, and dragging it through the
+                    # input loop is what was throttling keystrokes before.
+                    if self.auto_refresh and (now - last_refresh) >= refresh_interval:
+                        self.refresh_data()
+                        last_refresh = now
+
+                    # Cursor blink: pure function of wall-clock time. 2 Hz
+                    # means on for the first half of every second, off for
+                    # the second half. Independent of how long this tick
+                    # took or how recently a key was pressed.
+                    self.input_cursor_blink = int(now * 2) % 2 == 0
+
+                    live.update(self.create_enhanced_layout())
+
+                    # Drain ALL queued input this tick. _drain_stdin_to_keys
+                    # blocks up to tick_timeout for the first character so
+                    # an idle loop doesn't spin; subsequent reads are
+                    # non-blocking and stop when the buffer is empty.
+                    keys = _drain_stdin_to_keys()
+                    if keys:
+                        bail = False
+                        for key in keys:
+                            if _handle_key(key, live):
+                                bail = True
+                                break
+                        if bail:
+                            continue
+                        # One immediate re-render so the user sees their
+                        # typing reflected in the input bar without
+                        # waiting up to ~65 ms for the next tick.
+                        live.update(self.create_enhanced_layout())
+
         except (KeyboardInterrupt, EOFError):
             self.running = False
         except ImportError:
