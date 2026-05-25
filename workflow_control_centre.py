@@ -620,9 +620,9 @@ class WorkflowControlCentre:
             ("1-7",       "bold cyan",        "Select"),
             ("1d 1m 1e",  "bold yellow",      "Dec/cMp/Exp"),
             ("1a 1f",     "bold yellow",      "Algn/Final"),
-            ("1mv",       "bold green",       "Verify .ldf"),
+            ("1mv",       "bold green",       "Validate .ldf"),
             ("hash 1",    "bold green",       "Hash project files"),
-            ("verify 1",  "bold green",       "Re-check hashes"),
+            ("check 1",   "bold green",       "Re-check hashes"),
             ("stage 1",   "bold green",       "Stage archive"),
             ("unstage 1", "bold green",       "Undo stage"),
             ("1x",        "bold cyan",        "Flags page"),
@@ -830,9 +830,10 @@ class WorkflowControlCentre:
         coord_format_match = re.match(r'^(\d+)d([pn])$', cmd)
         # Nmv: project N, compress (m), validate (v) — full .ldf integrity check
         compress_validate_match = re.match(r'^(\d+)mv$', cmd)
-        # 'hash N' / 'verify N' — checksum operations on a whole project
+        # 'hash N' / 'check N' — checksum operations on a whole project.
+        # 'verify N' is accepted as a backwards-compatible alias for 'check N'.
         hash_match = re.match(r'^hash\s+(\d+)$', cmd)
-        verify_match = re.match(r'^verify\s+(\d+)$', cmd)
+        check_match = re.match(r'^(?:check|verify)\s+(\d+)$', cmd)
         # 'stage N' / 'unstage N' — archive staging (move intermediates into
         # <basename>.intermediate/ subfolder, or restore them).
         stage_match = re.match(r'^stage\s+(\d+)$', cmd)
@@ -855,8 +856,8 @@ class WorkflowControlCentre:
             self.handle_compress_validate(project_num)
         elif hash_match:
             self.handle_hash_project(int(hash_match.group(1)))
-        elif verify_match:
-            self.handle_verify_project(int(verify_match.group(1)))
+        elif check_match:
+            self.handle_check_project(int(check_match.group(1)))
         elif stage_match:
             self.handle_stage_project(int(stage_match.group(1)))
         elif unstage_match:
@@ -1006,7 +1007,8 @@ class WorkflowControlCentre:
                 else:
                     self.message = f"Job manager not available - cannot retry {step_name}"
             elif step_status in (StepStatus.COMPLETE, StepStatus.VALIDATED,
-                                  StepStatus.STALE, StepStatus.INVALID, StepStatus.HASHING):
+                                  StepStatus.TOUCHED, StepStatus.CHANGED,
+                                  StepStatus.INVALID, StepStatus.HASHING):
                 # Step has finished (one way or another). Don't auto-restart;
                 # require 'force' to overwrite.
                 output_exists = self._check_step_output_exists(project, workflow_step)
@@ -2494,7 +2496,7 @@ class WorkflowControlCentre:
 
     def _project_tracked_files(self, project):
         """Return a dict of {step_label: [file_paths]} for every tracked file
-        in the project. Used by hash/verify to know what to checksum."""
+        in the project. Used by hash/check to know what to checksum."""
         files_by_step = {}
 
         # Capture originals (.lds + .flac + .json)
@@ -2531,7 +2533,7 @@ class WorkflowControlCentre:
         """Queue checksum jobs for any of project N's files that lack a hash.
 
         Skips files already recorded with a current (matching size+mtime)
-        hash — that's what 'verify N' is for. The intent is "fill in the gaps
+        hash — that's what 'check N' is for. The intent is "fill in the gaps
         for an existing project that was made before auto-checksum existed."
         """
         project_idx = project_num - 1
@@ -2594,13 +2596,15 @@ class WorkflowControlCentre:
         else:
             self.message = (
                 f"All tracked files for {project.name} already have hashes. "
-                f"Use 'verify {project_num}' to re-check them."
+                f"Use 'check {project_num}' to re-check them."
             )
 
-    def handle_verify_project(self, project_num):
-        """Queue a verify-mode checksum job: re-hashes all tracked files and
-        compares against recorded hashes in the log. Mismatches are logged as
-        INVALID and surface in the WCC matrix."""
+    def handle_check_project(self, project_num):
+        """Queue a check-mode checksum job: re-hashes all tracked files and
+        compares against recorded hashes in the log. Matches refresh the
+        recorded identity (clearing any TOUCHED state). Mismatches are logged
+        and surface as INVALID in the WCC matrix.
+        """
         project_idx = project_num - 1
         if project_idx >= len(self.current_projects):
             self.message = f"No project at position {project_num}"
@@ -2615,13 +2619,13 @@ class WorkflowControlCentre:
             self.message = f"No tracked files found for {project.name}"
             return
 
-        # Flatten all files into a single verify job so we get one PASS/FAIL
-        # entry per verify run rather than per-step.
+        # Flatten all files into a single check job so we get one PASS/FAIL
+        # entry per run rather than per-step.
         all_files = []
         for paths in files_by_step.values():
             all_files.extend(paths)
         if not all_files:
-            self.message = f"No files to verify for {project.name}"
+            self.message = f"No files to check for {project.name}"
             return
 
         try:
@@ -2630,7 +2634,7 @@ class WorkflowControlCentre:
                 input_file=all_files[0],
                 output_file=all_files[0],
                 parameters={
-                    'files': all_files, 'mode': 'verify', 'step': 'verify',
+                    'files': all_files, 'mode': 'check', 'step': 'check',
                 },
                 priority=4,
                 project_name=project.name,
@@ -2638,15 +2642,19 @@ class WorkflowControlCentre:
             )
             if job_id:
                 self.message = (
-                    f"✓ Queued verify job for {project.name}: re-hashing "
+                    f"✓ Queued check job for {project.name}: re-hashing "
                     f"{len(all_files)} file(s). Result will appear in "
                     f"the validation log; INVALID rows will appear in the "
                     f"matrix if any hash mismatches are found."
                 )
             else:
-                self.message = f"Failed to queue verify job for {project.name}"
+                self.message = f"Failed to queue check job for {project.name}"
         except Exception as e:
-            self.message = f"Error queuing verify job: {e}"
+            self.message = f"Error queuing check job: {e}"
+
+    # Backwards-compatible alias for the prior method name; some callers
+    # outside this module may still reach for handle_verify_project.
+    handle_verify_project = handle_check_project
 
     def handle_compress_validate(self, project_num):
         """Option C: Full structural validation of a project's .ldf master.
@@ -2846,11 +2854,11 @@ class WorkflowControlCentre:
                     # Don't lose the validation result if logging fails
                     self.message += f" (validation log write failed: {log_err})"
 
-                # Write the .ldf.verified sidecar on PASS; remove any prior
-                # one on FAIL so it can't keep claiming a stale verification.
+                # Write the .ldf.validated sidecar on PASS; remove any prior
+                # one on FAIL so it can't keep claiming a stale validation.
                 try:
                     if passed:
-                        sidecar_path = validation_log.write_verified_sidecar(
+                        sidecar_path = validation_log.write_validated_sidecar(
                             ldf_path,
                             lds_path=lds_path,
                             lds_size=lds_size,
@@ -2865,7 +2873,7 @@ class WorkflowControlCentre:
                         )
                         self.message += f"  Sidecar: {os.path.basename(sidecar_path)}"
                     else:
-                        validation_log.remove_verified_sidecar(ldf_path)
+                        validation_log.remove_validated_sidecar(ldf_path)
                 except Exception as sidecar_err:
                     # Don't lose the validation result if the sidecar fails
                     self.message += f" (sidecar write failed: {sidecar_err})"
@@ -2885,10 +2893,11 @@ class WorkflowControlCentre:
     # ----- Archive staging -----------------------------------------------
     #
     # 'stage N' moves a project's intermediate files into a <basename>.intermediate/
-    # subfolder, leaving only the archive set (.ldf, .ldf.verified, .flac,
-    # .json, .capture.log, _final.mkv, _validation.log) at the top level.
+    # subfolder, leaving only the archive set (.ldf, .ldf.validated, .flac,
+    # .json, .capture.log, _final.mkv, _validation.log, plus the portable
+    # .sha256 sidecars) at the top level.
     # The move is non-destructive — nothing is deleted, and 'unstage N'
-    # restores everything. The .ldf.verified sidecar is the gate: staging
+    # restores everything. The .ldf.validated sidecar is the gate: staging
     # is refused without it, so the Tier 3 round-trip has demonstrably
     # passed before any intermediate is set aside.
 
@@ -2896,7 +2905,7 @@ class WorkflowControlCentre:
     # move out of the top level when a project is staged for archive.
     # Anything not in this list stays at the top level.
     _ARCHIVE_INTERMEDIATE_SUFFIXES = (
-        '.lds',                          # raw RF capture (covered by .ldf+.verified)
+        '.lds',                          # raw RF capture (covered by .ldf+.validated)
         '.tbc',                          # decoded TBC (regenerable from .ldf)
         '.tbc.json',                     # TBC metadata
         '_chroma.tbc',                   # chroma plane
@@ -2929,7 +2938,7 @@ class WorkflowControlCentre:
     def handle_stage_project(self, project_num):
         """Move a project's intermediate files into <basename>.intermediate/.
 
-        Refuses unless the .ldf.verified sidecar is present (the Tier 3
+        Refuses unless the .ldf.validated sidecar is present (the Tier 3
         gate). Non-destructive: every file is mv'd, not deleted, so a
         later 'unstage N' restores the original layout. The .lds moves
         too — once Tier 3 has passed it's safely droppable, but mv-not-rm
@@ -2946,11 +2955,11 @@ class WorkflowControlCentre:
             self.message = f"Cannot stage {project.name}: no .ldf file found."
             return
 
-        sidecar = ldf_path + '.verified'
+        sidecar = ldf_path + '.validated'
         if not os.path.isfile(sidecar):
             self.message = (
                 f"Refusing to stage {project.name}: {os.path.basename(sidecar)} "
-                f"missing. Run {project_num}mv first to verify the .ldf against "
+                f"missing. Run {project_num}mv first to validate the .ldf against "
                 f"its source .lds."
             )
             return
@@ -3293,24 +3302,27 @@ class WorkflowControlCentre:
 
         print("\nValidation, hashing, archive staging  (operate on a whole project):")
         print("  1mv           Tier 3 validation: decode the .ldf and compare byte count")
-        print("                to the source .lds. On PASS writes <basename>.ldf.verified")
+        print("                to the source .lds. On PASS writes <basename>.ldf.validated")
         print("                next to the .ldf (the gate for safely deleting the .lds).")
         print("  hash 1        Hash any of project 1's tracked files that don't yet")
-        print("                have a recorded hash in <basename>_validation.log.")
-        print("  verify 1      Re-hash project 1's tracked files and compare against the")
-        print("                log. Flips matrix cells to VAL / STALE / INVALID.")
+        print("                have a recorded hash in <basename>_validation.log. Also")
+        print("                writes a portable <file>.sha256 next to each hashed file.")
+        print("  check 1       Re-hash project 1's tracked files and compare against the")
+        print("                log. Matches refresh the recorded identity (clears TOUCHED);")
+        print("                mismatches flip matrix cells to INVALID. ('verify 1' is")
+        print("                accepted as a backwards-compatible alias.)")
         print("  stage 1       Move project 1's intermediate files (.lds, .tbc, *_chroma.tbc,")
         print("                .tbc.json, decode .log, _ffv1.mkv, _aligned.flac, watchdog log)")
         print("                into a <basename>.intermediate/ subfolder. Matrix row flips to")
-        print("                ARCH. Refuses unless .ldf.verified is present.")
+        print("                ARCH. Refuses unless .ldf.validated is present.")
         print("  unstage 1     Reverse of stage: move the intermediate files back to the")
         print("                top level and remove the (now-empty) subfolder.")
 
         print("\nRe-run, stop, clean:")
         print("  force 1e      Force-overwrite existing outputs and re-run the step.")
-        print("                Required to re-run any step that's COMPLETE/VAL/STALE/")
-        print("                INVALID/HASH. For decode, also synchronously deletes any")
-        print("                leftover .tbc / _chroma.tbc / .tbc.json / .log first.")
+        print("                Required to re-run any step that's COMPLETE/VAL/TOUCHED/")
+        print("                CHANGED/INVALID/HASH. For decode, also synchronously deletes")
+        print("                any leftover .tbc / _chroma.tbc / .tbc.json / .log first.")
         print("  stop 1e       Stop one project+step job (cancels queued, terminates running).")
         print("  stop all      Stop everything immediately.")
         print("  cancel queue  Cancel queued jobs but let running ones finish.")
@@ -3344,8 +3356,11 @@ class WorkflowControlCentre:
         print("    will tell you to use 'force' if the step has already completed.")
         print("  - 'auto' queues every READY step across all projects; combine with the")
         print("    storage-aware concurrency cap to leave a long run going overnight.")
-        print("  - Run 1mv before deleting any .lds — the .ldf.verified sidecar is the")
+        print("  - Run 1mv before deleting any .lds — the .ldf.validated sidecar is the")
         print("    gate that proves the .ldf is a complete lossless compression.")
+        print("  - Every hashed file also gets a portable <file>.sha256 sidecar next to it.")
+        print("    Anyone with sha256sum / shasum / Get-FileHash can verify it without")
+        print("    this toolkit, e.g.  sha256sum -c Foo.ldf.sha256")
         print("  - 'stage 1' is non-destructive (move, not delete). Reverse with 'unstage 1';")
         print("    only rm -rf the .intermediate/ subfolder once you're satisfied.")
 

@@ -163,11 +163,13 @@ class ProjectStatusDisplay:
             self._debug_log(f"Enhanced cell for {project.name} step {step.value}: status={step_status}, job_manager={self.analyzer.job_manager is not None}")
         
         # First check: terminal/no-progress states render as plain text.
-        # COMPLETE plus the hash-related terminal states (VALIDATED/STALE/INVALID)
-        # all use the simple text path — there's no progress bar to show for them.
-        # HASHING uses simple text too, but the display string flashes via the
-        # 1Hz alternation in get_step_display_status, picked up by the 4Hz UI refresh.
-        terminal_states = (StepStatus.COMPLETE, StepStatus.VALIDATED, StepStatus.STALE,
+        # COMPLETE plus the hash-related terminal states (VALIDATED/TOUCHED/
+        # CHANGED/INVALID) all use the simple text path — there's no progress
+        # bar to show for them. HASHING uses simple text too, but the display
+        # string flashes via the 1Hz alternation in get_step_display_status,
+        # picked up by the 4Hz UI refresh.
+        terminal_states = (StepStatus.COMPLETE, StepStatus.VALIDATED,
+                           StepStatus.TOUCHED, StepStatus.CHANGED,
                            StepStatus.INVALID, StepStatus.HASHING)
         if step_status in terminal_states:
             if debug_enabled:
