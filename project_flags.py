@@ -82,6 +82,12 @@ COMPRESS_FLAGS = {
         'description': "After compress completes, stream the .ldf through ld-ldf-reader to verify every FLAC frame's CRC decodes cleanly end-to-end. Catches silent partial-compress failures that the basic exit-code check misses. Slow (minutes to tens of minutes depending on capture length) but on by default because losing your source .lds to a bad compress is much worse.",
         'default': True
     },
+    'auto_tier3_validate': {
+        'cli_flag': None,  # Internal flag, drives post-compress auto-Tier-3
+        'label': 'Auto Tier 3 validate after compress (auto-deletable .lds)',
+        'description': "Per-project override for the auto Tier 3 validation. SYSTEM DEFAULT IS ON (configure via VHS-Decode menu → Performance Settings → Toggle Auto Tier 3 validate). When on, the toolkit auto-runs Tier 3 (.ldf vs .lds sample-count comparison) immediately after a successful compress — the same check 1mv runs — and on PASS writes the .ldf.validated sidecar that gates safe .lds deletion. Tier 3 is a strict superset of Tier 2 (FLAC integrity), so when active it supersedes 'flac_integrity_check'. If the source .lds is missing when compress finishes, Tier 3 is skipped with a loud warning in the project's _validation.log — there is no silent fallback to a lesser check.",
+        'default': None,  # None = inherit the global default (set via Performance Settings)
+    },
 }
 
 

@@ -236,10 +236,10 @@ class WorkflowAnalyzer:
         return StepStatus.MISSING
     
     def _is_compress_validate_running(self, project: Project) -> bool:
-        """Check whether a 'compress-validate' (Tier 2 FLAC integrity) job is
-        currently RUNNING in the queue for this project. Used to flip the
-        COMPRESS cell to VERIFYING during the auto-queued post-compress
-        verification.
+        """Check whether a Tier 2 ('compress-validate') OR Tier 3
+        ('compress-validate-tier3') job is currently RUNNING in the queue
+        for this project. Used to flip the COMPRESS cell to VERIFYING for
+        either auto-queued post-compress verification path.
         """
         if not self.job_manager:
             return False
@@ -247,7 +247,7 @@ class WorkflowAnalyzer:
         if running is None:
             return False
         for job in running:
-            if job.job_type != 'compress-validate':
+            if job.job_type not in ('compress-validate', 'compress-validate-tier3'):
                 continue
             if self._is_job_for_project(job, project):
                 return True
