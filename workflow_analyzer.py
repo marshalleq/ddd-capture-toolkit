@@ -540,6 +540,40 @@ class WorkflowAnalyzer:
             
         return True
     
+    def _latest_job_completed(self, job_type: str, project: Project) -> bool:
+        """Return True if either (a) there is no recorded job of this type
+        for this project, or (b) the most-recent such job COMPLETED.
+
+        Used as the second half of every ``_is_*_complete`` check: file
+        existence + sensible size is necessary but not sufficient — if a
+        job for this step is still RUNNING / QUEUED / FAILED / CANCELLED,
+        the file on disk is a partial / abandoned write, not a finished
+        output. Treating that as "complete" makes downstream prerequisite
+        checks fire prematurely (e.g. FINAL going to READY while EXPORT
+        is still writing its first GB).
+
+        Returns True (file is good) when:
+          - job_manager isn't available
+          - the queue is busy (we don't block the UI; matrix re-checks)
+          - no matching job was ever recorded (file placed manually)
+          - the latest matching job is COMPLETED
+        Returns False only when a matching job exists whose latest run
+        ended in any non-COMPLETED state.
+        """
+        if not self.job_manager:
+            return True
+        all_jobs = self.job_manager.get_jobs_nonblocking(timeout=0.1)
+        if all_jobs is None:
+            return True
+        matching = [
+            j for j in all_jobs
+            if j.job_type == job_type and self._is_job_for_project(j, project)
+        ]
+        if not matching:
+            return True
+        latest = max(matching, key=lambda j: j.created_at)
+        return latest.status == JobStatus.COMPLETED
+
     def _is_decode_complete(self, project: Project) -> bool:
         """Check if decode step is complete.
 
@@ -563,68 +597,61 @@ class WorkflowAnalyzer:
         if os.path.getsize(tbc_file) <= 1024 * 1024:  # Should be at least 1MB
             return False
 
-        if self.job_manager:
-            all_jobs = self.job_manager.get_jobs_nonblocking(timeout=0.1)
-            if all_jobs is not None:
-                matching = [
-                    j for j in all_jobs
-                    if j.job_type == 'vhs-decode'
-                    and self._is_job_for_project(j, project)
-                ]
-                if matching:
-                    latest = max(matching, key=lambda j: j.created_at)
-                    if latest.status != JobStatus.COMPLETED:
-                        return False
-
-        return True
+        return self._latest_job_completed('vhs-decode', project)
     
     def _is_compress_complete(self, project: Project) -> bool:
-        """Check if compress step is complete (LDS -> LDF compression)"""
-        # First check if project discovery found a compress output file
+        """Check if compress step is complete (LDS -> LDF compression).
+
+        File existence + sensible size, AND the most-recent lds-compress
+        job (if any) must have COMPLETED. A still-running compress writes
+        the .ldf as it goes; size-only would falsely report the in-flight
+        file as a finished compress.
+        """
+        ldf_found = False
         if 'compress' in project.output_files:
             compress_file = project.output_files['compress']
-            if os.path.exists(compress_file):
-                compress_size = os.path.getsize(compress_file)
-                if compress_size > 1024 * 1024:  # Should be at least 1MB
-                    return True
+            if os.path.exists(compress_file) and os.path.getsize(compress_file) > 1024 * 1024:
+                ldf_found = True
 
-        # Also check directly for .ldf file based on capture file
-        if 'video' in project.capture_files:
+        if not ldf_found and 'video' in project.capture_files:
             video_file = project.capture_files['video']
             if video_file.endswith('.lds'):
                 ldf_file = video_file.replace('.lds', '.ldf')
-                if os.path.exists(ldf_file):
-                    ldf_size = os.path.getsize(ldf_file)
-                    if ldf_size > 1024 * 1024:  # Should be at least 1MB
-                        return True
+                if os.path.exists(ldf_file) and os.path.getsize(ldf_file) > 1024 * 1024:
+                    ldf_found = True
 
-        return False
+        if not ldf_found:
+            return False
+        return self._latest_job_completed('lds-compress', project)
     
     def _is_export_complete(self, project: Project) -> bool:
-        """Check if export step is complete"""
-        # First check if project discovery found an export file
+        """Check if export step is complete (.tbc → _ffv1.mkv).
+
+        File existence + sensible size, AND the most-recent tbc-export
+        job (if any) must have COMPLETED. Without the job-status gate, a
+        partially-written _ffv1.mkv with >1 MB written would falsely
+        satisfy FINAL's prerequisite check the moment ffmpeg started
+        producing output — FINAL would flip to READY before the export
+        was finished.
+        """
+        export_found = False
+
         if 'export' in project.output_files:
             export_file = project.output_files['export']
-            if os.path.exists(export_file):
-                export_size = os.path.getsize(export_file)
-                if export_size > 1024 * 1024:  # Should be at least 1MB
-                    return True
-        
-        # If not found by project discovery, check expected file names
-        # based on workflow control centre naming convention
-        if 'decode' in project.output_files:
+            if os.path.exists(export_file) and os.path.getsize(export_file) > 1024 * 1024:
+                export_found = True
+
+        # Fallback: derive expected filename from decode output
+        if not export_found and 'decode' in project.output_files:
             tbc_file = project.output_files['decode']
             if os.path.exists(tbc_file):
-                # Generate expected export filename
                 base_name = os.path.splitext(os.path.basename(tbc_file))[0]
                 expected_export = os.path.join(os.path.dirname(tbc_file), f"{base_name}_ffv1.mkv")
-                if os.path.exists(expected_export):
-                    export_size = os.path.getsize(expected_export)
-                    if export_size > 1024 * 1024:  # Should be at least 1MB
-                        return True
-        
-        # Also try based on capture files if decode info not available
-        if 'video' in project.capture_files:
+                if os.path.exists(expected_export) and os.path.getsize(expected_export) > 1024 * 1024:
+                    export_found = True
+
+        # Fallback: derive from capture file if decode info not available
+        if not export_found and 'video' in project.capture_files:
             rf_file = project.capture_files['video']
             if rf_file.endswith('.ldf'):
                 base_name = os.path.splitext(os.path.basename(rf_file))[0]
@@ -632,42 +659,58 @@ class WorkflowAnalyzer:
                 if os.path.exists(tbc_file):
                     tbc_base_name = os.path.splitext(os.path.basename(tbc_file))[0]
                     expected_export = os.path.join(os.path.dirname(tbc_file), f"{tbc_base_name}_ffv1.mkv")
-                    if os.path.exists(expected_export):
-                        export_size = os.path.getsize(expected_export)
-                        if export_size > 1024 * 1024:  # Should be at least 1MB
-                            return True
-        
-        return False
+                    if os.path.exists(expected_export) and os.path.getsize(expected_export) > 1024 * 1024:
+                        export_found = True
+
+        if not export_found:
+            return False
+        return self._latest_job_completed('tbc-export', project)
     
     def _is_align_complete(self, project: Project) -> bool:
-        """Check if align step is complete"""
+        """Check if align step is complete (.flac → _aligned.flac).
+
+        File existence + sensible size, AND the most-recent audio-align
+        job (if any) must have COMPLETED. Without the job-status gate, a
+        partially-written _aligned.flac would falsely satisfy FINAL's
+        prerequisite the moment FLAC encoding started.
+        """
         # Only applicable if audio capture exists
         if 'audio' not in project.capture_files:
             return True  # N/A for video-only projects
-            
+
         if 'align' not in project.output_files:
             return False
-            
+
         align_file = project.output_files['align']
         if not os.path.exists(align_file):
             return False
-            
-        # Check file size is reasonable
-        align_size = os.path.getsize(align_file)
-        return align_size > 1024  # Should be at least 1KB for audio
-    
+
+        # Size sanity check
+        if os.path.getsize(align_file) <= 1024:
+            return False
+
+        return self._latest_job_completed('audio-align', project)
+
     def _is_final_complete(self, project: Project) -> bool:
-        """Check if final step is complete"""
+        """Check if final step is complete (final-mux output).
+
+        File existence + sensible size, AND the most-recent final-mux job
+        (if any) must have COMPLETED. Nothing downstream depends on FINAL
+        completing, but the matrix's own COMPLETE/VALIDATED determination
+        would otherwise treat a partial _final.mkv as a finished mux.
+        """
         if 'final' not in project.output_files:
             return False
-            
+
         final_file = project.output_files['final']
         if not os.path.exists(final_file):
             return False
-            
-        # Check file size is reasonable
-        final_size = os.path.getsize(final_file)
-        return final_size > 1024 * 1024  # Should be at least 1MB
+
+        # Size sanity check
+        if os.path.getsize(final_file) <= 1024 * 1024:
+            return False
+
+        return self._latest_job_completed('final-mux', project)
     
     def _get_job_type_for_step(self, step: WorkflowStep) -> Optional[str]:
         """Get job type string for workflow step"""
