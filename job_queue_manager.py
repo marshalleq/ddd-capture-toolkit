@@ -3012,7 +3012,9 @@ class JobQueueManager:
         Job parameters:
             files:      list of paths to hash (order preserved in log)
             mode:       'hash' (default) — record fresh hashes
-                        'verify' — re-hash and compare to most-recent log entry
+                        'check' — re-hash and compare to most-recent log entry,
+                                  self-healing TOUCHED state on MATCH
+                                  ('verify' is accepted as a legacy alias)
             step:       optional label ('capture', 'compress', 'align', etc.)
                         used in the log entry title
             algorithm:  hashlib name (default 'sha256')
@@ -3121,12 +3123,16 @@ class JobQueueManager:
         # Write the right log entry depending on mode + step
         try:
             ref_path = present[0][0]
-            if mode == 'verify':
-                # Verify mode: compare results to most-recent recorded hashes
-                # and log an INVALID/PASS verification entry. The verification
-                # logic itself lives in validation_log to keep this method
-                # focused on orchestration.
-                validation_log.log_verify(
+            # 'verify' is the legacy synonym for 'check' — both route to the
+            # same re-hash-and-compare routine in validation_log. New callers
+            # should use 'check'; old saved-queue jobs may still carry 'verify'.
+            if mode in ('check', 'verify'):
+                # Check mode: compare results to most-recent recorded hashes
+                # and log MATCH/MISMATCH per file. On all-MATCH the recorded
+                # identity is also refreshed so any TOUCHED state clears.
+                # Sidecar refresh and self-heal logic live in validation_log
+                # to keep this method focused on orchestration.
+                validation_log.log_check(
                     ref_path,
                     new_hashes=results,
                     missing_files=missing,

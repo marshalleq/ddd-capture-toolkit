@@ -15,6 +15,12 @@ The log file lives next to the captures as ``<basename>_validation.log`` and
 is **append-only** so the user gets a complete history of every validation
 event for this capture. A future "delete the .lds" decision can be made by
 reading the log and confirming the last Tier 3 entry was a PASS.
+
+Each time a hash is recorded or confirmed, this module also refreshes a
+portable ``<file>.sha256`` sidecar next to the file in standard
+``sha256sum -c`` format. That lets anyone verify the file with stock
+``sha256sum`` (Linux) / ``shasum`` (macOS) / ``Get-FileHash`` (Windows)
+without any toolkit machinery.
 """
 
 import hashlib
@@ -122,6 +128,86 @@ def _append(log_path, text):
         f.write("─" * 70 + "\n")
 
 
+# ----- Portable .sha256 sidecars ------------------------------------------
+#
+# Whenever the toolkit records or refreshes a file's hash, it also writes a
+# standalone ``<file>.sha256`` next to it in standard ``sha256sum -c``
+# format. That gives anyone with a stock ``sha256sum`` (Linux), ``shasum``
+# (macOS), or ``Get-FileHash`` (Windows) a way to verify the file without
+# any toolkit machinery, even years later on a different OS.
+#
+# The .sha256 is a *convenience view* over the authoritative ``_validation.log``
+# — the log is the append-only history; sidecars are the latest snapshot.
+
+def get_hash_sidecar_path(file_path):
+    """Return the path to the portable .sha256 sidecar for this file."""
+    return file_path + '.sha256'
+
+
+def write_hash_sidecar(file_path, hash_hex):
+    """Write ``<file>.sha256`` next to file_path in ``sha256sum -c`` format.
+
+    Format::
+
+        <64-hex-digest> *<basename>\\n
+
+    The leading ``*`` marks binary-mode hashing (the toolkit always hashes
+    in binary mode). Both ``sha256sum`` and ``shasum`` accept this form and
+    the bare ``<hash>  <basename>`` form interchangeably when checking.
+
+    Refuses to write if hash_hex isn't a clean 64-character hex digest —
+    "(skipped)" / "(error: …)" entries from the hash recorder must not end
+    up in a portable sidecar.
+    """
+    if not isinstance(hash_hex, str) or len(hash_hex) != 64:
+        return None
+    if not all(c in '0123456789abcdefABCDEF' for c in hash_hex):
+        return None
+    sidecar = get_hash_sidecar_path(file_path)
+    basename = os.path.basename(file_path)
+    content = f"{hash_hex.lower()} *{basename}\n"
+    tmp = sidecar + '.tmp'
+    try:
+        with open(tmp, 'w') as f:
+            f.write(content)
+        os.rename(tmp, sidecar)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return None
+    return sidecar
+
+
+def remove_hash_sidecar(file_path):
+    """Remove the .sha256 sidecar for file_path if present."""
+    sidecar = get_hash_sidecar_path(file_path)
+    try:
+        if os.path.isfile(sidecar):
+            os.remove(sidecar)
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _write_sidecars_from_hashes(file_hashes):
+    """Helper: for each file_hashes entry with a real path + good hex hash,
+    refresh the file's .sha256 sidecar. No-op for skipped/errored entries.
+    """
+    if not file_hashes:
+        return
+    for info in file_hashes.values():
+        path = info.get('path')
+        h = info.get('hash')
+        if path and os.path.isfile(path) and isinstance(h, str) and len(h) == 64:
+            try:
+                write_hash_sidecar(path, h)
+            except OSError:
+                pass
+
+
 # ----- Entry formatters ---------------------------------------------------
 
 def _ts():
@@ -161,32 +247,58 @@ def log_hash(any_capture_file_path, file_hashes, step='hash',
             if path:
                 lines.append(f"          {path}")
     _append(log_path, "\n".join(lines) + "\n")
+    # Refresh portable .sha256 sidecars for every file we just hashed.
+    _write_sidecars_from_hashes(file_hashes)
 
 
-def log_verify(any_capture_file_path, new_hashes, missing_files=None,
-               elapsed_seconds=None):
-    """Verify-mode entry: compare freshly-computed hashes to the most-recent
-    recorded hashes in the log, record PASS/FAIL per file.
+def log_check(any_capture_file_path, new_hashes, missing_files=None,
+              elapsed_seconds=None):
+    """Re-check entry: compare freshly-computed hashes to the most-recent
+    recorded hashes in the log and record MATCH/MISMATCH per file.
 
-    new_hashes: {role: file_info} from a fresh re-hash.
+    new_hashes: {role: file_info} from a fresh re-hash. Each entry must
+    include 'path', 'size', 'mtime', 'hash'.
 
-    The comparison reads back our own log (which is a small text file) to
-    find the most recent hash for each role.
+    Behaviour on the three outcomes per file:
+      * MATCH    — content unchanged. We also append a fresh identity
+                   record for this file (with current size+mtime) so a
+                   later cheap file_state() check returns 'validated'
+                   rather than the TOUCHED state that triggered this
+                   re-check in the first place. This is the self-heal:
+                   a Finder/SMB roundtrip that bumped mtime becomes
+                   invisible once you've re-verified the bytes.
+      * MISMATCH — content differs from the recorded hash. The log
+                   records the mismatch verbatim; nothing self-heals.
+                   file_state() will surface INVALID via the recheck
+                   record (see _parse_latest_recheck below).
+      * NO PRIOR HASH — the file hadn't been hashed before. Acts like
+                   a first hash_record: writes the new hash to the log
+                   so future checks have something to compare against.
+
+    The portable .sha256 sidecar is also refreshed for every file that
+    came out MATCH or NO PRIOR HASH (i.e. anywhere we now have a clean,
+    confirmed hash to publish).
     """
     log_path = get_log_path(any_capture_file_path)
     expected = _parse_latest_hashes(log_path)
 
     all_pass = True
     detail_lines = []
+    matched = {}            # role: info — re-record these for self-heal
+    sidecar_refresh = {}    # role: info — write a .sha256 for these
     for role, info in new_hashes.items():
         new_hash = info.get('hash', '')
         exp = expected.get(role)
         if exp is None:
             detail_lines.append(f"    .{role:<8} NO PRIOR HASH (recording new)  {new_hash}")
             all_pass = False
+            matched[role] = info
+            sidecar_refresh[role] = info
             continue
         if exp['hash'] == new_hash:
             detail_lines.append(f"    .{role:<8} MATCH    {new_hash}")
+            matched[role] = info
+            sidecar_refresh[role] = info
         else:
             all_pass = False
             detail_lines.append(
@@ -195,7 +307,7 @@ def log_verify(any_capture_file_path, new_hashes, missing_files=None,
 
     verdict = "PASS — all hashes match prior record" if all_pass else "FAIL — hash mismatch(es) found"
     lines = [
-        f"[{_ts()}] Verify: re-hash + compare to log  →  {verdict}",
+        f"[{_ts()}] Check: re-hash + compare to log  →  {verdict}",
     ]
     if elapsed_seconds is not None:
         lines.append(f"  total elapsed:  {elapsed_seconds:.0f}s")
@@ -205,6 +317,35 @@ def log_verify(any_capture_file_path, new_hashes, missing_files=None,
     lines.append("")
     lines.extend(detail_lines)
     _append(log_path, "\n".join(lines) + "\n")
+
+    # Self-heal: for every file that came out MATCH (or NO PRIOR HASH —
+    # we just recorded a new one), append a fresh hash record carrying
+    # the current size+mtime. That clears any TOUCHED/CHANGED state the
+    # file may have been showing in the matrix, because file_state()
+    # compares against the most-recent recorded identity.
+    if matched:
+        heal_lines = [
+            f"[{_ts()}] Check: identity refresh (post-MATCH self-heal)  →  DONE",
+            "",
+            "  File identity + checksums (SHA-256):",
+        ]
+        for role, info in matched.items():
+            size = info.get('size', 0)
+            mtime = info.get('mtime', '')
+            h = info.get('hash', '')
+            path = info.get('path', '')
+            heal_lines.append(f"    .{role:<8} {size:>18,} bytes  mtime {mtime}  {h}")
+            if path:
+                heal_lines.append(f"          {path}")
+        _append(log_path, "\n".join(heal_lines) + "\n")
+
+    # Refresh portable .sha256 sidecars for the files we just confirmed.
+    _write_sidecars_from_hashes(sidecar_refresh)
+
+
+# Backwards-compatible alias — log_verify was the prior name for this
+# operation. New code should call log_check.
+log_verify = log_check
 
 
 def _parse_latest_hashes(log_path):
@@ -250,13 +391,20 @@ def _parse_latest_hashes(log_path):
 
 def file_state(path, log_path=None):
     """Cheap status check for a file: returns one of
-    {'missing', 'no-hash', 'validated', 'stale'} based on log entries and
-    the current filesystem state. Never re-hashes — that's what verify is for.
+    {'missing', 'no-hash', 'validated', 'touched', 'changed'} based on log
+    entries and the current filesystem state. Never re-hashes — that's
+    what ``check N`` is for.
 
     'missing'   — file doesn't exist
     'no-hash'   — file exists, no hash recorded yet
     'validated' — hash recorded, file's size+mtime still match what was recorded
-    'stale'     — hash recorded, but size or mtime differs from the recorded value
+    'touched'   — size matches the recorded value but mtime differs;
+                  content is almost certainly fine (mtime-bumping copies
+                  via Finder/SMB or rsync without -t are common causes).
+                  Run a re-check to confirm and self-heal.
+    'changed'   — size differs from the recorded value. Content has
+                  definitely changed; the file is no longer the bytes
+                  whose hash was recorded.
     """
     if not os.path.isfile(path):
         return 'missing'
@@ -278,8 +426,10 @@ def file_state(path, log_path=None):
     if rec is None:
         return 'no-hash'
     current_size, current_mtime = file_identity(path)
-    if current_size != rec['size'] or current_mtime != rec['mtime']:
-        return 'stale'
+    if current_size != rec['size']:
+        return 'changed'
+    if current_mtime != rec['mtime']:
+        return 'touched'
     return 'validated'
 
 
@@ -290,7 +440,7 @@ def log_capture_hashes(any_capture_file_path, file_hashes, elapsed_seconds=None,
     These files have no validation oracle — they ARE the source of truth — so
     we just record their checksums + identity (size, mtime) at the moment of
     capture. Later runs use the recorded identity to cheaply detect whether
-    the file has been modified (STALE state in the WCC).
+    the file has been modified (TOUCHED / CHANGED states in the WCC).
 
     file_hashes: dict {role: {'path', 'size', 'mtime', 'hash', 'elapsed'}}.
     cancelled: if True, the user cancelled the hash mid-way; record what was
@@ -318,6 +468,8 @@ def log_capture_hashes(any_capture_file_path, file_hashes, elapsed_seconds=None,
             if path:
                 lines.append(f"          {path}")
     _append(log_path, "\n".join(lines) + "\n")
+    # Refresh portable .sha256 sidecars for every original we just hashed.
+    _write_sidecars_from_hashes(file_hashes)
 
 
 def log_tier1(any_capture_file_path, passed, message, lds_path=None, ldf_path=None):
@@ -420,27 +572,32 @@ def hash_capture_originals(any_capture_file_path, skip_lds_hash=False,
     return result
 
 
-# ----- Verified sidecar (.ldf.verified) -----------------------------------
+# ----- Validated sidecar (.ldf.validated) ---------------------------------
 #
-# A standalone <ldf>.verified file written next to a .ldf when Tier 3 has
+# A standalone <ldf>.validated file written next to a .ldf when Tier 3 has
 # passed for that specific .ldf. Presence of this file is the operator's
 # at-a-glance gate for "the .lds may be safely deleted." Absence means the
-# .ldf has not been Tier 3 verified against its source .lds.
+# .ldf has not been Tier 3 validated against its source .lds.
 #
 # The content is substantive on purpose: the comparison numbers, sizes,
 # hashes, and tolerance are recorded so a future reader can re-derive
 # the verdict from the data, not just trust a token.
 
-def get_verified_sidecar_path(ldf_path):
-    """Return the path to the .verified sidecar for this .ldf."""
-    return ldf_path + '.verified'
+def get_validated_sidecar_path(ldf_path):
+    """Return the path to the .validated sidecar for this .ldf."""
+    return ldf_path + '.validated'
 
 
-def write_verified_sidecar(ldf_path, *, lds_path, lds_size, lds_mtime,
-                           ldf_size, ldf_mtime,
-                           decoded_bytes, expected_bytes, slack_bytes,
-                           elapsed_seconds, file_hashes=None):
-    """Write the <ldf>.verified sidecar after a Tier 3 PASS.
+# Backwards-compatible alias for the prior name. New code should call
+# get_validated_sidecar_path.
+get_verified_sidecar_path = get_validated_sidecar_path
+
+
+def write_validated_sidecar(ldf_path, *, lds_path, lds_size, lds_mtime,
+                            ldf_size, ldf_mtime,
+                            decoded_bytes, expected_bytes, slack_bytes,
+                            elapsed_seconds, file_hashes=None):
+    """Write the <ldf>.validated sidecar after a Tier 3 PASS.
 
     Only call this when an actual sample-count comparison succeeded —
     i.e. lds_path was present, ld-ldf-reader streamed the .ldf, and
@@ -449,9 +606,9 @@ def write_verified_sidecar(ldf_path, *, lds_path, lds_size, lds_mtime,
     the whole point of the sidecar is the .lds-vs-.ldf gate.
 
     Writes atomically via a .tmp + rename so a crashed write can't leave
-    a half-written file claiming verification.
+    a half-written file claiming validation.
     """
-    sidecar = get_verified_sidecar_path(ldf_path)
+    sidecar = get_validated_sidecar_path(ldf_path)
     diff = decoded_bytes - expected_bytes
     ratio = (ldf_size / lds_size * 100) if lds_size else 0.0
 
@@ -471,7 +628,7 @@ def write_verified_sidecar(ldf_path, *, lds_path, lds_size, lds_mtime,
     log_basename = os.path.basename(get_log_path(ldf_path))
 
     lines = [
-        "ldf-verified  v1",
+        "ldf-validated  v1",
         "=" * 70,
         "",
         "This file's presence means the adjacent .ldf has been streamed",
@@ -479,13 +636,13 @@ def write_verified_sidecar(ldf_path, *, lds_path, lds_size, lds_mtime,
         "decoded bytes as expected from the source .lds. The .lds may be",
         "safely deleted while this file accompanies the .ldf.",
         "",
-        "Absence of this file means the .ldf has NOT been Tier 3 verified.",
+        "Absence of this file means the .ldf has NOT been Tier 3 validated.",
         "",
-        f"Verified at:        {_ts()}",
-        "Verifier:           ld-ldf-reader (Tier 3 sample-count comparison)",
+        f"Validated at:       {_ts()}",
+        "Validator:          ld-ldf-reader (Tier 3 sample-count comparison)",
         f"Elapsed:            {elapsed_seconds:.0f} seconds",
         "",
-        "Source .lds (at time of verification)",
+        "Source .lds (at time of validation)",
         f"  path:             {lds_path or '(unknown)'}",
         f"  size:             {lds_size:,} bytes",
         f"  mtime:            {_fmt_mtime(lds_mtime)}",
@@ -522,11 +679,11 @@ def write_verified_sidecar(ldf_path, *, lds_path, lds_size, lds_mtime,
         "Notes",
         "  - This sidecar describes ONE specific .ldf. If the .ldf is",
         "    renamed, moved without this file, or overwritten, the",
-        "    verification no longer applies — delete this sidecar.",
+        "    validation no longer applies — delete this sidecar.",
         "  - When copying to archive storage, use rsync -a (or another",
         "    flag set that preserves mtime). A copy without -t / -a will",
-        "    update mtimes and cause hash re-checks against the validation",
-        "    log to report STALE on otherwise-identical files.",
+        "    update mtimes and cause file_state() to report TOUCHED on",
+        "    otherwise-identical files. Run a re-check to self-heal.",
         "  - Re-running Tier 3 (Nmv in the WCC) on this .ldf will overwrite",
         "    this sidecar on PASS, or remove it on FAIL.",
     ])
@@ -539,16 +696,21 @@ def write_verified_sidecar(ldf_path, *, lds_path, lds_size, lds_mtime,
     return sidecar
 
 
-def remove_verified_sidecar(ldf_path):
-    """Remove the .verified sidecar for this .ldf if present.
+# Backwards-compatible alias for the prior name. New code should call
+# write_validated_sidecar.
+write_verified_sidecar = write_validated_sidecar
+
+
+def remove_validated_sidecar(ldf_path):
+    """Remove the .validated sidecar for this .ldf if present.
 
     Called when a Tier 3 validation FAILs (so a stale PASS doesn't keep
-    claiming this .ldf is verified), or when the .ldf itself is about
+    claiming this .ldf is validated), or when the .ldf itself is about
     to be re-compressed / overwritten.
 
     Returns True if a file was removed, False otherwise.
     """
-    sidecar = get_verified_sidecar_path(ldf_path)
+    sidecar = get_validated_sidecar_path(ldf_path)
     try:
         if os.path.isfile(sidecar):
             os.remove(sidecar)
@@ -556,3 +718,8 @@ def remove_verified_sidecar(ldf_path):
     except OSError:
         pass
     return False
+
+
+# Backwards-compatible alias for the prior name. New code should call
+# remove_validated_sidecar.
+remove_verified_sidecar = remove_validated_sidecar

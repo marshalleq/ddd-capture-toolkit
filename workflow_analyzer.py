@@ -35,8 +35,9 @@ class StepStatus(Enum):
     # Hash / validation states
     HASHING = "hashing"            # A checksum job is currently running for this step's outputs
     VALIDATED = "validated"        # Step complete AND hash recorded AND file size+mtime unchanged
-    STALE = "stale"                # Hash recorded but file has changed (size/mtime differs from log)
-    INVALID = "invalid"            # Explicit verify revealed a hash mismatch — file may be corrupt
+    TOUCHED = "touched"            # Hash recorded; size matches but mtime differs — almost certainly fine, run a re-check to self-heal
+    CHANGED = "changed"            # Hash recorded; size differs — content has definitely changed
+    INVALID = "invalid"            # Explicit re-check revealed a hash mismatch — file may be corrupt
     # Archive staging
     ARCHIVED = "archived"          # Project's intermediate files have been moved into <basename>.intermediate/
     # Tier 3 validation in progress
@@ -71,8 +72,9 @@ class WorkflowAnalyzer:
         # Hash / validation states
         'hashing': 'bright_cyan',       # rendered with flash by the matrix view
         'validated': 'bright_green',    # subtly brighter than 'complete'
-        'stale': 'yellow',              # file changed since last hash
-        'invalid': 'bold red',          # explicit verify revealed mismatch
+        'touched': 'yellow',            # mtime changed but size matches — probably benign
+        'changed': 'orange3',           # size differs from log — content definitely different
+        'invalid': 'bold red',          # explicit re-check revealed mismatch
         'archived': 'bright_magenta',   # staged for archive — intermediates moved aside
         'verifying': 'bright_yellow',   # Tier 3 ldf-vs-lds round-trip in progress
     }
@@ -88,8 +90,9 @@ class WorkflowAnalyzer:
         'missing': 'Prerequisites not satisfied',
         'hashing': 'Checksum job running for this step\'s outputs',
         'validated': 'Step complete and hash matches recorded value (file unchanged since hash)',
-        'stale': 'Hash recorded but file has been modified since (size/mtime differ) — re-hash or verify',
-        'invalid': 'Verify revealed a hash mismatch — file may be corrupt',
+        'touched': 'Size matches the recorded hash but mtime differs — run check N to confirm and self-heal',
+        'changed': 'Size differs from the recorded hash — content has changed; investigate',
+        'invalid': 'Re-check revealed a hash mismatch — file may be corrupt',
         'archived': 'Project staged for archive — intermediate files moved into <basename>.intermediate/',
         'verifying': 'Nmv ldf validation in progress — decoding .ldf and comparing byte count vs .lds',
     }
@@ -176,7 +179,7 @@ class WorkflowAnalyzer:
             StepStatus for the step
         """
         # Priority: Verifying (Nmv) > Running > Queued > Failed > Hashing >
-        # Invalid > Stale > Validated > Complete > Ready > Missing
+        # Invalid > Changed > Touched > Validated > Complete > Ready > Missing
 
         # 0. Is this the COMPRESS row of a project whose .ldf is currently
         # being validated? Two paths trigger this:
@@ -216,8 +219,10 @@ class WorkflowAnalyzer:
             hash_state = self._get_step_hash_state(step, project)
             if hash_state == 'invalid':
                 return StepStatus.INVALID
-            if hash_state == 'stale':
-                return StepStatus.STALE
+            if hash_state == 'changed':
+                return StepStatus.CHANGED
+            if hash_state == 'touched':
+                return StepStatus.TOUCHED
             if hash_state == 'validated':
                 return StepStatus.VALIDATED
             # 'no-hash' or 'mixed' falls through to plain COMPLETE
@@ -352,7 +357,7 @@ class WorkflowAnalyzer:
 
     def _get_step_tracked_files(self, step: WorkflowStep, project: Project):
         """Return the list of files whose hash state determines this step's
-        VALIDATED/STALE/INVALID result. Empty list = no tracked files for this
+        VALIDATED/TOUCHED/CHANGED/INVALID result. Empty list = no tracked files for this
         step (e.g. DECODE doesn't have a stable single output we track hashes
         for; users care about the .tbc but it's a derivative of the .lds so
         typically only the .tbc.json + capture originals are hashed).
@@ -412,11 +417,12 @@ class WorkflowAnalyzer:
     def _get_step_hash_state(self, step: WorkflowStep, project: Project) -> str:
         """Aggregate hash state across this step's tracked files.
 
-        Returns one of: 'invalid', 'stale', 'validated', 'no-hash', 'mixed'.
+        Returns one of: 'invalid', 'changed', 'touched', 'validated',
+        'no-hash', 'mixed'.
 
-        Priority: any 'invalid' → 'invalid'; any 'stale' → 'stale';
-        all 'validated' → 'validated'; some validated + some 'no-hash' →
-        'mixed' (treated as plain COMPLETE).
+        Priority: any 'invalid' → 'invalid'; any 'changed' → 'changed';
+        any 'touched' → 'touched'; all 'validated' → 'validated';
+        all 'no-hash' → 'no-hash'; otherwise → 'mixed' (treated as plain COMPLETE).
         """
         try:
             import validation_log
@@ -432,8 +438,10 @@ class WorkflowAnalyzer:
 
         if 'invalid' in states:
             return 'invalid'
-        if 'stale' in states:
-            return 'stale'
+        if 'changed' in states:
+            return 'changed'
+        if 'touched' in states:
+            return 'touched'
         if all(s == 'validated' for s in states):
             return 'validated'
         if all(s == 'no-hash' for s in states):
@@ -769,7 +777,8 @@ class WorkflowAnalyzer:
             StepStatus.QUEUED: "Queued",
             StepStatus.MISSING: "Missing",
             StepStatus.VALIDATED: "Validated",
-            StepStatus.STALE: "Stale",
+            StepStatus.TOUCHED: "Touched",
+            StepStatus.CHANGED: "Changed",
             StepStatus.INVALID: "INVALID",
         }
 
