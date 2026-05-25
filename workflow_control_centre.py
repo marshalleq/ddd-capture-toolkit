@@ -557,6 +557,8 @@ class WorkflowControlCentre:
             ("1mv",       "bold green",       "Verify .ldf"),
             ("hash 1",    "bold green",       "Hash project files"),
             ("verify 1",  "bold green",       "Re-check hashes"),
+            ("stage 1",   "bold green",       "Stage archive"),
+            ("unstage 1", "bold green",       "Undo stage"),
             ("1x",        "bold cyan",        "Flags page"),
             ("1dp 1dn",   "bold yellow",      "PAL / NTSC"),
             ("auto",      "bold cyan",        "Queue ready"),
@@ -569,6 +571,7 @@ class WorkflowControlCentre:
             ("clean history", "bold bright_blue", "Wipe finished"),
             ("cleanup",   "bold orange1",     "Clear /tmp"),
             ("settemp",   "bold orange1",     "Set tmp dir"),
+            ("r",         "bold cyan",        "Retry"),
             ("d",         "bold cyan",        "Details"),
             ("q",         "bold red",         "Quit"),
         ]
@@ -3211,60 +3214,75 @@ class WorkflowControlCentre:
         print("\nWORKFLOW CONTROL CENTRE HELP")
         print("=" * 40)
         
-        print("\nCoordinate System (Direct Actions):")
-        print("  1D - Start Decode for Project 1 (uses config default format)")
-        print("  1DP - Start Decode for Project 1 (force PAL)")
-        print("  1DN - Start Decode for Project 1 (force NTSC)")
-        print("  2M - Start Compress for Project 2")
-        print("  3E - Start Export for Project 3")
-        print("  1A - Start Align for Project 1")
-        print("  2F - Start Final for Project 2")
-        print("  1X - Configure export flags for Project 1 (e.g., --luma-only for B&W)")
-        
-        print("\nProject Selection:")
-        print("  1-7 - Select a project from the workflow matrix")
-        
-        print("\nJob Selection:")
-        print("  J1-J9 - Select a job from the active jobs list")
-        
-        print("\nAction Commands:")
-        print("  X - Stop selected job")
-        print("  R - Retry failed job or project step")
-        print("  D - Show details for selected project or job")
-        print("  Auto - Queue all ready workflow steps for all projects")
-        print("  force 1e - Force overwrite existing output (e.g., force 1e, force 2d)")
-        print("  stop 1e - Stop a job for project+step (cancels queued, terminates running)")
-        print("  stop all - Stop everything immediately (terminate running + cancel queued)")
-        print("  cancel queue - Cancel all queued jobs, leave running jobs to finish")
-        print("  clean 1e - Reset stuck progress displays for one step")
-        print("  clean failed - Remove all failed jobs from history (resets Failed counter)")
-        print("  clean cancelled - Remove all cancelled jobs from history")
-        print("  clean history - Remove all finished jobs (failed + cancelled + completed)")
-        print("  1mv - Full validation decode of project 1's .ldf (Tier 3)")
-        print("  hash 1 - Hash any of project 1's files that don't yet have a recorded hash")
-        print("  verify 1 - Re-hash project 1's files and check against recorded hashes")
-        print("  H - Show this help")
-        print("  Q - Quit the Workflow Control Centre")
-        
+        print("\nRun pipeline steps  (project number + step letter):")
+        print("  1D            Start Decode for project 1 (uses config default PAL/NTSC)")
+        print("  1DP / 1DN     Start Decode for project 1 forcing PAL / NTSC")
+        print("  2M            Start Compress for project 2  (.lds -> .ldf)")
+        print("  3E            Start Export for project 3    (.tbc -> _ffv1.mkv)")
+        print("  1A            Start Audio align for project 1")
+        print("  2F            Start Final mux for project 2")
+        print("  1X            Open the per-project flags dialog (5 pages: decode,")
+        print("                export, audio, compress, segment)")
+        print("  auto          Queue every step that's currently READY across all projects")
+
+        print("\nValidation, hashing, archive staging  (operate on a whole project):")
+        print("  1mv           Tier 3 validation: decode the .ldf and compare byte count")
+        print("                to the source .lds. On PASS writes <basename>.ldf.verified")
+        print("                next to the .ldf (the gate for safely deleting the .lds).")
+        print("  hash 1        Hash any of project 1's tracked files that don't yet")
+        print("                have a recorded hash in <basename>_validation.log.")
+        print("  verify 1      Re-hash project 1's tracked files and compare against the")
+        print("                log. Flips matrix cells to VAL / STALE / INVALID.")
+        print("  stage 1       Move project 1's intermediate files (.lds, .tbc, *_chroma.tbc,")
+        print("                .tbc.json, decode .log, _ffv1.mkv, _aligned.flac, watchdog log)")
+        print("                into a <basename>.intermediate/ subfolder. Matrix row flips to")
+        print("                ARCH. Refuses unless .ldf.verified is present.")
+        print("  unstage 1     Reverse of stage: move the intermediate files back to the")
+        print("                top level and remove the (now-empty) subfolder.")
+
+        print("\nRe-run, stop, clean:")
+        print("  force 1e      Force-overwrite existing outputs and re-run the step.")
+        print("                Required to re-run any step that's COMPLETE/VAL/STALE/")
+        print("                INVALID/HASH. For decode, also synchronously deletes any")
+        print("                leftover .tbc / _chroma.tbc / .tbc.json / .log first.")
+        print("  stop 1e       Stop one project+step job (cancels queued, terminates running).")
+        print("  stop all      Stop everything immediately.")
+        print("  cancel queue  Cancel queued jobs but let running ones finish.")
+        print("  clean 1e      Reset a stuck progress display for one step.")
+        print("  clean failed     Remove all FAILED entries from job history.")
+        print("  clean cancelled  Remove all CANCELLED entries from job history.")
+        print("  clean history    Remove all completed/failed/cancelled entries.")
+
+        print("\nSelection:")
+        print("  1..N          Select a project from the workflow matrix (N = however")
+        print("                many projects you have).")
+        print("  J1..JN        Select a job from the active jobs list.")
+        print("  D             Show details for the selected project or job.")
+        print("  R             Retry / restart the selected failed step.")
+        print("  X             Stop the selected job. (When typed as part of 1X / 2X / ...")
+        print("                opens the flags dialog instead.)")
+
+        print("\nOther:")
+        print("  cleanup       Clean up /tmp scratch files (ffmpeg, tbc, vhs).")
+        print("  settemp       Pick the disk with the most free space and set it as")
+        print("                $TMPDIR for this session.")
+        print("  H             Show this help.")
+        print("  Q             Quit back to the main menu.")
+
         print("\nStep Letters:")
         print("  D = (D)ecode, M = Co(M)press, E = (E)xport")
-        print("  A = (A)lign, F = (F)inal, X = Flags (e(X)port options)")
-        
+        print("  A = (A)lign,  F = (F)inal,    X = fla(X) dialog")
+
         print("\nTips:")
-        print("  • Use coordinate system for direct actions: 1D, 2M, etc.")
-        print("  • Select projects (1-7) or jobs (J1-J9) for multi-step operations")
-        print("  • 'Auto' will queue all ready steps across all projects")
-        print("  • Coordinate commands work on any step status (Ready/Failed/etc.)")
-        print("  • Completed jobs with missing files require 'force' to restart")
-        print("  • No automatic restarts to prevent continuous fail loops")
-        
-        print("\nImplementation Status:")
-        print("  [DONE] Project discovery and status detection")
-        print("  [DONE] Coordinate system with numbered projects")
-        print("  [DONE] Rich terminal interface with workflow matrix")
-        print("  [IN PROGRESS] Job submission integration")
-        print("  [PLANNED] System resource monitoring")
-        
+        print("  - Coordinate commands (1D, 2M, ...) work on any step status — the WCC")
+        print("    will tell you to use 'force' if the step has already completed.")
+        print("  - 'auto' queues every READY step across all projects; combine with the")
+        print("    storage-aware concurrency cap to leave a long run going overnight.")
+        print("  - Run 1mv before deleting any .lds — the .ldf.verified sidecar is the")
+        print("    gate that proves the .ldf is a complete lossless compression.")
+        print("  - 'stage 1' is non-destructive (move, not delete). Reverse with 'unstage 1';")
+        print("    only rm -rf the .intermediate/ subfolder once you're satisfied.")
+
         input("\nPress Enter to return to control centre...")
 
 def simple_workflow_interface():
