@@ -84,8 +84,7 @@ benchmarks/
 
 # AI tool configurations
 CLAUDE.md
-.claude/*
-!.claude/skills/
+.claude/
 .cursor/
 .aider*
 .copilot/
