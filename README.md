@@ -21,6 +21,12 @@ Headline capabilities:
 - **Live, exact progress** computed from kernel-side byte counters (Linux `/proc`, macOS `libproc`), not estimated from compression ratios.
 - **Domesday Duplicator audio sync** — the original feature: synchronised capture with Clockgen Lite, automatic offset measurement, and VCR speed compensation. CLI control of the DdD software (added as part of this project) makes the synchronisation possible at all.
 
+## Built for bulk archival
+
+If you have a wall of VHS tapes to digitise, the toolkit replaces the manual command-line dance — *which decode flags does this tape need, has the export finished yet, which files do I keep, which do I delete* — with a single coordinated batch system. Set per-project flags once, queue everything, walk away. Far fewer keystrokes, and dramatically fewer ways to slip up at three in the morning on tape number forty.
+
+It runs entirely in a terminal (no X server, no desktop required), so a dedicated headless Linux box can chew through tapes overnight while you're not in the room. A purpose-built Linux distribution tuned for VHS capture and pipeline processing is in early development.
+
 ## Quick install
 
 ```bash
