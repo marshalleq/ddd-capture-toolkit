@@ -128,6 +128,22 @@ class WorkflowControlCentre:
         # Adaptive refresh settings
         self.base_refresh_interval = 10.0  # Base refresh interval in seconds
         self.active_refresh_interval = 3.0  # Faster refresh when jobs are active
+
+        # Resource-panel cache (see create_system_resource_panel) — the
+        # panel is rebuilt at 2 Hz, not on every render tick, because
+        # psutil sampling + nvidia-smi were dominating the render budget.
+        self._resource_panel_cache = None
+        self._resource_panel_cache_time = 0.0
+
+        # Prime psutil.cpu_percent so the first non-blocking sample
+        # (called from _build_system_resource_panel) returns a meaningful
+        # number rather than 0.0. interval=None is non-blocking; this
+        # call seeds psutil's internal "previous CPU times" snapshot.
+        try:
+            import psutil
+            psutil.cpu_percent(interval=None)
+        except ImportError:
+            pass
         self.last_refresh_time = 0
         
         # Get all processing locations from config.json and capture directory
@@ -561,7 +577,27 @@ class WorkflowControlCentre:
         return Panel(status_content, title="System Status", border_style="blue")
     
     def create_system_resource_panel(self):
-        """Create system resource monitoring panel"""
+        """Create the system-resource Panel.
+
+        Cached at 500 ms TTL so the 30 Hz render loop doesn't rebuild this
+        panel — and re-sample the CPU — on every tick. The previous code
+        called ``psutil.cpu_percent(interval=0.1)`` which *blocks for 100 ms*
+        per call, which made the panel single-handedly responsible for
+        ~100 ms of latency per render (exceeding the 33 ms tick budget).
+        """
+        now = time.time()
+        cached = getattr(self, '_resource_panel_cache', None)
+        cached_at = getattr(self, '_resource_panel_cache_time', 0.0)
+        if cached is not None and (now - cached_at) < 0.5:
+            return cached
+        panel = self._build_system_resource_panel()
+        self._resource_panel_cache = panel
+        self._resource_panel_cache_time = now
+        return panel
+
+    def _build_system_resource_panel(self):
+        """Actually build the resource Panel. Called via the 500 ms cache
+        in ``create_system_resource_panel``."""
         from rich.text import Text
         from rich.table import Table
 
@@ -572,8 +608,13 @@ class WorkflowControlCentre:
             resource_table.add_column("Resource", style="bold", width=5)
             resource_table.add_column("Usage", width=12)
 
-            # CPU usage
-            cpu_percent = psutil.cpu_percent(interval=0.1)
+            # CPU usage — non-blocking. psutil.cpu_percent(interval=None)
+            # returns the percentage *since the last call*. The first call
+            # in the process returns 0.0; subsequent calls give an
+            # accurate reading over the interval between calls. The
+            # WCC primes psutil in __init__ so the first real render
+            # returns a meaningful number rather than 0.
+            cpu_percent = psutil.cpu_percent(interval=None)
             cpu_bar = self._create_resource_bar(cpu_percent, width=8)
             resource_table.add_row("CPU:", f"{cpu_bar} {cpu_percent:.0f}%")
 
@@ -589,8 +630,8 @@ class WorkflowControlCentre:
             resource_table.add_row("Disk:", f"{disk_bar} {disk_percent:.0f}%")
 
             # GPU + VRAM (NVIDIA only — silently skipped if nvidia-smi
-            # isn't available; cached at 0.5 s TTL so the 4 Hz UI refresh
-            # doesn't translate into 4 subprocesses per second).
+            # isn't available; cached at 0.5 s TTL so even an uncached
+            # panel rebuild doesn't translate into a subprocess call).
             gpu_pct, vram_pct = self._get_gpu_utilization()
             if gpu_pct is not None:
                 gpu_bar = self._create_resource_bar(gpu_pct, width=8)
