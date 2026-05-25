@@ -121,8 +121,10 @@ class ProjectStatusDisplay:
             
             for step in steps:
                 step_status = workflow_status.steps.get(step, StepStatus.MISSING)
-                display_text = self.analyzer.get_step_display_status(step_status, project, step)
-                
+                display_text = self.analyzer.get_step_display_status(
+                    step_status, project, step, project_num=project_num,
+                )
+
                 # Apply color if enabled
                 if self.config.color_enabled and self.console:
                     color = self.status_colors.get(step_status.value, 'white')
@@ -144,15 +146,20 @@ class ProjectStatusDisplay:
 
         return table
 
-    def create_enhanced_status_cell(self, project: Project, step: WorkflowStep, step_status: StepStatus) -> Text:
+    def create_enhanced_status_cell(self, project: Project, step: WorkflowStep,
+                                    step_status: StepStatus,
+                                    project_num: int = None) -> Text:
         """
         Create enhanced status cell with progress bars for running jobs
-        
+
         Args:
             project: Project instance
             step: Workflow step
             step_status: Current status of the step
-            
+            project_num: 1-indexed row number for the project in the matrix,
+                threaded through so labels like "Needs 2mv" can name the
+                exact command for this row.
+
         Returns:
             Rich Text object with enhanced status display
         """
@@ -163,18 +170,20 @@ class ProjectStatusDisplay:
             self._debug_log(f"Enhanced cell for {project.name} step {step.value}: status={step_status}, job_manager={self.analyzer.job_manager is not None}")
         
         # First check: terminal/no-progress states render as plain text.
-        # COMPLETE plus the hash-related terminal states (VALIDATED/TOUCHED/
-        # CHANGED/INVALID) all use the simple text path — there's no progress
-        # bar to show for them. HASHING uses simple text too, but the display
-        # string flashes via the 1Hz alternation in get_step_display_status,
-        # picked up by the 4Hz UI refresh.
+        # COMPLETE plus the hash-related terminal states (VALIDATED/HASHED/
+        # TOUCHED/CHANGED/INVALID) all use the simple text path — there's no
+        # progress bar to show for them. HASHING uses simple text too, but
+        # the display string flashes via the 1Hz alternation in
+        # get_step_display_status, picked up by the UI refresh.
         terminal_states = (StepStatus.COMPLETE, StepStatus.VALIDATED,
-                           StepStatus.TOUCHED, StepStatus.CHANGED,
-                           StepStatus.INVALID, StepStatus.HASHING)
+                           StepStatus.HASHED, StepStatus.TOUCHED,
+                           StepStatus.CHANGED, StepStatus.INVALID,
+                           StepStatus.HASHING)
         if step_status in terminal_states:
             if debug_enabled:
                 self._debug_log(f"Step {step.value} for {project.name} status={step_status.value} - simple text")
-            return self._create_simple_status_text(step_status, project, step)
+            return self._create_simple_status_text(step_status, project, step,
+                                                    project_num=project_num)
         
         # Second check: Show progress for in-flight states. PROCESSING/QUEUED
         # source from the job queue; VERIFYING (Nmv ldf round-trip) sources
@@ -305,11 +314,14 @@ class ProjectStatusDisplay:
 
         
         # Return simple status for non-processing states or when no progress data available
-        return self._create_simple_status_text(step_status, project, step)
-    
-    def _create_simple_status_text(self, step_status: StepStatus, project: Project, step: WorkflowStep) -> Text:
+        return self._create_simple_status_text(step_status, project, step,
+                                                project_num=project_num)
+
+    def _create_simple_status_text(self, step_status: StepStatus, project: Project,
+                                    step: WorkflowStep, project_num: int = None) -> Text:
         """Create simple status text with color"""
-        display_text = self.analyzer.get_step_display_status(step_status, project, step)
+        display_text = self.analyzer.get_step_display_status(step_status, project, step,
+                                                              project_num=project_num)
         
         # Apply color if enabled
         if self.config.color_enabled:
@@ -364,7 +376,9 @@ class ProjectStatusDisplay:
                 step_status = workflow_status.steps.get(step, StepStatus.MISSING)
 
                 # Use enhanced status cell for better progress display
-                enhanced_cell = self.create_enhanced_status_cell(project, step, step_status)
+                enhanced_cell = self.create_enhanced_status_cell(
+                    project, step, step_status, project_num=project_num,
+                )
                 row_data.append(enhanced_cell)
 
             # Add flags column
@@ -595,7 +609,9 @@ class ProjectStatusDisplay:
 
             for step in steps:
                 step_status = workflow_status.steps.get(step, StepStatus.MISSING)
-                display_text = self.analyzer.get_step_display_status(step_status, project, step)
+                display_text = self.analyzer.get_step_display_status(
+                    step_status, project, step, project_num=project_num,
+                )
                 row.append(display_text[:10])  # Truncate if needed
 
             # Add flags status

@@ -34,7 +34,8 @@ class StepStatus(Enum):
     MISSING = "missing"            # Prerequisites not satisfied
     # Hash / validation states
     HASHING = "hashing"            # A checksum job is currently running for this step's outputs
-    VALIDATED = "validated"        # Step complete AND hash recorded AND file size+mtime unchanged
+    HASHED = "hashed"              # Hash recorded AND current — but in the COMPRESS column, no .ldf.validated sidecar (Tier 3 hasn't passed; .lds is NOT yet safe to delete)
+    VALIDATED = "validated"        # Hash recorded AND current. In COMPRESS specifically, this *also* requires the .ldf.validated sidecar to exist (Tier 3 passed; .lds safe to delete). Other columns: hash-current is enough.
     TOUCHED = "touched"            # Hash recorded; size matches but mtime differs — almost certainly fine, run a re-check to self-heal
     CHANGED = "changed"            # Hash recorded; size differs — content has definitely changed
     INVALID = "invalid"            # Explicit re-check revealed a hash mismatch — file may be corrupt
@@ -71,7 +72,8 @@ class WorkflowAnalyzer:
         'missing': 'bright_black',
         # Hash / validation states
         'hashing': 'bright_cyan',       # rendered with flash by the matrix view
-        'validated': 'bright_green',    # subtly brighter than 'complete'
+        'hashed': 'green',              # hash recorded; no Tier 3 sidecar (compress col only — .lds NOT yet safe to delete)
+        'validated': 'bright_green',    # hash current; in compress, ALSO requires .ldf.validated sidecar (.lds safe to delete)
         'touched': 'yellow',            # mtime changed but size matches — probably benign
         'changed': 'orange3',           # size differs from log — content definitely different
         'invalid': 'bold red',          # explicit re-check revealed mismatch
@@ -89,7 +91,8 @@ class WorkflowAnalyzer:
         'queued': 'Waiting in job queue',
         'missing': 'Prerequisites not satisfied',
         'hashing': 'Checksum job running for this step\'s outputs',
-        'validated': 'Step complete and hash matches recorded value (file unchanged since hash)',
+        'hashed': 'COMPRESS only — Tier 3 has not yet passed for this .ldf (no .ldf.validated sidecar). Run 1mv. The .lds is NOT yet safe to delete. Displayed as "Needs 1mv".',
+        'validated': 'COMPRESS column: .ldf.validated sidecar exists AND hash is current — the .lds is safe to delete. Other columns: hash is current (no Tier-3 gate applies elsewhere).',
         'touched': 'Size matches the recorded hash but mtime differs — run check N to confirm and self-heal',
         'changed': 'Size differs from the recorded hash — content has changed; investigate',
         'invalid': 'Re-check revealed a hash mismatch — file may be corrupt',
@@ -224,6 +227,15 @@ class WorkflowAnalyzer:
             if hash_state == 'touched':
                 return StepStatus.TOUCHED
             if hash_state == 'validated':
+                # Special case for COMPRESS: hash-current alone does NOT
+                # mean "safe to delete the .lds" — the user-facing gate
+                # for that is the .ldf.validated sidecar written only by
+                # a Tier 3 PASS. Without that sidecar the cell shows
+                # HASHED (intentionally distinct from VALIDATED) so the
+                # operator can tell at a glance which projects still
+                # need 1mv before the .lds can be reclaimed.
+                if step == WorkflowStep.COMPRESS and not self._has_compress_validated_sidecar(project):
+                    return StepStatus.HASHED
                 return StepStatus.VALIDATED
             # 'no-hash' or 'mixed' falls through to plain COMPLETE
             return StepStatus.COMPLETE
@@ -235,6 +247,28 @@ class WorkflowAnalyzer:
         # 6. Default: missing prerequisites
         return StepStatus.MISSING
     
+    def _has_compress_validated_sidecar(self, project: Project) -> bool:
+        """Return True if the project's .ldf has the .ldf.validated sidecar
+        next to it. This sidecar is written only by a Tier 3 PASS (manual
+        1mv, or auto via the auto_tier3_validate flag) and is the gate the
+        toolkit treats as authoritative for "the .lds may be safely deleted."
+        Absence of the sidecar means Tier 3 has not passed for this .ldf
+        regardless of any hash record.
+        """
+        # Find the .ldf path the same way other compress-step machinery does.
+        ldf_path = None
+        if hasattr(project, 'output_files') and 'compress' in project.output_files:
+            ldf_path = project.output_files['compress']
+        elif hasattr(project, 'capture_files') and 'video' in project.capture_files:
+            cap = project.capture_files['video']
+            if cap.endswith('.ldf'):
+                ldf_path = cap
+            elif cap.endswith('.lds'):
+                ldf_path = cap[:-4] + '.ldf'
+        if not ldf_path:
+            return False
+        return os.path.isfile(ldf_path + '.validated')
+
     def _is_compress_validate_running(self, project: Project) -> bool:
         """Check whether a Tier 2 ('compress-validate') OR Tier 3
         ('compress-validate-tier3') job is currently RUNNING in the queue
@@ -738,27 +772,46 @@ class WorkflowAnalyzer:
                 return True
         return False
     
-    def get_step_display_status(self, step_status: StepStatus, project: Project = None, step: WorkflowStep = None) -> str:
+    def get_step_display_status(self, step_status: StepStatus, project: Project = None,
+                                step: WorkflowStep = None, project_num: int = None) -> str:
         """
         Get display string for step status
-        
+
         Args:
             step_status: Status to display
             project: Optional project for context
             step: Optional step for context
-            
+            project_num: Optional 1-indexed row number for this project in
+                the matrix. Used to build action-clear labels like
+                "Needs 2mv" that name the exact command for that row.
+
         Returns:
             Display string for status
         """
         # Handle special cases
-        if (step_status == StepStatus.COMPLETE and step == WorkflowStep.ALIGN and 
+        if (step_status == StepStatus.COMPLETE and step == WorkflowStep.ALIGN and
             project and 'audio' not in project.capture_files):
             return "N/A"  # No audio to align
-            
-        if (step_status == StepStatus.COMPLETE and step == WorkflowStep.FINAL and 
+
+        if (step_status == StepStatus.COMPLETE and step == WorkflowStep.FINAL and
             project and 'audio' not in project.capture_files):
             return "Video Only"  # Final output is video-only
-            
+
+        # COMPRESS column special-case: when the .ldf is on disk but the
+        # .ldf.validated sidecar isn't there yet, render an action-clear
+        # label ("Needs Nmv") instead of the abstract COMPLETE / HASHED
+        # internal-state names. The user's action is the same in both
+        # cases (run Nmv to get the Tier 3 gate), so collapsing them
+        # behind one label removes the previous "what does Hashed mean
+        # if the sidecar is missing?" confusion. The label inlines the
+        # row's project number so the user can read the command directly
+        # off the cell — no mental "which row is this?" step.
+        if step == WorkflowStep.COMPRESS and step_status in (StepStatus.HASHED,
+                                                              StepStatus.COMPLETE):
+            if project_num is not None:
+                return f"Needs {project_num}mv"
+            return "Validate"
+
         # Hashing is rendered with a 1 Hz flash so the user sees that the
         # validation work is actively running. The flash uses the wall-clock
         # second-bit to alternate between two display states; the calling
@@ -777,6 +830,7 @@ class WorkflowAnalyzer:
             StepStatus.QUEUED: "Queued",
             StepStatus.MISSING: "Missing",
             StepStatus.VALIDATED: "Validated",
+            StepStatus.HASHED: "Hashed",      # only seen if COMPRESS special-case above doesn't fire
             StepStatus.TOUCHED: "Touched",
             StepStatus.CHANGED: "Changed",
             StepStatus.INVALID: "INVALID",
