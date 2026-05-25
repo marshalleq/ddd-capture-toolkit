@@ -1132,8 +1132,9 @@ class WorkflowControlCentre:
                 else:
                     self.message = f"Job manager not available - cannot retry {step_name}"
             elif step_status in (StepStatus.COMPLETE, StepStatus.VALIDATED,
-                                  StepStatus.TOUCHED, StepStatus.CHANGED,
-                                  StepStatus.INVALID, StepStatus.HASHING):
+                                  StepStatus.HASHED, StepStatus.TOUCHED,
+                                  StepStatus.CHANGED, StepStatus.INVALID,
+                                  StepStatus.HASHING):
                 # Step has finished (one way or another). Don't auto-restart;
                 # require 'force' to overwrite.
                 output_exists = self._check_step_output_exists(project, workflow_step)
