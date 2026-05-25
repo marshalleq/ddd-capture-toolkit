@@ -832,8 +832,12 @@ class WorkflowControlCentre:
         compress_validate_match = re.match(r'^(\d+)mv$', cmd)
         # 'hash N' / 'check N' — checksum operations on a whole project.
         # 'verify N' is accepted as a backwards-compatible alias for 'check N'.
+        # 'check N --all' (or 'check N all') forces a full re-hash; the default
+        # narrows to files that actually need re-checking (touched / changed /
+        # invalid), since hashing every file when the cheap state check already
+        # says everything is VALIDATED is wasted I/O.
         hash_match = re.match(r'^hash\s+(\d+)$', cmd)
-        check_match = re.match(r'^(?:check|verify)\s+(\d+)$', cmd)
+        check_match = re.match(r'^(?:check|verify)\s+(\d+)(\s+(?:--all|all))?$', cmd)
         # 'stage N' / 'unstage N' — archive staging (move intermediates into
         # <basename>.intermediate/ subfolder, or restore them).
         stage_match = re.match(r'^stage\s+(\d+)$', cmd)
@@ -857,7 +861,9 @@ class WorkflowControlCentre:
         elif hash_match:
             self.handle_hash_project(int(hash_match.group(1)))
         elif check_match:
-            self.handle_check_project(int(check_match.group(1)))
+            project_num = int(check_match.group(1))
+            check_all = check_match.group(2) is not None
+            self.handle_check_project(project_num, check_all=check_all)
         elif stage_match:
             self.handle_stage_project(int(stage_match.group(1)))
         elif unstage_match:
@@ -2599,11 +2605,20 @@ class WorkflowControlCentre:
                 f"Use 'check {project_num}' to re-check them."
             )
 
-    def handle_check_project(self, project_num):
-        """Queue a check-mode checksum job: re-hashes all tracked files and
-        compares against recorded hashes in the log. Matches refresh the
-        recorded identity (clearing any TOUCHED state). Mismatches are logged
-        and surface as INVALID in the WCC matrix.
+    def handle_check_project(self, project_num, check_all=False):
+        """Queue a check-mode checksum job: re-hashes tracked files and
+        compares against recorded hashes in the log.
+
+        By default only files whose cached state is touched / changed / invalid
+        are re-hashed — files already in VALIDATED state are skipped, because
+        the cheap size+mtime check already confirms they haven't been disturbed
+        and re-hashing them would waste minutes-to-hours of I/O on a large
+        project. Pass check_all=True ('check N --all') to force a full re-hash
+        of every tracked file regardless of state — useful for an annual
+        archive integrity sweep or before a big move.
+
+        Matches refresh the recorded identity (clearing any TOUCHED state).
+        Mismatches are logged and surface as INVALID in the WCC matrix.
         """
         project_idx = project_num - 1
         if project_idx >= len(self.current_projects):
@@ -2612,6 +2627,12 @@ class WorkflowControlCentre:
         project = self.current_projects[project_idx]
         if not self.job_manager:
             self.message = "Job manager not available"
+            return
+
+        try:
+            import validation_log
+        except ImportError as e:
+            self.message = f"validation_log not available: {e}"
             return
 
         files_by_step = self._project_tracked_files(project)
@@ -2628,13 +2649,38 @@ class WorkflowControlCentre:
             self.message = f"No files to check for {project.name}"
             return
 
+        if check_all:
+            files_to_check = all_files
+            scope_desc = f"all {len(all_files)} tracked file(s)"
+        else:
+            # Narrow to files that the cheap state check says actually need
+            # re-checking. Files in VALIDATED or NO-HASH state are skipped:
+            # VALIDATED is already confirmed (re-hashing adds no info);
+            # NO-HASH is the 'hash N' command's territory, not check.
+            needs_check_states = ('touched', 'changed', 'invalid')
+            files_to_check = [
+                p for p in all_files
+                if validation_log.file_state(p) in needs_check_states
+            ]
+            if not files_to_check:
+                self.message = (
+                    f"Nothing to re-check for {project.name}: every tracked "
+                    f"file is already VALIDATED. Use 'check {project_num} --all' "
+                    f"to force a full re-hash anyway."
+                )
+                return
+            scope_desc = (
+                f"{len(files_to_check)} of {len(all_files)} tracked file(s) "
+                f"(only the touched / changed / invalid ones)"
+            )
+
         try:
             job_id = self.job_manager.add_job_nonblocking(
                 job_type='checksum',
-                input_file=all_files[0],
-                output_file=all_files[0],
+                input_file=files_to_check[0],
+                output_file=files_to_check[0],
                 parameters={
-                    'files': all_files, 'mode': 'check', 'step': 'check',
+                    'files': files_to_check, 'mode': 'check', 'step': 'check',
                 },
                 priority=4,
                 project_name=project.name,
@@ -2643,9 +2689,9 @@ class WorkflowControlCentre:
             if job_id:
                 self.message = (
                     f"✓ Queued check job for {project.name}: re-hashing "
-                    f"{len(all_files)} file(s). Result will appear in "
-                    f"the validation log; INVALID rows will appear in the "
-                    f"matrix if any hash mismatches are found."
+                    f"{scope_desc}. Result will appear in the validation "
+                    f"log; matches refresh the recorded identity (clearing "
+                    f"TOUCHED), mismatches flip cells to INVALID."
                 )
             else:
                 self.message = f"Failed to queue check job for {project.name}"
@@ -3307,10 +3353,13 @@ class WorkflowControlCentre:
         print("  hash 1        Hash any of project 1's tracked files that don't yet")
         print("                have a recorded hash in <basename>_validation.log. Also")
         print("                writes a portable <file>.sha256 next to each hashed file.")
-        print("  check 1       Re-hash project 1's tracked files and compare against the")
-        print("                log. Matches refresh the recorded identity (clears TOUCHED);")
-        print("                mismatches flip matrix cells to INVALID. ('verify 1' is")
-        print("                accepted as a backwards-compatible alias.)")
+        print("  check 1       Re-hash project 1's TOUCHED / CHANGED / INVALID files and")
+        print("                compare against the log. Skips files already VALIDATED so the")
+        print("                check stays fast even on big projects. Matches refresh the")
+        print("                recorded identity (clearing TOUCHED); mismatches flip matrix")
+        print("                cells to INVALID. ('verify 1' is a backwards-compatible alias.)")
+        print("  check 1 --all Force a full re-hash of every tracked file, including ones")
+        print("                already VALIDATED. Use for a thorough integrity sweep.")
         print("  stage 1       Move project 1's intermediate files (.lds, .tbc, *_chroma.tbc,")
         print("                .tbc.json, decode .log, _ffv1.mkv, _aligned.flac, watchdog log)")
         print("                into a <basename>.intermediate/ subfolder. Matrix row flips to")
