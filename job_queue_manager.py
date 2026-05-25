@@ -156,6 +156,14 @@ class JobQueueManager:
         self.lock = threading.Lock()
         self.stop_processing = False
         self.processor_thread = None
+
+        # Optional back-reference to the WorkflowAnalyzer (set by the WCC
+        # via attach_analyzer). The auto-Tier-3 executor uses this to
+        # populate analyzer.ldf_validation_in_progress with phase info so
+        # the matrix cell can switch label/colour between decode (VFY)
+        # and originals-hash (HASH) phases — same visible signal the
+        # manual 1mv path produces.
+        self.analyzer = None
         
         # Ensure config directory exists
         os.makedirs(os.path.dirname(queue_file), exist_ok=True)
@@ -3168,6 +3176,31 @@ class JobQueueManager:
         expected_bytes = lds_size * 4 // 5 * 2
         basename = os.path.basename(ldf_path)
 
+        project_name = job.project_name
+
+        def _set_analyzer_phase(phase, pct, rate_bps, runtime):
+            """Drive the analyzer's ldf_validation_in_progress dict so the
+            matrix cell shows the right activity at the right time:
+            phase='decode' → cell shows VFY with bar; phase='hash' →
+            cell flips to HASH (cyan) with bar. Falls through cleanly
+            if no analyzer is attached.
+            """
+            if self.analyzer is None or not project_name:
+                return
+            self.analyzer.ldf_validation_in_progress[project_name] = {
+                'phase': phase,
+                'percentage': pct,
+                'fps': rate_bps,
+                'rate_unit_label': 'MB/s',
+                'runtime_seconds': runtime,
+            }
+
+        def _clear_analyzer_phase():
+            """Remove this project's entry from the in-progress dict so
+            the cell reverts to its post-Tier-3 state. Idempotent."""
+            if self.analyzer is not None and project_name:
+                self.analyzer.ldf_validation_in_progress.pop(project_name, None)
+
         with self.lock:
             job.progress = 0.0
             job.current_frame = 0
@@ -3175,6 +3208,7 @@ class JobQueueManager:
             job.current_fps = 0.0
             job.status_message = "Tier 3 sample-count validation (streaming .ldf)…"
             self._save_queue_async()
+        _set_analyzer_phase('decode', 0.0, 0.0, 0.0)
 
         start = _t.time()
         proc = subprocess.Popen(
@@ -3204,6 +3238,7 @@ class JobQueueManager:
                         job.status_message = (
                             f"Tier 3 validating ({rate_bps / 1e6:.0f} MB/s)"
                         )
+                    _set_analyzer_phase('decode', min(pct, 100.0), rate_bps, elapsed)
             proc.wait()
         finally:
             try:
@@ -3224,16 +3259,41 @@ class JobQueueManager:
             detail = (f"decoded {total:_} bytes, expected {expected_bytes:_} "
                       f"({ratio*100:.2f}%)")
 
-        # Compute SHA-256 of the capture originals for the Tier 3 log entry.
-        # Same call the manual 1mv path makes; takes a couple of extra minutes
-        # but produces the definitive "I trust this archive at time X" record.
+        # Phase 2: hash the capture originals. Same logic as the manual 1mv
+        # path — the cell flips from VFY (decode) to HASH (hashing) for the
+        # duration, with its own 0–100% progress sourced from the byte
+        # callback below.
         try:
             with self.lock:
                 job.status_message = (
                     "Tier 3 decode done — hashing capture originals for the log…"
                 )
+            _set_analyzer_phase('hash', 0.0, 0.0, 0.0)
+            hash_phase_start = _t.time()
+            hash_last_update = [0.0]
+
+            def hash_progress_cb(bytes_done, bytes_total, current_role):
+                now = _t.time()
+                if now - hash_last_update[0] < 1.0:
+                    return
+                hash_last_update[0] = now
+                pct = (bytes_done / bytes_total * 100) if bytes_total else 0
+                hash_elapsed = now - hash_phase_start
+                rate_bps = bytes_done / hash_elapsed if hash_elapsed > 0 else 0
+                with self.lock:
+                    job.current_frame = bytes_done
+                    job.total_frames = bytes_total
+                    job.progress = min(pct, 100.0)
+                    job.current_fps = rate_bps
+                    job.status_message = (
+                        f"Tier 3 hashing .{current_role} "
+                        f"({rate_bps / 1e6:.0f} MB/s)"
+                    )
+                _set_analyzer_phase('hash', min(pct, 100.0), rate_bps, hash_elapsed)
+
             file_hashes = validation_log.hash_capture_originals(
                 ldf_path, skip_lds_hash=False,
+                byte_progress_callback=hash_progress_cb,
             )
         except Exception as h_err:
             self.logger.warning(f"Tier 3: hash_capture_originals failed: {h_err}")
@@ -3269,6 +3329,12 @@ class JobQueueManager:
                 validation_log.remove_validated_sidecar(ldf_path)
         except Exception as sc_err:
             self.logger.warning(f"Tier 3: sidecar write/remove failed: {sc_err}")
+
+        # Clear the matrix-cell phase entry now that all phases are done.
+        # The cell will revert to its post-Tier-3 state (VALIDATED if the
+        # sidecar landed, otherwise whatever the underlying status resolves
+        # to) on the next render tick.
+        _clear_analyzer_phase()
 
         if not passed:
             job.error_message = (
@@ -3597,6 +3663,18 @@ class JobQueueManager:
             return bool(compress_flags.get('flac_integrity_check', True))
         except Exception:
             return True
+
+    def attach_analyzer(self, analyzer) -> None:
+        """Wire a WorkflowAnalyzer reference into the queue manager.
+
+        Used by executors that need to drive matrix-cell state directly
+        (currently: the auto-Tier-3 executor, which sets phase='decode'
+        and phase='hash' so the cell renders the right activity at each
+        point in time). Optional: if the analyzer isn't attached, the
+        executor degrades gracefully (cell falls back to job-progress
+        rendering with no phase info).
+        """
+        self.analyzer = analyzer
 
     def _compress_auto_tier3_enabled(self, project_name: str) -> bool:
         """Return True if Tier 3 should auto-run after this project's compress.

@@ -171,39 +171,44 @@ class ProjectStatusDisplay:
         
         # First check: terminal/no-progress states render as plain text.
         # COMPLETE plus the hash-related terminal states (VALIDATED/HASHED/
-        # TOUCHED/CHANGED/INVALID) all use the simple text path — there's no
-        # progress bar to show for them. HASHING uses simple text too, but
-        # the display string flashes via the 1Hz alternation in
-        # get_step_display_status, picked up by the UI refresh.
+        # TOUCHED/CHANGED/INVALID) all use the simple text path — there's
+        # no progress bar to show for them. HASHING used to live here too
+        # (rendered as a flashing "Hashing…" label) but has been moved
+        # to the progress-bar path below so the user can see actual
+        # progress during the (potentially-multi-minute) hashing of large
+        # files — same visible signal regardless of who triggered the
+        # hash (auto-checksum after a pipeline step, manual hash/check N,
+        # or Tier 3's post-decode originals-hash phase).
         terminal_states = (StepStatus.COMPLETE, StepStatus.VALIDATED,
                            StepStatus.HASHED, StepStatus.TOUCHED,
-                           StepStatus.CHANGED, StepStatus.INVALID,
-                           StepStatus.HASHING)
+                           StepStatus.CHANGED, StepStatus.INVALID)
         if step_status in terminal_states:
             if debug_enabled:
                 self._debug_log(f"Step {step.value} for {project.name} status={step_status.value} - simple text")
             return self._create_simple_status_text(step_status, project, step,
                                                     project_num=project_num)
-        
-        # Second check: Show progress for in-flight states. PROCESSING/QUEUED
-        # source from the job queue; VERIFYING (Nmv ldf round-trip) sources
-        # from the analyzer's ldf_validation_in_progress dict, which the WCC
-        # validation worker updates every ~2 s with the same key shape the
-        # queue extractor produces.
-        progress_states = (StepStatus.PROCESSING, StepStatus.QUEUED, StepStatus.VERIFYING)
+
+        # Second check: Show progress for in-flight states.
+        #   PROCESSING / QUEUED  → source from the job queue.
+        #   VERIFYING            → Nmv ldf round-trip (decode phase). Sources:
+        #     1. analyzer.ldf_validation_in_progress dict (manual 1mv worker)
+        #     2. 'compress-validate' job in the queue (post-compress Tier 2)
+        #     3. 'compress-validate-tier3' job in the queue (auto-Tier-3).
+        #   HASHING              → any hashing operation in flight. Sources:
+        #     1. analyzer.ldf_validation_in_progress dict when phase='hash'
+        #        (1mv's post-decode originals-hash counts as hashing,
+        #        even though the trigger was a Tier 3 validation — the
+        #        user sees it as a standalone hashing operation, same
+        #        visible signal as any other hashing in the toolkit).
+        #     2. a 'checksum' job in the queue (auto-checksum after a
+        #        successful pipeline step, or manual `hash N` / `check N`).
+        progress_states = (StepStatus.PROCESSING, StepStatus.QUEUED,
+                           StepStatus.VERIFYING, StepStatus.HASHING)
         if step_status in progress_states:
             progress_info = None
 
             if step_status == StepStatus.VERIFYING:
-                # Three possible sources of in-flight validation progress:
-                #   1. The analyzer's dict (populated by Nmv, in-process).
-                #   2. A 'compress-validate' job in the queue (post-compress
-                #      Tier 2).
-                #   3. A 'compress-validate-tier3' job in the queue
-                #      (auto-Tier-3 after compress, when auto_tier3_validate
-                #      is on for the project).
-                # The matrix's VERIFYING detection already accepts any of
-                # these; here we read whichever has data.
+                # Three sources, checked in order.
                 progress_info = self.analyzer.ldf_validation_in_progress.get(project.name)
                 if progress_info is None and self.analyzer.job_manager:
                     for job_type in ('compress-validate', 'compress-validate-tier3'):
@@ -217,6 +222,23 @@ class ProjectStatusDisplay:
                             if debug_enabled:
                                 self._debug_log(f"{job_type} progress extract failed: {e}")
                             progress_info = None
+
+            elif step_status == StepStatus.HASHING:
+                # Prefer the analyzer dict when it's in the hash phase
+                # (1mv's post-decode originals hashing). Otherwise fall
+                # through to a 'checksum' job in the queue.
+                an_dict = self.analyzer.ldf_validation_in_progress.get(project.name)
+                if an_dict is not None and an_dict.get('phase') == 'hash':
+                    progress_info = an_dict
+                if progress_info is None and self.analyzer.job_manager:
+                    try:
+                        from shared.progress_display_utils import extract_specific_job_progress_info
+                        progress_info = extract_specific_job_progress_info(
+                            self.analyzer.job_manager, project.name, 'checksum')
+                    except Exception as e:
+                        if debug_enabled:
+                            self._debug_log(f"checksum progress extract failed: {e}")
+                        progress_info = None
                 if debug_enabled:
                     self._debug_log(f"VERIFYING progress for {project.name}: {progress_info}")
             elif self.analyzer.job_manager:
