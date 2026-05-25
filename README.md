@@ -1,21 +1,24 @@
-# DDD Capture Toolkit
+# DDD Capture Toolkit — An archival workflow for VHS-Decode and Domesday Duplicator
 
-A full VHS-decode workflow control centre — capture, decode, compress, export, validate, archive.
+**Capture, decode, compress, export, validate, archive.** Built for archivists who want to keep the original RF masters of their VHS tapes and prove cryptographically that the compressed copies are true and correct.
 
 ![DDD Capture Toolkit](media/Images/Capture%20Toolkit%20New3.png)
 
-Originally built to solve the audio-sync problem on Domesday Duplicator captures, the toolkit has grown into a general-purpose batch workflow system for the whole VHS-decode pipeline. If you can produce a `.lds` / `.ldf` (with or without DdD hardware), it queues, prioritises, validates and archives the rest of the work for you.
+The toolkit grew out of a fix for the Domesday Duplicator (DdD) audio-sync problem and has since become a general-purpose batch workflow system for the entire **VHS-Decode** pipeline. If you can produce a `.lds` or `.ldf` (with or without DdD hardware), it queues, prioritises, validates and archives the rest of the work for you — decode (vhs-decode), compress (FLAC-in-LDF), export to FFV1, audio align, final mux.
+
+The validation pipeline is the heart of it. A three-tier compress check (always-on structural check, optional end-to-end FLAC integrity, manual full sample-count round-trip against the source `.lds`), plus per-file SHA-256 logging, means you can safely delete raw `.lds` masters once their `.ldf` has been proven a complete lossless compression. No more "is this archive copy actually intact?" anxiety.
 
 > **For full information on any topic below, see the [project wiki](https://github.com/marshalleq/ddd-capture-toolkit/wiki).** This README is a quick overview only.
 
 Headline capabilities:
 
-- **Batch and auto-queuing** of pipeline jobs with hardware-aware concurrency.
-- **CPU-aware scheduling** — concurrent decodes are pinned to disjoint L3 cache groups (CCDs on AMD, P/E clusters on Intel) so they don't fight for cache. Other CPU-heavy jobs are dynamically kept off the decode cores.
-- **Three-tier compress validation** with a `.ldf.verified` sidecar gate before you delete original `.lds` masters.
-- **Automatic content hashing** to a per-project `_validation.log`; the matrix surfaces `HASHING` / `VALIDATED` / `STALE` / `INVALID` per step.
+- **Three-tier compress validation** — structural seek check, end-to-end FLAC integrity, and a sample-count round-trip against the source `.lds`. On PASS, writes a `.ldf.verified` sidecar — the gate before you delete an original RF master.
+- **Automatic content hashing** to a per-project `_validation.log`; the matrix surfaces `HASHING` / `VALIDATED` / `STALE` / `INVALID` per step so file changes are spotted immediately, not weeks later.
+- **Non-destructive archive staging** — one command (`stage N`) moves intermediate files (`.tbc`, `_ffv1.mkv`, etc.) into a subfolder, leaving only the archive set (`.ldf`, `.ldf.verified`, `.flac`, `_final.mkv`, validation log) at the top level. Reversible.
+- **Batch and auto-queuing** of pipeline jobs with hardware-aware concurrency. Queue an overnight run, walk away.
+- **CPU-aware scheduling** — concurrent VHS-Decode jobs are pinned to disjoint L3 cache groups (CCDs on AMD, P/E clusters on Intel) so they don't fight for cache. Other CPU-heavy jobs are dynamically kept off the decode cores.
 - **Live, exact progress** computed from kernel-side byte counters (Linux `/proc`, macOS `libproc`), not estimated from compression ratios.
-- **Audio sync** — the original feature: synchronised capture with Clockgen Lite, automatic offset measurement, and VCR speed compensation.
+- **Domesday Duplicator audio sync** — the original feature: synchronised capture with Clockgen Lite, automatic offset measurement, and VCR speed compensation. CLI control of the DdD software (added as part of this project) makes the synchronisation possible at all.
 
 ## Quick install
 
