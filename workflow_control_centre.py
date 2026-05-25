@@ -491,32 +491,43 @@ class WorkflowControlCentre:
         """Create system resource monitoring panel"""
         from rich.text import Text
         from rich.table import Table
-        
+
         try:
             import psutil
-            
+
             resource_table = Table(show_header=False, box=None, padding=(0, 0))
             resource_table.add_column("Resource", style="bold", width=5)
             resource_table.add_column("Usage", width=12)
-            
+
             # CPU usage
             cpu_percent = psutil.cpu_percent(interval=0.1)
             cpu_bar = self._create_resource_bar(cpu_percent, width=8)
             resource_table.add_row("CPU:", f"{cpu_bar} {cpu_percent:.0f}%")
-            
-            # Memory usage  
+
+            # Memory usage
             memory = psutil.virtual_memory()
             memory_bar = self._create_resource_bar(memory.percent, width=8)
             resource_table.add_row("RAM:", f"{memory_bar} {memory.percent:.0f}%")
-            
+
             # Disk usage
             disk = psutil.disk_usage('/')
             disk_percent = (disk.used / disk.total) * 100
             disk_bar = self._create_resource_bar(disk_percent, width=8)
             resource_table.add_row("Disk:", f"{disk_bar} {disk_percent:.0f}%")
-            
+
+            # GPU + VRAM (NVIDIA only — silently skipped if nvidia-smi
+            # isn't available; cached at 0.5 s TTL so the 4 Hz UI refresh
+            # doesn't translate into 4 subprocesses per second).
+            gpu_pct, vram_pct = self._get_gpu_utilization()
+            if gpu_pct is not None:
+                gpu_bar = self._create_resource_bar(gpu_pct, width=8)
+                resource_table.add_row("GPU:", f"{gpu_bar} {gpu_pct:.0f}%")
+            if vram_pct is not None:
+                vram_bar = self._create_resource_bar(vram_pct, width=8)
+                resource_table.add_row("VRAM:", f"{vram_bar} {vram_pct:.0f}%")
+
             return Panel(resource_table, title="Resources", border_style="green")
-            
+
         except ImportError:
             # Fallback when psutil not available
             fallback_content = Text()
@@ -536,6 +547,61 @@ class WorkflowControlCentre:
         filled_chars = int((percentage / 100.0) * width)
         empty_chars = width - filled_chars
         return "█" * filled_chars + "░" * empty_chars
+
+    def _get_gpu_utilization(self):
+        """Return (gpu_percent, vram_percent) for the primary NVIDIA GPU,
+        or (None, None) if nvidia-smi isn't available.
+
+        Cached with a 0.5 s TTL so the WCC's 4 Hz UI refresh doesn't
+        spawn four nvidia-smi subprocesses per second. The availability
+        probe runs once (shutil.which) and is then cached for the
+        session — non-NVIDIA systems pay only that one-time check cost.
+        """
+        import time
+        now = time.time()
+
+        # One-time availability probe
+        if not hasattr(self, '_gpu_available'):
+            try:
+                import shutil
+                self._gpu_available = shutil.which('nvidia-smi') is not None
+            except Exception:
+                self._gpu_available = False
+            self._gpu_cache = (None, None)
+            self._gpu_cache_at = 0.0
+
+        if not self._gpu_available:
+            return (None, None)
+
+        # TTL cache
+        if now - self._gpu_cache_at < 0.5:
+            return self._gpu_cache
+
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['nvidia-smi',
+                 '--query-gpu=utilization.gpu,memory.used,memory.total',
+                 '--format=csv,noheader,nounits'],
+                capture_output=True, text=True, timeout=2.0,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # First line = primary GPU (sufficient for the panel).
+                line = result.stdout.strip().splitlines()[0]
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) >= 3:
+                    gpu_pct = float(parts[0])
+                    mem_used = float(parts[1])
+                    mem_total = float(parts[2])
+                    vram_pct = (mem_used / mem_total) * 100.0 if mem_total > 0 else None
+                    self._gpu_cache = (gpu_pct, vram_pct)
+                    self._gpu_cache_at = now
+                    return self._gpu_cache
+        except Exception:
+            # Subprocess failure (driver hiccup, etc.) — silently return
+            # cached last-known value rather than blanking the row.
+            pass
+        return self._gpu_cache
     
     def create_controls_panel(self):
         """Create controls panel with keyboard shortcuts display.
