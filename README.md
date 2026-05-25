@@ -16,6 +16,7 @@ Headline capabilities:
 - **Automatic content hashing** to a per-project `_validation.log`; the matrix surfaces `HASHING` / `VALIDATED` / `STALE` / `INVALID` per step so file changes are spotted immediately, not weeks later.
 - **Non-destructive archive staging** — one command (`stage N`) moves intermediate files (`.tbc`, `_ffv1.mkv`, etc.) into a subfolder, leaving only the archive set (`.ldf`, `.ldf.verified`, `.flac`, `_final.mkv`, validation log) at the top level. Reversible.
 - **Batch and auto-queuing** of pipeline jobs with hardware-aware concurrency. Queue an overnight run, walk away.
+- **Per-project flags** — decode, export, audio, compress, and segment-test options are configurable independently for each project. Different tapes get different processing — B&W vs colour, wrong field order, sub-deemphasis on noisy sources, faster validation on test runs — without touching global config.
 - **CPU-aware scheduling** — concurrent VHS-Decode jobs are pinned to disjoint L3 cache groups (CCDs on AMD, P/E clusters on Intel) so they don't fight for cache. Other CPU-heavy jobs are dynamically kept off the decode cores.
 - **Live, exact progress** computed from kernel-side byte counters (Linux `/proc`, macOS `libproc`), not estimated from compression ratios.
 - **Domesday Duplicator audio sync** — the original feature: synchronised capture with Clockgen Lite, automatic offset measurement, and VCR speed compensation. CLI control of the DdD software (added as part of this project) makes the synchronisation possible at all.
@@ -43,6 +44,7 @@ Everything beyond the quick install — workflow, individual pipeline steps, tro
 | Install + first-time setup | [Getting Started](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Getting-Started) |
 | What each pipeline step does | [Pipeline Overview](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Pipeline-Overview) |
 | The main interface | [Workflow Control Centre](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Workflow-Control-Centre) |
+| Per-project decode / export / audio / compress / segment flags | [Project Flags](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Project-Flags) |
 | Audio sync (the original use case) | [Audio Synchronisation](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Audio-Synchronisation) |
 | `.lds`-safe compression | [Compress Validation](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Compress-Validation) |
 | Integrity checking | [Checksums and Verification](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Checksums-and-Verification) |
