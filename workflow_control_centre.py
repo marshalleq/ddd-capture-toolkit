@@ -235,20 +235,26 @@ class WorkflowControlCentre:
             kept fast (~65 ms) for responsive input handling and a steady
             cursor blink. Render cost stops dragging on input throughput.
 
-          * **Cursor blink is wall-clock driven**, not toggled per-iteration.
-            int(time.time() * 2) % 2 gives a 2 Hz cadence (0.25 s on, 0.25 s
-            off) regardless of how long any given iteration took or whether
-            the user just pressed a key — so the blink no longer betrays
-            load or typing rhythm.
+          * **Cursor blink is wall-clock driven and computed at render time**,
+            not toggled per-iteration. `create_command_input_panel` reads
+            `int(time.time() * 2) % 2` directly, so every render — whether
+            triggered by the main loop, by Rich's own auto-refresh thread,
+            or by a keystroke — picks up the current 2 Hz blink state. A
+            slow main-loop tick can no longer freeze the blink for several
+            hundred ms.
 
-          * **Rich Live runs at 15 Hz** so the worst-case visible lag between
-            a state change and the redraw is ~65 ms.
+          * **Rich Live runs at 30 Hz** so the worst-case visible lag between
+            a state change and the redraw is ~33 ms — close to the limit of
+            human perception for character echo.
         """
         try:
             import termios
             import tty
 
-            # Initialize command input buffer
+            # Initialize command input buffer. `input_cursor_blink` is kept
+            # as an attribute for back-compat (other call sites may read it),
+            # but the actual rendered blink state is recomputed from
+            # time.time() inside create_command_input_panel.
             self.current_input = ""
             self.input_cursor_blink = True
 
@@ -257,12 +263,12 @@ class WorkflowControlCentre:
             tty.setcbreak(sys.stdin.fileno())
 
             # Cadences:
-            #   tick_timeout — how long select() blocks each iteration. Drives
-            #     responsiveness and the cursor-blink resolution. Short.
+            #   tick_timeout — how long select() blocks each iteration when
+            #     idle. Drives input responsiveness when no key is queued.
             #   refresh_interval — how often refresh_data() is allowed to run.
             #     Independent of tick_timeout. The expensive scan only fires
             #     this often even if the tick loop spins much faster.
-            tick_timeout = 0.066          # ~15 Hz tick
+            tick_timeout = 0.033          # ~30 Hz tick (matches Live rate)
             refresh_interval = 0.5
             last_refresh = 0.0
 
@@ -335,7 +341,7 @@ class WorkflowControlCentre:
                     self.current_input += key
                 return False
 
-            with Live(self.create_enhanced_layout(), refresh_per_second=15) as live:
+            with Live(self.create_enhanced_layout(), refresh_per_second=30) as live:
                 while self.running:
                     now = time.time()
 
@@ -347,12 +353,9 @@ class WorkflowControlCentre:
                         self.refresh_data()
                         last_refresh = now
 
-                    # Cursor blink: pure function of wall-clock time. 2 Hz
-                    # means on for the first half of every second, off for
-                    # the second half. Independent of how long this tick
-                    # took or how recently a key was pressed.
-                    self.input_cursor_blink = int(now * 2) % 2 == 0
-
+                    # Blink state is computed at render time inside
+                    # create_command_input_panel — see that method for the
+                    # wall-clock-driven cadence. No need to update it here.
                     live.update(self.create_enhanced_layout())
 
                     # Drain ALL queued input this tick. _drain_stdin_to_keys
@@ -731,10 +734,15 @@ class WorkflowControlCentre:
         input_table.add_column("Input", style="yellow", width=25)
         input_table.add_column("Examples", style="dim", width=20)
         
-        # Show current input buffer (if any) or prompt
+        # Show current input buffer (if any) or prompt.
+        # Blink state is computed at render time from wall-clock time so it
+        # stays in lockstep with Rich's auto-refresh thread (which can fire
+        # between main-loop ticks); previously the blink was only updated
+        # when the main loop ticked, which caused visible cadence hiccups
+        # whenever a tick was delayed by a heavy refresh_data call.
         current_input = getattr(self, 'current_input', '')
-        cursor_blink = getattr(self, 'input_cursor_blink', True)
-        cursor = "█" if cursor_blink else " "  # Blinking cursor effect
+        cursor_blink = int(time.time() * 2) % 2 == 0   # 2 Hz, wall-clock driven
+        cursor = "█" if cursor_blink else " "
         display_input = f"{current_input}{cursor}"
         
         input_table.add_row(
