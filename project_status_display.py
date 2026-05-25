@@ -221,15 +221,45 @@ class ProjectStatusDisplay:
                 if debug_enabled:
                     self._debug_log(f"Creating progress display with {progress_info.get('percentage', 0)}% progress")
 
-                # Auto-sizing bar fills whatever width Rich allocates
-                # to the cell, so it stays in sync with the percentage
-                # text even when the window is narrow.
-                bar = AutoSizingProgressBar(progress_info['percentage'])
+                # Colour the bar + percent text by the cell's state so the
+                # user can tell PROCESSING (blue) apart from VERIFYING
+                # (bright_yellow) and HASHING (bright_cyan) at a glance.
+                # Previously every progress cell used green-bar + cyan-text
+                # regardless of state, making "compress running" and
+                # "compress doing post-write Tier 2 verify" look identical.
+                status_value = step_status.value
+                state_color = self.status_colors.get(status_value, "green")
 
-                # Percentage line
+                # State-specific short label so the cell tells you which
+                # post-step phase you're looking at without having to
+                # mentally track which column has which kind of activity.
+                # PROCESSING is left unlabelled because the column name
+                # (Decode / Export / etc.) already identifies the work.
+                state_labels = {
+                    'verifying': 'VFY',
+                    'hashing':   'HASH',
+                    'queued':    'QUE',
+                }
+                state_label = state_labels.get(status_value)
+
+                # Auto-sizing bar fills whatever width Rich allocates to
+                # the cell so it stays in sync with the percentage text
+                # even when the window is narrow.
+                bar = AutoSizingProgressBar(
+                    progress_info['percentage'],
+                    style=state_color,
+                )
+
+                # Percentage line — coloured by state, prefixed with a
+                # short state tag when the state isn't the obvious
+                # PROCESSING one.
+                pct_value = progress_info['percentage']
+                if state_label:
+                    pct_text = f"{state_label} {pct_value:.1f}%"
+                else:
+                    pct_text = f"{pct_value:.1f}%"
                 percentage_line = Text(
-                    f"{progress_info['percentage']:.1f}%",
-                    style="cyan", no_wrap=True, overflow="crop",
+                    pct_text, style=state_color, no_wrap=True, overflow="crop",
                 )
 
                 # Rate line (FPS or MB/s depending on job type)
