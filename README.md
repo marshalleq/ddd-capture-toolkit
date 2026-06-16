@@ -39,6 +39,8 @@ conda activate ddd-capture-toolkit
 python3 ddd_main_menu.py
 ```
 
+> **Use the conda environment — do not `pip install -r requirements.txt` against a system Python.** The toolkit pins Python 3.10 and installs everything (including `tbc-video-export`, which has no wheels for Python ≥ 3.14) into the isolated `ddd-capture-toolkit` conda env. Installing into a bare python.org interpreter will fail to resolve dependencies. **On Windows** this means installing [Git for Windows](https://git-scm.com/downloads/win) (for the Git Bash shell `setup.sh` needs) and [Miniconda](https://docs.conda.io/en/latest/miniconda.html) first, then running `./setup.sh` from Git Bash — see [SETUP.md](SETUP.md).
+
 Linux is the first-class platform. macOS and Windows have the groundwork in place but need testers — see [Getting Started](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Getting-Started) in the wiki for platform-specific notes.
 
 ## More information

@@ -13,15 +13,32 @@ import importlib
 from pathlib import Path
 
 def check_python_version():
-    """Check Python version requirement"""
+    """Check Python version requirement.
+
+    The toolkit targets Python 3.10 (pinned in the conda environment files).
+    tbc-video-export publishes no wheels for Python >= 3.14, so a too-new
+    interpreter (typically a system python.org install used instead of the
+    conda env) fails to resolve dependencies. Flag that explicitly rather
+    than passing it with an unhelpful "OK".
+    """
     print("Checking Python version...")
     version = sys.version_info
-    if version >= (3, 7):
-        print(f"   Python {version.major}.{version.minor}.{version.micro} (>= 3.7 required) OK")
+    ver_str = f"{version.major}.{version.minor}.{version.micro}"
+    if version < (3, 7):
+        print(f"   Python {ver_str} (< 3.7, please upgrade) ERROR")
+        return False
+    elif version >= (3, 14):
+        print(f"   Python {ver_str} ERROR (too new - tbc-video-export has no wheels for >= 3.14)")
+        print(f"      The toolkit is designed to run in the 'ddd-capture-toolkit' conda env (Python 3.10).")
+        print(f"      Do not pip install against a system Python. Run ./setup.sh, then:")
+        print(f"      conda activate ddd-capture-toolkit")
+        return False
+    elif version >= (3, 11):
+        print(f"   Python {ver_str} OK (3.10 recommended; toolkit conda env pins 3.10)")
         return True
     else:
-        print(f"   Python {version.major}.{version.minor}.{version.micro} (< 3.7, please upgrade) ERROR")
-        return False
+        print(f"   Python {ver_str} (>= 3.7 required) OK")
+        return True
 
 def check_python_packages():
     """Check required Python packages"""
