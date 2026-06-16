@@ -434,6 +434,12 @@ if command -v conda &> /dev/null; then
         fi
 
         # Download tbc-video-export AppImage (bundles ld-tools with correct --input-json support)
+        # AppImage is a Linux-only binary format. On Windows/macOS, tbc-video-export
+        # comes from the pip install in the environment file instead, so skip this.
+        if [[ "$OS" != "linux" ]]; then
+            log_info "Skipping tbc-video-export AppImage download (Linux-only format)"
+            log_info "On $OS, tbc-video-export is installed via pip from the environment file"
+        else
         echo "Downloading tbc-video-export AppImage..."
         mkdir -p tools
         APPIMAGE_URL="https://github.com/JuniorIsAJitterbug/tbc-video-export/releases/download/v0.1.8/tbc-video-export.AppImage"
@@ -463,6 +469,7 @@ if command -v conda &> /dev/null; then
 
         if [[ -x "$APPIMAGE_PATH" ]]; then
             log_success "tbc-video-export AppImage ready at $APPIMAGE_PATH"
+        fi
         fi
     fi
 else
