@@ -86,44 +86,60 @@ class ProjectDiscovery:
     
     def _scan_directory(self, directory: str) -> List[Project]:
         """
-        Scan a single directory for projects
-        
+        Scan a directory and its subfolders for projects
+
+        Each subfolder's files form their own projects, with source_directory
+        set to that subfolder so outputs land beside the captures. Hidden
+        folders (e.g. .Trash-1000) and <basename>.intermediate/ archive
+        folders are skipped.
+
         Args:
             directory: Directory path to scan
-            
+
         Returns:
-            List of projects found in directory
+            List of projects found in directory tree
         """
         projects = {}
-        
+
+        def on_walk_error(err):
+            if isinstance(err, PermissionError):
+                print(f"Warning: Permission denied accessing directory {err.filename}")
+            else:
+                print(f"Error scanning directory {err.filename}: {err}")
+
         try:
-            for filename in os.listdir(directory):
-                filepath = os.path.join(directory, filename)
-                if not os.path.isfile(filepath):
-                    continue
-                    
-                # Get base name (filename without extension)
-                base_name = self._extract_base_name(filename)
-                if not base_name:
-                    continue
-                
-                # Create or get project
-                if base_name not in projects:
-                    projects[base_name] = Project(
-                        name=base_name,
-                        source_directory=directory
-                    )
-                
-                project = projects[base_name]
-                
-                # Categorize file by extension and naming pattern
-                self._categorize_file(project, filename, filepath)
-        
-        except PermissionError:
-            print(f"Warning: Permission denied accessing directory {directory}")
+            for dirpath, dirnames, filenames in os.walk(directory, onerror=on_walk_error):
+                dirnames[:] = sorted(
+                    d for d in dirnames
+                    if not d.startswith('.') and not d.endswith('.intermediate')
+                )
+
+                for filename in filenames:
+                    filepath = os.path.join(dirpath, filename)
+                    if not os.path.isfile(filepath):
+                        continue
+
+                    # Get base name (filename without extension)
+                    base_name = self._extract_base_name(filename)
+                    if not base_name:
+                        continue
+
+                    # Create or get project (keyed per folder)
+                    key = (dirpath, base_name)
+                    if key not in projects:
+                        projects[key] = Project(
+                            name=base_name,
+                            source_directory=dirpath
+                        )
+
+                    project = projects[key]
+
+                    # Categorize file by extension and naming pattern
+                    self._categorize_file(project, filename, filepath)
+
         except Exception as e:
             print(f"Error scanning directory {directory}: {e}")
-            
+
         return list(projects.values())
     
     def _extract_base_name(self, filename: str) -> Optional[str]:
