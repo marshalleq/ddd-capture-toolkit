@@ -36,7 +36,7 @@ except ImportError:
 
 # Project phase 1.1-1.2 components
 try:
-    from project_discovery import ProjectDiscovery
+    from project_discovery import ProjectDiscovery, STAGE_DIR_SUFFIXES
     from workflow_analyzer import WorkflowAnalyzer, WorkflowStep, StepStatus
     from directory_manager import DirectoryManager
     from job_queue_manager import get_job_queue_manager
@@ -963,8 +963,8 @@ class WorkflowControlCentre:
         # says everything is VALIDATED is wasted I/O.
         hash_match = re.match(r'^hash\s+(\d+)$', cmd)
         check_match = re.match(r'^(?:check|verify)\s+(\d+)(\s+(?:--all|all))?$', cmd)
-        # 'stage N' / 'unstage N' — archive staging (move intermediates into
-        # <basename>.intermediate/ subfolder, or restore them).
+        # 'stage N' / 'unstage N' — archive staging (move the backup set into
+        # a <basename>.backup/ subfolder, or restore it).
         stage_match = re.match(r'^stage\s+(\d+)$', cmd)
         unstage_match = re.match(r'^unstage\s+(\d+)$', cmd)
         job_match = re.match(r'^j(\d+)$', cmd)
@@ -3112,36 +3112,52 @@ class WorkflowControlCentre:
 
     # ----- Archive staging -----------------------------------------------
     #
-    # 'stage N' moves a project's intermediate files into a <basename>.intermediate/
-    # subfolder, leaving only the archive set (.ldf, .ldf.validated, .flac,
-    # .json, .capture.log, _final.mkv, _validation.log, plus the portable
-    # .sha256 sidecars) at the top level.
+    # 'stage N' moves a project's backup set into a <basename>.backup/
+    # subfolder, so the folder is exactly what to copy to backup storage.
+    # What stays at the top level is regenerable from the backup set and
+    # can be deleted: the .lds (the .ldf is a validated lossless copy),
+    # the _ffv1.mkv and _aligned.flac (both are muxed into _final.mkv),
+    # and their .sha256 sidecars.
     # The move is non-destructive — nothing is deleted, and 'unstage N'
     # restores everything. The .ldf.validated sidecar is the gate: staging
     # is refused without it, so the Tier 3 round-trip has demonstrably
-    # passed before any intermediate is set aside.
+    # passed before the .ldf is filed as the master in place of the .lds.
 
     # Filenames (relative to project source dir, given a base name) that
-    # move out of the top level when a project is staged for archive.
-    # Anything not in this list stays at the top level.
-    _ARCHIVE_INTERMEDIATE_SUFFIXES = (
-        '.lds',                          # raw RF capture (covered by .ldf+.validated)
-        '.tbc',                          # decoded TBC (regenerable from .ldf)
-        '.tbc.json',                     # TBC metadata
+    # move into the backup folder. Every project *.log also moves, and so
+    # does the .sha256 sidecar of each moved file.
+    _ARCHIVE_BACKUP_SUFFIXES = (
+        '.ldf',                          # compressed RF master
+        '.ldf.validated',                # Tier 3 proof .ldf == .lds
+        '.tbc',                          # decoded TBC
         '_chroma.tbc',                   # chroma plane
-        '.log',                          # vhs-decode's own log
-        '_ffv1.mkv',                     # intermediate export
-        '_aligned.flac',                 # aligned audio
-        '_aligned.flac.watchdog.log',    # align watchdog log
+        '.tbc.json',                     # TBC metadata
+        '.flac',                         # original captured audio
+        '.wav',                          # original captured audio (uncompressed)
+        '.json',                         # capture metadata
+        '_final.mkv',                    # final mux (export video + aligned audio)
     )
 
-    def _stage_intermediate_dir(self, project):
-        """Return the path to this project's .intermediate/ subfolder."""
+    def _stage_backup_dir(self, project):
+        """Return the path to this project's .backup/ subfolder."""
         source_dir = getattr(project, 'source_directory', None)
         name = getattr(project, 'name', None)
         if not source_dir or not name:
             return None
-        return os.path.join(source_dir, name + '.intermediate')
+        return os.path.join(source_dir, name + STAGE_DIR_SUFFIXES[0])
+
+    def _existing_stage_dir(self, project):
+        """Return this project's existing stage folder (.backup/, or an older
+        .intermediate/), or None if it hasn't been staged."""
+        source_dir = getattr(project, 'source_directory', None)
+        name = getattr(project, 'name', None)
+        if not source_dir or not name:
+            return None
+        for sfx in STAGE_DIR_SUFFIXES:
+            candidate = os.path.join(source_dir, name + sfx)
+            if os.path.isdir(candidate):
+                return candidate
+        return None
 
     def _find_ldf_path(self, project):
         """Locate a project's .ldf path (compressed master), or None."""
@@ -3156,13 +3172,13 @@ class WorkflowControlCentre:
         return None
 
     def handle_stage_project(self, project_num):
-        """Move a project's intermediate files into <basename>.intermediate/.
+        """Move a project's backup set into <basename>.backup/.
 
         Refuses unless the .ldf.validated sidecar is present (the Tier 3
         gate). Non-destructive: every file is mv'd, not deleted, so a
-        later 'unstage N' restores the original layout. The .lds moves
-        too — once Tier 3 has passed it's safely droppable, but mv-not-rm
-        defers the actual delete to the user's own schedule.
+        later 'unstage N' restores the original layout. The .lds stays at
+        the top level with the other regenerable files — once Tier 3 has
+        passed it's safely droppable, but the delete is left to the user.
         """
         project_idx = project_num - 1
         if project_idx >= len(self.current_projects):
@@ -3186,20 +3202,36 @@ class WorkflowControlCentre:
 
         source_dir = os.path.dirname(ldf_path)
         base = project.name
-        intermediate_dir = self._stage_intermediate_dir(project)
-        if not intermediate_dir:
+        backup_dir = self._stage_backup_dir(project)
+        if not backup_dir:
             self.message = f"Cannot stage {project.name}: source directory unknown."
             return
 
+        existing = self._existing_stage_dir(project)
+        if existing and existing != backup_dir:
+            self.message = (
+                f"Cannot stage {project.name}: older staging folder "
+                f"{os.path.basename(existing)}/ exists. Run 'unstage {project_num}' "
+                f"first, then stage again."
+            )
+            return
+
         # Build the move list — only files that actually exist
+        names = [base + suffix for suffix in self._ARCHIVE_BACKUP_SUFFIXES]
+        names += sorted(
+            f for f in os.listdir(source_dir)
+            if f.endswith('.log')
+            and ProjectDiscovery()._extract_base_name(f) == base
+        )
+        names += [n + '.sha256' for n in names]
         to_move = []
-        for suffix in self._ARCHIVE_INTERMEDIATE_SUFFIXES:
-            candidate = os.path.join(source_dir, base + suffix)
+        for name in dict.fromkeys(names):
+            candidate = os.path.join(source_dir, name)
             if os.path.isfile(candidate):
-                to_move.append((base + suffix, candidate))
+                to_move.append((name, candidate))
 
         if not to_move:
-            self.message = f"No intermediate files to stage for {project.name}."
+            self.message = f"No backup files to stage for {project.name}."
             return
 
         # Run in a background thread — moving the .lds is metadata-only on
@@ -3209,11 +3241,11 @@ class WorkflowControlCentre:
 
         def worker():
             try:
-                os.makedirs(intermediate_dir, exist_ok=True)
+                os.makedirs(backup_dir, exist_ok=True)
                 moved = []
                 failed = []
                 for name, src in to_move:
-                    dst = os.path.join(intermediate_dir, name)
+                    dst = os.path.join(backup_dir, name)
                     try:
                         os.rename(src, dst)
                         moved.append(name)
@@ -3227,23 +3259,24 @@ class WorkflowControlCentre:
                 else:
                     self.message = (
                         f"✓ Staged {project.name}: {len(moved)} files moved into "
-                        f"{os.path.basename(intermediate_dir)}/"
+                        f"{os.path.basename(backup_dir)}/ — copy that folder to backup"
                     )
             except OSError as e:
                 self.message = f"Stage error for {project.name}: {e}"
 
         self.message = (
-            f"Staging {project.name}: moving {len(to_move)} intermediate files…"
+            f"Staging {project.name}: moving {len(to_move)} backup files…"
         )
         threading.Thread(target=worker, daemon=True).start()
 
     def handle_unstage_project(self, project_num):
-        """Reverse of stage: move files back from <basename>.intermediate/
-        into the project root and remove the (now empty) subfolder.
+        """Reverse of stage: move files back from <basename>.backup/ (or an
+        older <basename>.intermediate/) into the project root and remove the
+        (now empty) subfolder.
 
         Refuses to clobber a file that exists at the top level (e.g. a
         new run produced a fresh .tbc while the old one was staged) —
-        that one stays in intermediate/ and gets reported.
+        that one stays in the subfolder and gets reported.
         """
         project_idx = project_num - 1
         if project_idx >= len(self.current_projects):
@@ -3251,8 +3284,8 @@ class WorkflowControlCentre:
             return
         project = self.current_projects[project_idx]
 
-        intermediate_dir = self._stage_intermediate_dir(project)
-        if not intermediate_dir or not os.path.isdir(intermediate_dir):
+        stage_dir = self._existing_stage_dir(project)
+        if not stage_dir:
             self.message = f"No staging folder to undo for {project.name}."
             return
 
@@ -3262,11 +3295,11 @@ class WorkflowControlCentre:
 
         def worker():
             try:
-                entries = sorted(os.listdir(intermediate_dir))
+                entries = sorted(os.listdir(stage_dir))
                 moved = []
                 failed = []
                 for name in entries:
-                    src = os.path.join(intermediate_dir, name)
+                    src = os.path.join(stage_dir, name)
                     dst = os.path.join(source_dir, name)
                     if os.path.exists(dst):
                         failed.append((name, "top-level file with same name exists; not clobbering"))
@@ -3278,7 +3311,7 @@ class WorkflowControlCentre:
                         failed.append((name, str(e)))
                 # Remove the subfolder if empty; leave it otherwise.
                 try:
-                    os.rmdir(intermediate_dir)
+                    os.rmdir(stage_dir)
                     folder_gone = True
                 except OSError:
                     folder_gone = False
@@ -3286,17 +3319,17 @@ class WorkflowControlCentre:
                     self.message = (
                         f"Unstaged {project.name}: restored {len(moved)}, "
                         f"failed {len(failed)} (first: {failed[0][0]} — {failed[0][1]}). "
-                        f"{os.path.basename(intermediate_dir)}/ still present."
+                        f"{os.path.basename(stage_dir)}/ still present."
                     )
                 elif folder_gone:
                     self.message = (
                         f"✓ Unstaged {project.name}: {len(moved)} files restored, "
-                        f"{os.path.basename(intermediate_dir)}/ removed."
+                        f"{os.path.basename(stage_dir)}/ removed."
                     )
                 else:
                     self.message = (
                         f"✓ Unstaged {project.name}: {len(moved)} files restored; "
-                        f"{os.path.basename(intermediate_dir)}/ kept (not empty)."
+                        f"{os.path.basename(stage_dir)}/ kept (not empty)."
                     )
             except OSError as e:
                 self.message = f"Unstage error for {project.name}: {e}"
@@ -3534,12 +3567,14 @@ class WorkflowControlCentre:
         print("                cells to INVALID. ('verify 1' is a backwards-compatible alias.)")
         print("  check 1 --all Force a full re-hash of every tracked file, including ones")
         print("                already VALIDATED. Use for a thorough integrity sweep.")
-        print("  stage 1       Move project 1's intermediate files (.lds, .tbc, *_chroma.tbc,")
-        print("                .tbc.json, decode .log, _ffv1.mkv, _aligned.flac, watchdog log)")
-        print("                into a <basename>.intermediate/ subfolder. Matrix row flips to")
-        print("                ARCH. Refuses unless .ldf.validated is present.")
-        print("  unstage 1     Reverse of stage: move the intermediate files back to the")
-        print("                top level and remove the (now-empty) subfolder.")
+        print("  stage 1       Move project 1's backup set (.ldf, .ldf.validated, .tbc,")
+        print("                *_chroma.tbc, .tbc.json, original .flac, .json, _final.mkv,")
+        print("                all logs, and their .sha256 sidecars) into a <basename>.backup/")
+        print("                subfolder — copy that folder to backup. Left at the top level,")
+        print("                and deletable: .lds, _ffv1.mkv, _aligned.flac (+ .sha256).")
+        print("                Matrix row flips to ARCH. Refuses unless .ldf.validated exists.")
+        print("  unstage 1     Reverse of stage: move the backup set back to the top level")
+        print("                and remove the (now-empty) subfolder.")
 
         print("\nRe-run, stop, clean:")
         print("  force 1e      Force-overwrite existing outputs and re-run the step.")
@@ -3585,7 +3620,7 @@ class WorkflowControlCentre:
         print("    Anyone with sha256sum / shasum / Get-FileHash can verify it without")
         print("    this toolkit, e.g.  sha256sum -c Foo.ldf.sha256")
         print("  - 'stage 1' is non-destructive (move, not delete). Reverse with 'unstage 1';")
-        print("    only rm -rf the .intermediate/ subfolder once you're satisfied.")
+        print("    delete the top-level leftovers only once <basename>.backup/ is backed up.")
 
         input("\nPress Enter to return to control centre...")
 

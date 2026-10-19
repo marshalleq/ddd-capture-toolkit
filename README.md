@@ -14,7 +14,7 @@ Headline capabilities:
 
 - **Three-tier compress validation** — structural seek check, end-to-end FLAC integrity, and a sample-count round-trip against the source `.lds`. On PASS, writes a `.ldf.verified` sidecar — the gate before you delete an original RF master.
 - **Automatic content hashing** to a per-project `_validation.log`; the matrix surfaces `HASHING` / `VALIDATED` / `STALE` / `INVALID` per step so file changes are spotted immediately, not weeks later.
-- **Non-destructive archive staging** — one command (`stage N`) moves intermediate files (`.tbc`, `_ffv1.mkv`, etc.) into a subfolder, leaving only the archive set (`.ldf`, `.ldf.verified`, `.flac`, `_final.mkv`, validation log) at the top level. Reversible.
+- **Non-destructive archive staging** — one command (`stage N`) moves the backup set (`.ldf`, `.ldf.validated`, `.tbc`, `.tbc.json`, original `.flac`, `.json`, `_final.mkv`, logs and their `.sha256` sidecars) into a `<basename>.backup/` subfolder, ready to copy to backup storage. The regenerable leftovers (`.lds`, `_ffv1.mkv`, `_aligned.flac`) stay at the top level to delete. Reversible.
 - **Batch and auto-queuing** of pipeline jobs with hardware-aware concurrency. Queue an overnight run, walk away.
 - **Per-project flags** — decode, export, audio, compress, and segment-test options are configurable independently for each project. Different tapes get different processing — B&W vs colour, wrong field order, sub-deemphasis on noisy sources, faster validation on test runs — without touching global config.
 - **CPU-aware scheduling** — concurrent VHS-Decode jobs are pinned to disjoint L3 cache groups (CCDs on AMD, P/E clusters on Intel) so they don't fight for cache. Other CPU-heavy jobs are dynamically kept off the decode cores.

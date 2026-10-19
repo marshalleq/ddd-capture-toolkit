@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set
 from datetime import datetime
 
-from project_discovery import Project, ProjectDiscovery
+from project_discovery import Project, ProjectDiscovery, STAGE_DIR_SUFFIXES
 from job_queue_manager import JobQueueManager, JobStatus, QueuedJob
 
 class WorkflowStep(Enum):
@@ -40,7 +40,7 @@ class StepStatus(Enum):
     CHANGED = "changed"            # Hash recorded; size differs — content has definitely changed
     INVALID = "invalid"            # Explicit re-check revealed a hash mismatch — file may be corrupt
     # Archive staging
-    ARCHIVED = "archived"          # Project's intermediate files have been moved into <basename>.intermediate/
+    ARCHIVED = "archived"          # Project's backup set has been moved into <basename>.backup/
     # Tier 3 validation in progress
     VERIFYING = "verifying"        # A Tier 3 ldf-vs-lds sample-count validation is running for this step
 
@@ -77,7 +77,7 @@ class WorkflowAnalyzer:
         'touched': 'yellow',            # mtime changed but size matches — probably benign
         'changed': 'orange3',           # size differs from log — content definitely different
         'invalid': 'bold red',          # explicit re-check revealed mismatch
-        'archived': 'bright_magenta',   # staged for archive — intermediates moved aside
+        'archived': 'bright_magenta',   # staged for archive — backup set moved into <basename>.backup/
         'verifying': 'bright_yellow',   # Tier 3 ldf-vs-lds round-trip in progress
     }
 
@@ -96,7 +96,7 @@ class WorkflowAnalyzer:
         'touched': 'Size matches the recorded hash but mtime differs — run check N to confirm and self-heal',
         'changed': 'Size differs from the recorded hash — content has changed; investigate',
         'invalid': 'Re-check revealed a hash mismatch — file may be corrupt',
-        'archived': 'Project staged for archive — intermediate files moved into <basename>.intermediate/',
+        'archived': 'Project staged for archive — backup set moved into <basename>.backup/',
         'verifying': 'Nmv ldf validation in progress — decoding .ldf and comparing byte count vs .lds',
     }
     
@@ -134,10 +134,10 @@ class WorkflowAnalyzer:
         """
         workflow_status = WorkflowStatus(project_name=project.name)
 
-        # If this project has been staged for archive (the .intermediate/
+        # If this project has been staged for archive (the .backup/
         # subfolder exists), every step shows ARCHIVED and we skip the
         # per-step analysis. Without this short-circuit the matrix would
-        # incorrectly read missing intermediates (the .tbc, _ffv1.mkv, etc.
+        # incorrectly read the moved files (the .ldf, .tbc, _final.mkv, etc.
         # are inside the subfolder, not at the top level) as "step broken".
         if self._is_project_archived(project):
             for step in WorkflowStep:
@@ -173,15 +173,17 @@ class WorkflowAnalyzer:
     @staticmethod
     def _is_project_archived(project: Project) -> bool:
         """Check whether the project has been staged for archive — i.e. its
-        <basename>.intermediate/ subfolder exists next to the capture files.
-        Presence of that folder means the WCC's `stage N` command has moved
-        intermediates aside and the project should be displayed as ARCHIVED.
+        <basename>.backup/ (or older <basename>.intermediate/) subfolder
+        exists next to the capture files. Presence of that folder means the
+        WCC's `stage N` command has split the project into a backup set and
+        leftovers, so the project should be displayed as ARCHIVED.
         """
         source_dir = getattr(project, 'source_directory', None)
         name = getattr(project, 'name', None)
         if not source_dir or not name:
             return False
-        return os.path.isdir(os.path.join(source_dir, name + '.intermediate'))
+        return any(os.path.isdir(os.path.join(source_dir, name + sfx))
+                   for sfx in STAGE_DIR_SUFFIXES)
     
     def get_step_status(self, step: WorkflowStep, project: Project) -> StepStatus:
         """
