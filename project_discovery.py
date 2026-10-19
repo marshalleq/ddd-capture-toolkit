@@ -13,6 +13,11 @@ from typing import List, Dict, Optional, Set
 from pathlib import Path
 import re
 
+# Subfolder suffixes created by the WCC's 'stage N' command. '.backup' holds
+# the archive set; '.intermediate' is the older layout (intermediates moved
+# aside) and is still recognised so existing staged projects can be unstaged.
+STAGE_DIR_SUFFIXES = ('.backup', '.intermediate')
+
 @dataclass
 class Project:
     """Represents a VHS archival project with related files"""
@@ -90,8 +95,8 @@ class ProjectDiscovery:
 
         Each subfolder's files form their own projects, with source_directory
         set to that subfolder so outputs land beside the captures. Hidden
-        folders (e.g. .Trash-1000) and <basename>.intermediate/ archive
-        folders are skipped.
+        folders (e.g. .Trash-1000) and 'stage N' folders
+        (<basename>.backup/, <basename>.intermediate/) are skipped.
 
         Args:
             directory: Directory path to scan
@@ -111,7 +116,7 @@ class ProjectDiscovery:
             for dirpath, dirnames, filenames in os.walk(directory, onerror=on_walk_error):
                 dirnames[:] = sorted(
                     d for d in dirnames
-                    if not d.startswith('.') and not d.endswith('.intermediate')
+                    if not d.startswith('.') and not d.endswith(STAGE_DIR_SUFFIXES)
                 )
 
                 for filename in filenames:
