@@ -146,7 +146,20 @@ class WorkflowAnalyzer:
 
         # Analyze each workflow step
         for step in WorkflowStep:
-            step_status = self.get_step_status(step, project)
+            try:
+                step_status = self.get_step_status(step, project)
+            except FileNotFoundError:
+                # A file vanished between an exists() check and a stat —
+                # e.g. 'stage N' moving intermediates on its worker thread
+                # while the matrix renders. If the project just became
+                # archived, report that; otherwise re-evaluate the step
+                # now that the filesystem has settled.
+                if self._is_project_archived(project):
+                    for s in WorkflowStep:
+                        workflow_status.steps[s] = StepStatus.ARCHIVED
+                    workflow_status.step_details.clear()
+                    return workflow_status
+                step_status = self.get_step_status(step, project)
             workflow_status.steps[step] = step_status
 
             # Add details for failed/processing steps

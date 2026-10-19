@@ -134,8 +134,13 @@ class ProjectDiscovery:
 
                     project = projects[key]
 
-                    # Categorize file by extension and naming pattern
-                    self._categorize_file(project, filename, filepath)
+                    # Categorize file by extension and naming pattern.
+                    # The file may be moved between listing and stat
+                    # (e.g. 'stage N' running) — skip it, keep scanning.
+                    try:
+                        self._categorize_file(project, filename, filepath)
+                    except FileNotFoundError:
+                        continue
 
         except Exception as e:
             print(f"Error scanning directory {directory}: {e}")
