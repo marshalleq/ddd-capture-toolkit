@@ -226,9 +226,12 @@ build_vhs_decode() {
         return 1
     }
 
-    # Force reinstall to ensure recompilation with our flags
+    # Force reinstall to ensure recompilation with our flags.
+    # DYLD_LIBRARY_PATH is cleared for this step: on macOS it makes Homebrew's
+    # cargo/libgit2 load conda's libiconv, which lacks the _iconv symbol and
+    # aborts cargo. Conda's own libraries resolve via rpath without it.
     log_info "Installing VHS-Decode with optimizations (this may take several minutes)..."
-    pip install --no-build-isolation --force-reinstall . || {
+    env -u DYLD_LIBRARY_PATH pip install --no-build-isolation --force-reinstall . || {
         log_error "VHS-Decode installation failed"
         return 1
     }
