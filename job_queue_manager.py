@@ -1039,9 +1039,10 @@ class JobQueueManager:
                 del self.job_processes[job.job_id]
 
             # Check if the job actually succeeded by verifying output files exist
-            # VHS decode produces both .tbc and .json files
+            # VHS decode produces both .tbc and .tbc.json files (the bare
+            # .json next to them is the capture's metadata, not decode output)
             tbc_file = job.output_file
-            json_file = job.output_file.replace('.tbc', '.json')
+            json_file = job.output_file + '.json'
             
             tbc_exists = os.path.exists(tbc_file) and os.path.getsize(tbc_file) > 0
             json_exists = os.path.exists(json_file) and os.path.getsize(json_file) > 0

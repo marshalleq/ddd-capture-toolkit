@@ -1,10 +1,16 @@
 #!/bin/bash
-# build-ld-decode.sh - LD-Tools compilation script (from vhs-decode)
+# build-ld-decode.sh - LD-Tools compilation script (from ld-decode)
 # Part of DDD Capture Toolkit build system
 #
-# NOTE: This builds ld-tools from the vhs-decode repository (oyvindln/vhs-decode)
-# which has the --input-json option required by tbc-video-export.
-# The mainline ld-decode (happycube/ld-decode) uses --input-metadata instead.
+# NOTE: This builds the C++ ld-tools (ld-chroma-decoder, ld-dropout-correct,
+# ld-process-vbi, ld-export-metadata, ld-lds-converter, ...) from the pinned
+# external/ld-decode submodule, whose ld-chroma-decoder has the --input-json
+# option required by tbc-video-export. vhs-decode >= 0.4.0 no longer ships
+# these tools (they moved to tbc-tools, under new tbc-* names).
+#
+# ld-decode's Python package and its C ld-ldf-reader are NOT installed: the
+# env's lddecode package and ld-ldf-reader come from vhs-decode and must not
+# be overwritten.
 
 set -e
 
@@ -17,7 +23,7 @@ source "${SCRIPT_DIR}/common/conda-setup.sh"
 show_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Build LD-Tools from vhs-decode source with optimizations"
+    echo "Build LD-Tools from ld-decode source with optimizations"
     echo ""
     echo "OPTIONS:"
     echo "  --safe      Use safe optimizations (no -march=native)"
@@ -36,24 +42,19 @@ build_ld_decode() {
     local build_jobs="$2"
     local clean_build="$3"
 
-    log_info "Building LD-Tools from vhs-decode source..."
+    log_info "Building LD-Tools from ld-decode source..."
 
-    # Check if we need to build (using ld-chroma-decoder as it's required for tbc-video-export)
-    # We check for --input-json support to ensure we have the correct version
-    if command -v ld-chroma-decoder >/dev/null 2>&1; then
-        if ld-chroma-decoder --help 2>&1 | grep -q "input-json"; then
-            log_success "LD-Tools with --input-json support already installed, skipping build"
-            return 0
-        else
-            log_warning "Found ld-chroma-decoder but it lacks --input-json support (wrong version)"
-            log_info "Will rebuild from vhs-decode source..."
-        fi
+    # Always build into the env. Copies elsewhere on PATH (e.g. a manual
+    # install in /usr/bin) are not managed by setup, so don't skip because of them.
+    local existing
+    existing=$(command -v ld-chroma-decoder 2>/dev/null || true)
+    if [[ -n "$existing" && "$existing" != "${CONDA_PREFIX}"/* ]]; then
+        log_warning "Found ld-chroma-decoder outside the env: $existing (not managed by setup; building env copy anyway)"
     fi
 
-    # Navigate to source directory - use vhs-decode which has --input-json
-    local ld_decode_dir="${PROJECT_ROOT}/external/vhs-decode"
-    if [[ ! -d "$ld_decode_dir" ]]; then
-        log_error "vhs-decode source directory not found: $ld_decode_dir"
+    local ld_decode_dir="${PROJECT_ROOT}/external/ld-decode"
+    if [[ ! -d "$ld_decode_dir/tools/ld-chroma-decoder" ]]; then
+        log_error "ld-decode source directory not found: $ld_decode_dir"
         log_error "Make sure git submodules are properly initialized"
         return 1
     fi
@@ -67,7 +68,7 @@ build_ld_decode() {
         git submodule update --init --recursive
     fi
 
-    # Create and enter build directory (use separate dir to avoid conflict with vhs-decode's Python build)
+    # Create and enter build directory
     local build_dir="build-ld-tools"
     if [[ "$clean_build" == "true" ]] && [[ -d "$build_dir" ]]; then
         log_info "Cleaning existing build directory..."
@@ -115,7 +116,9 @@ build_ld_decode() {
         -DCMAKE_INCLUDE_PATH="${CONDA_PREFIX}/include" \
         -DPKG_CONFIG_EXECUTABLE="${CONDA_PREFIX}/bin/pkg-config" \
         -DCMAKE_FIND_LIBRARY_SUFFIXES=".so;.a" \
-        -DUSE_QWT=OFF || {
+        -DUSE_QWT=OFF \
+        -DBUILD_PYTHON=OFF \
+        -DBUILD_LDF_READER=OFF || {
         log_error "CMake configuration failed"
         return 1
     }
@@ -196,7 +199,7 @@ if [[ -z "$BUILD_JOBS" ]]; then
     BUILD_JOBS=$(get_build_jobs)
 fi
 
-log_info "=== LD-Tools Build Script (from vhs-decode) ==="
+log_info "=== LD-Tools Build Script (from ld-decode) ==="
 log_info "Safe mode: $SAFE_MODE"
 log_info "Build jobs: $BUILD_JOBS"
 log_info "Clean build: $CLEAN_BUILD"

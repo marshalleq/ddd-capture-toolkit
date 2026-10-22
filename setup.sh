@@ -572,7 +572,8 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
             
             if ! build-scripts/build-ld-decode.sh $build_args; then
                 log_error "LD-Decode build failed"
-                log_warning "Continuing with conda packages for remaining tools"
+                log_error "Export tools (ld-chroma-decoder, ld-dropout-correct, ...) will be missing from the env"
+                log_warning "Continuing with remaining tools"
             else
                 log_success "LD-Decode built successfully"
             fi
@@ -784,24 +785,24 @@ echo ""
 log_info "To check vhs-decode version later: cd external/vhs-decode && git describe --tags"
 echo ""
 
-# Warn about vhs-decode copies outside the toolkit env. A stray install (e.g.
-# `pip install` against system Python) ahead of the env in PATH gets picked
-# up whenever the toolkit isn't started via ./start.sh.
-STRAY_VHS_DECODE=()
-while IFS= read -r p; do
-    [[ -n "$p" && "$p" != "$CONDA_ENV_PATH"/* ]] && STRAY_VHS_DECODE+=("$p")
-done < <(type -ap vhs-decode 2>/dev/null)
-for p in "$HOME"/.local/bin/vhs-decode /usr/local/bin/vhs-decode /usr/bin/vhs-decode; do
-    if [[ -e "$p" ]] && [[ ! " ${STRAY_VHS_DECODE[*]} " =~ " $p " ]]; then
-        STRAY_VHS_DECODE+=("$p")
-    fi
+# Warn about decode/export tool copies outside the toolkit env. A stray
+# install (e.g. `pip install` against system Python, or a manual `make install`
+# into /usr) ahead of the env in PATH gets picked up whenever the toolkit
+# isn't started via ./start.sh, and isn't updated by setup.
+STRAY_TOOLS=()
+for tool in vhs-decode ld-chroma-decoder ld-dropout-correct ld-process-vbi ld-export-metadata ld-lds-converter ld-ldf-reader; do
+    candidates=$(type -ap "$tool" 2>/dev/null; for d in "$HOME/.local/bin" /usr/local/bin /usr/bin; do [[ -e "$d/$tool" ]] && echo "$d/$tool"; done)
+    while IFS= read -r p; do
+        [[ -z "$p" || "$p" == "$CONDA_ENV_PATH"/* ]] && continue
+        [[ " ${STRAY_TOOLS[*]} " =~ " $p " ]] || STRAY_TOOLS+=("$p")
+    done <<< "$candidates"
 done
-if [[ ${#STRAY_VHS_DECODE[@]} -gt 0 ]]; then
-    log_warning "vhs-decode found outside the ddd-capture-toolkit env:"
-    for p in "${STRAY_VHS_DECODE[@]}"; do
+if [[ ${#STRAY_TOOLS[@]} -gt 0 ]]; then
+    log_warning "Decode/export tools found outside the ddd-capture-toolkit env:"
+    for p in "${STRAY_TOOLS[@]}"; do
         echo "    $p"
     done
-    log_warning "These are not managed by setup.sh and can shadow the env's copy."
-    log_warning "Remove them with the pip that installed them, e.g.: /usr/bin/python3 -m pip uninstall vhs-decode"
+    log_warning "These are not managed by setup.sh and can shadow the env's copies."
+    log_warning "Remove them with whatever installed them (pip uninstall, or sudo rm for a manual install into /usr)."
     echo ""
 fi

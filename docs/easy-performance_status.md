@@ -51,7 +51,7 @@ tbc-video-export internally calls these C++ tools which require `--input-json` s
 
 | Internal Tool | Required Option | Easy Mode Source | Performance Mode Source | Status |
 |--------------|-----------------|------------------|------------------------|--------|
-| `ld-chroma-decoder` | `--input-json` | Bundled in AppImage | Compiled from `external/vhs-decode` | ✅ Fixed |
+| `ld-chroma-decoder` | `--input-json` | Bundled in AppImage | Compiled from `external/ld-decode` | ✅ Fixed |
 | `ld-dropout-correct` | `--input-json` | Bundled in AppImage | Compiled from `external/vhs-decode` | ✅ Fixed |
 | `ld-process-vbi` | `--input-json` | Bundled in AppImage | Compiled from `external/vhs-decode` | ✅ Fixed |
 | `ffmpeg` | N/A | Bundled in AppImage | Compiled with `-march=native` | ✅ Fixed |
@@ -92,7 +92,7 @@ tbc-video-export internally calls these C++ tools which require `--input-json` s
 |-----------|-----------|------------------|
 | **vhs-decode** | PyPI wheel (pre-compiled) | Compiled with `-march=native` |
 | **tbc-video-export** | AppImage (bundles everything) | pip package (uses compiled ld-tools) |
-| **ld-tools** | Bundled in AppImage | Compiled from `external/vhs-decode` |
+| **ld-tools** | Bundled in AppImage | Compiled from `external/ld-decode` |
 | **ffmpeg** | conda-forge package | Compiled with `-march=native` |
 
 ---
@@ -108,7 +108,7 @@ tbc-video-export internally calls these C++ tools which require `--input-json` s
 ### Performance Mode (`setup.sh --performance`)
 1. Creates conda environment from `environment-linux.yml`
 2. **Removes AppImage** if it exists (to ensure compiled tools are used)
-3. Compiles ld-tools from `external/vhs-decode` with native optimizations
+3. Compiles ld-tools from `external/ld-decode` with native optimizations
 4. Compiles vhs-decode from `external/vhs-decode` with native optimizations
 5. Compiles ffmpeg from source with native optimizations
 6. All compiled tools installed to conda environment bin
@@ -118,7 +118,7 @@ tbc-video-export internally calls these C++ tools which require `--input-json` s
 ## Files Involved
 
 ### Build Scripts
-- `build-scripts/build-ld-decode.sh` - Builds ld-tools from vhs-decode source
+- `build-scripts/build-ld-decode.sh` - Builds ld-tools from ld-decode source
 - `build-scripts/build-vhs-decode.sh` - Builds vhs-decode Python package
 - `build-scripts/build-ffmpeg.sh` - Builds ffmpeg from source
 
