@@ -530,7 +530,11 @@ def log_tier3(any_capture_file_path, passed, message, file_hashes=None,
             path = info.get('path', '')
             elapsed = info.get('elapsed')
             elapsed_str = f"  ({elapsed:.0f}s)" if elapsed is not None else ""
-            lines.append(f"    .{role:<4} {size:>18,} bytes  {h}{elapsed_str}")
+            # With mtime, the line has the shape _parse_latest_hashes reads,
+            # so a Tier 3 pass also records each file's current hash
+            mtime = info.get('mtime')
+            mtime_str = f"mtime {mtime}  " if mtime else ""
+            lines.append(f"    .{role:<4} {size:>18,} bytes  {mtime_str}{h}{elapsed_str}")
             if path:
                 lines.append(f"          {path}")
     _append(log_path, "\n".join(lines) + "\n")
@@ -586,7 +590,8 @@ def hash_capture_originals(any_capture_file_path, skip_lds_hash=False,
         if progress_callback:
             progress_callback(role, f"hashing .{role}…")
         try:
-            size = os.path.getsize(path)
+            # Identity taken before hashing, so it describes the bytes hashed
+            size, mtime = file_identity(path)
 
             def per_file_cb(bytes_in_file, file_total,
                             _role=role, _bytes_done=bytes_done_overall):
@@ -602,7 +607,7 @@ def hash_capture_originals(any_capture_file_path, skip_lds_hash=False,
 
             digest, elapsed = compute_file_hash(path, progress_callback=per_file_cb)
             bytes_done_overall += size
-            result[role] = {'path': path, 'size': size,
+            result[role] = {'path': path, 'size': size, 'mtime': mtime,
                             'hash': digest, 'elapsed': elapsed}
         except OSError as e:
             result[role] = {'path': path, 'size': 0,
