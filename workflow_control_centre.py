@@ -2923,7 +2923,7 @@ class WorkflowControlCentre:
 
                 start = _t.time()
                 proc = subprocess.Popen(
-                    [tool, ldf_path, '0'],
+                    [tool, ldf_path],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                 )

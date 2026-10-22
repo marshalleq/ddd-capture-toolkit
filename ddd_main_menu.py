@@ -1078,7 +1078,7 @@ def manual_vhs_decode():
     print("   • Standard: PAL")
     print("   • Tape speed: SP (Standard Play)")
     print("   • Threads: 3")
-    print("   • No resampling, recheck phase enabled, IRE 0 adjust enabled")
+    print("   • No resampling, IRE 0 adjust enabled")
     
     # Get additional user parameters
     print("\nADDITIONAL PARAMETERS (OPTIONAL)")
@@ -1225,7 +1225,7 @@ def manual_vhs_decode_ntsc():
     print("   • Standard: NTSC")
     print("   • Tape speed: SP (Standard Play)")
     print("   • Threads: 3")
-    print("   • No resampling, recheck phase enabled, IRE 0 adjust enabled")
+    print("   • No resampling, IRE 0 adjust enabled")
     
     # Get additional user parameters
     print("\nADDITIONAL PARAMETERS (OPTIONAL)")
@@ -1372,7 +1372,7 @@ def manual_vhs_decode_with_params(video_standard, tape_speed):
     print(f"   • Standard: {video_standard.upper()}")
     print(f"   • Tape speed: {tape_speed}")
     print("   • Threads: 3")
-    print("   • No resampling, recheck phase enabled, IRE 0 adjust enabled")
+    print("   • No resampling, IRE 0 adjust enabled")
     
     # Speed descriptions
     speed_descriptions = {
@@ -9176,5 +9176,29 @@ def clear_all_locations():
     
     input("\nPress Enter to continue...")
 
+TOOLKIT_ENV_NAME = 'ddd-capture-toolkit'
+
+
+def require_toolkit_env():
+    """Refuse to run outside the toolkit's conda env.
+
+    Under any other Python, external tools (vhs-decode, ld-*, ffmpeg) resolve
+    to whatever is first in PATH, which may be a stray or incompatible install.
+    """
+    if os.path.basename(os.path.normpath(sys.prefix)) != TOOLKIT_ENV_NAME:
+        print(f"ERROR: The toolkit must run inside the '{TOOLKIT_ENV_NAME}' conda environment.")
+        print(f"       Current Python: {sys.executable}")
+        print(f"       Start it with ./start.sh (or: conda activate {TOOLKIT_ENV_NAME})")
+        sys.exit(1)
+
+    # Make sure the env's tools come first even if the env's Python was
+    # launched directly without `conda activate`.
+    env_bin = os.path.dirname(sys.executable)
+    path_entries = os.environ.get('PATH', '').split(os.pathsep)
+    if not path_entries or path_entries[0] != env_bin:
+        os.environ['PATH'] = os.pathsep.join([env_bin] + [p for p in path_entries if p != env_bin])
+
+
 if __name__ == "__main__":
+    require_toolkit_env()
     main()

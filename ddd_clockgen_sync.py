@@ -933,7 +933,6 @@ def run_vhs_decode_with_params(rf_filename, tbc_filename, video_standard, tape_s
         '-t', '3',              # Threads: 3
         '--ts', tape_speed,     # Tape speed: SP, LP, or EP
         '--no_resample',        # No resampling
-        '--recheck_phase',      # Recheck phase
         '--ire0_adjust',        # IRE 0 adjust
     ]
     
