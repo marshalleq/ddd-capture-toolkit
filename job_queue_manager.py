@@ -154,6 +154,8 @@ class JobQueueManager:
         self.running_jobs: Dict[str, threading.Thread] = {}
         self.job_processes: Dict[str, subprocess.Popen] = {}  # Track active processes
         self.lock = threading.Lock()
+        # Set when _save_queue_async had to skip; the processor loop retries it
+        self._save_pending = False
         self.stop_processing = False
         self.processor_thread = None
 
@@ -691,7 +693,11 @@ class JobQueueManager:
                 
                 for job_id in completed_jobs:
                     del self.running_jobs[job_id]
-                
+
+                # Retry a save that was deferred due to lock contention
+                if self._save_pending:
+                    self._save_queue_async()
+
                 time.sleep(1)  # Check every second
                 
             except Exception as e:
@@ -3776,10 +3782,14 @@ class JobQueueManager:
                 
                 # Save without holding the main lock
                 if jobs_copy is not None:
+                    self._save_pending = False
                     self._save_queue_data(jobs_copy)
             else:
-                # If we can't get the lock quickly, skip the save to avoid blocking
-                self.logger.debug("Skipping queue save due to lock contention")
+                # If we can't get the lock quickly, defer the save rather than
+                # block. The processor loop retries it, so a job's final status
+                # is never lost.
+                self._save_pending = True
+                self.logger.debug("Deferring queue save due to lock contention")
                 
         except Exception as e:
             self.logger.debug(f"Error in async queue save: {e}")
