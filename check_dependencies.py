@@ -15,29 +15,32 @@ from pathlib import Path
 def check_python_version():
     """Check Python version requirement.
 
-    The toolkit targets Python 3.10 (pinned in the conda environment files).
-    tbc-video-export publishes no wheels for Python >= 3.14, so a too-new
-    interpreter (typically a system python.org install used instead of the
-    conda env) fails to resolve dependencies. Flag that explicitly rather
-    than passing it with an unhelpful "OK".
+    The toolkit targets Python 3.12 (pinned in the conda environment files).
+    vhs-decode >= 0.4.0 requires Python >= 3.11, and tbc-video-export
+    publishes no wheels for Python >= 3.14, so a too-new interpreter
+    (typically a system python.org install used instead of the conda env)
+    fails to resolve dependencies. Flag both ends explicitly rather than
+    passing them with an unhelpful "OK".
     """
     print("Checking Python version...")
     version = sys.version_info
     ver_str = f"{version.major}.{version.minor}.{version.micro}"
-    if version < (3, 7):
-        print(f"   Python {ver_str} (< 3.7, please upgrade) ERROR")
+    if version < (3, 11):
+        print(f"   Python {ver_str} ERROR (too old - vhs-decode >= 0.4.0 requires Python >= 3.11)")
+        print(f"      The toolkit is designed to run in the 'ddd-capture-toolkit' conda env (Python 3.12).")
+        print(f"      Recreate it: conda remove -n ddd-capture-toolkit --all, then ./setup.sh")
         return False
     elif version >= (3, 14):
         print(f"   Python {ver_str} ERROR (too new - tbc-video-export has no wheels for >= 3.14)")
-        print(f"      The toolkit is designed to run in the 'ddd-capture-toolkit' conda env (Python 3.10).")
+        print(f"      The toolkit is designed to run in the 'ddd-capture-toolkit' conda env (Python 3.12).")
         print(f"      Do not pip install against a system Python. Run ./setup.sh, then:")
         print(f"      conda activate ddd-capture-toolkit")
         return False
-    elif version >= (3, 11):
-        print(f"   Python {ver_str} OK (3.10 recommended; toolkit conda env pins 3.10)")
+    elif version[:2] != (3, 12):
+        print(f"   Python {ver_str} OK (toolkit conda env pins 3.12)")
         return True
     else:
-        print(f"   Python {ver_str} (>= 3.7 required) OK")
+        print(f"   Python {ver_str} OK")
         return True
 
 def check_python_packages():
