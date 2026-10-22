@@ -160,7 +160,6 @@ class ParallelVHSDecoder:
                 '-t', '3',              # Threads: 3
                 '--ts', job.tape_speed, # Tape speed: SP/LP/EP
                 '--no_resample',        # No resampling
-                '--recheck_phase',      # Recheck phase
                 '--ire0_adjust',        # IRE 0 adjust
             ]
             

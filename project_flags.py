@@ -20,12 +20,6 @@ DECODE_FLAGS = {
         'description': 'Disable resampling',
         'default': True
     },
-    'recheck_phase': {
-        'cli_flag': '--recheck_phase',
-        'label': 'Recheck phase',
-        'description': 'Recheck phase on every frame',
-        'default': True
-    },
     'ire0_adjust': {
         'cli_flag': '--ire0_adjust',
         'label': 'IRE0 adjust',

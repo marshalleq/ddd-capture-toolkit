@@ -783,3 +783,25 @@ echo "=============================================="
 echo ""
 log_info "To check vhs-decode version later: cd external/vhs-decode && git describe --tags"
 echo ""
+
+# Warn about vhs-decode copies outside the toolkit env. A stray install (e.g.
+# `pip install` against system Python) ahead of the env in PATH gets picked
+# up whenever the toolkit isn't started via ./start.sh.
+STRAY_VHS_DECODE=()
+while IFS= read -r p; do
+    [[ -n "$p" && "$p" != "$CONDA_ENV_PATH"/* ]] && STRAY_VHS_DECODE+=("$p")
+done < <(type -ap vhs-decode 2>/dev/null)
+for p in "$HOME"/.local/bin/vhs-decode /usr/local/bin/vhs-decode /usr/bin/vhs-decode; do
+    if [[ -e "$p" ]] && [[ ! " ${STRAY_VHS_DECODE[*]} " =~ " $p " ]]; then
+        STRAY_VHS_DECODE+=("$p")
+    fi
+done
+if [[ ${#STRAY_VHS_DECODE[@]} -gt 0 ]]; then
+    log_warning "vhs-decode found outside the ddd-capture-toolkit env:"
+    for p in "${STRAY_VHS_DECODE[@]}"; do
+        echo "    $p"
+    done
+    log_warning "These are not managed by setup.sh and can shadow the env's copy."
+    log_warning "Remove them with the pip that installed them, e.g.: /usr/bin/python3 -m pip uninstall vhs-decode"
+    echo ""
+fi

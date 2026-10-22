@@ -857,7 +857,7 @@ class JobQueueManager:
             else:
                 cmd.append('--ntsc')
 
-            # Add per-project decode flags (includes defaults like --no_resample, --recheck_phase, --ire0_adjust)
+            # Add per-project decode flags (includes defaults like --no_resample, --ire0_adjust)
             if PROJECT_FLAGS_AVAILABLE and job.project_name:
                 flags_manager = ProjectFlagsManager()
                 cli_flags = flags_manager.get_cli_flags(job.project_name, 'decode')
@@ -866,7 +866,7 @@ class JobQueueManager:
                     self.logger.info(f"Added project decode flags: {' '.join(cli_flags)}")
             else:
                 # Fallback if project flags not available - use hardcoded defaults
-                cmd.extend(['--no_resample', '--recheck_phase', '--ire0_adjust'])
+                cmd.extend(['--no_resample', '--ire0_adjust'])
 
             # Check for segment configuration (for testing partial decodes)
             # segment_start_frame is used later for progress calculation
@@ -909,7 +909,22 @@ class JobQueueManager:
             if additional_params:
                 cmd.extend(additional_params.split())
             
+            # vhs-decode refuses to run if decode outputs already exist. Remove
+            # empty leftovers from a failed attempt; non-empty ones are kept so
+            # vhs-decode fails loudly rather than overwriting a real decode.
+            out_base = job.output_file.replace('.tbc', '')
+            for suffix in ('.tbc', '_chroma.tbc', '.log', '.tbc.json'):
+                leftover = out_base + suffix
+                if os.path.isfile(leftover) and os.path.getsize(leftover) == 0:
+                    os.remove(leftover)
+                    self.logger.info(f"Removed empty leftover from failed decode: {leftover}")
+
             self.logger.info(f"Starting VHS decode: {' '.join(cmd)}")
+            import shutil
+            self.logger.info(
+                f"Using vhs-decode: {shutil.which(cmd[0]) or 'NOT FOUND in PATH'} "
+                f"(toolkit Python: {sys.executable})"
+            )
 
             # Ask the affinity allocator for a set of physical cores to pin
             # this decode to. Strategy (see cpu_affinity.py): prefer an empty
@@ -972,12 +987,19 @@ class JobQueueManager:
             current_frame = 0
             start_time = time.time()  # Track start time for FPS calculation
 
+            # Keep the tail of vhs-decode's output so a failure can be logged
+            from collections import deque
+            output_tail = deque(maxlen=40)
+
             # Parse output for frame progress
             for line in iter(process.stdout.readline, ''):
                 if not line:
                     break
 
                 line = line.strip()
+                # Progress lines are \r-joined; keep only non-progress output
+                if line and 'File Frame' not in line:
+                    output_tail.append(line)
 
                 # Parse frame progress: "File Frame 1000: VHS"
                 import re
@@ -1041,7 +1063,12 @@ class JobQueueManager:
                         if not json_exists:
                             missing_files.append(json_file)
                         self.logger.error(f"VHS decode failed: output files not created or empty: {', '.join(missing_files)}")
-            
+                    if output_tail:
+                        self.logger.error(
+                            "vhs-decode output (last lines):\n    "
+                            + "\n    ".join(output_tail)
+                        )
+
             return return_code == 0 and output_files_exist
 
         except Exception as e:
@@ -3212,7 +3239,7 @@ class JobQueueManager:
 
         start = _t.time()
         proc = subprocess.Popen(
-            [tool, ldf_path, '0'],
+            [tool, ldf_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
@@ -3545,7 +3572,7 @@ class JobQueueManager:
 
         try:
             proc = subprocess.Popen(
-                [tool, ldf_path, str(seek_pos)],
+                [tool, '-s', str(seek_pos), ldf_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )
@@ -3613,7 +3640,7 @@ class JobQueueManager:
         start = time.time()
         try:
             proc = subprocess.Popen(
-                [tool, ldf_path, '0'],
+                [tool, ldf_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )

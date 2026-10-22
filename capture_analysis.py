@@ -79,7 +79,7 @@ def _extract_ldf_to_raw(input_path, skip_seconds, duration_seconds, raw_path):
 
     with open(raw_path, 'wb') as fout:
         reader = subprocess.Popen(
-            [tool, input_path, str(skip_samples)],
+            [tool, '-s', str(skip_samples), input_path],
             stdout=subprocess.PIPE,
         )
         try:

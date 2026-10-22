@@ -478,7 +478,7 @@ Tried `--sub_deemphasis` (SD) instead of NLD, with PAL2D chroma decoder.
 
 **Final winning combination for this tape vintage:**
 
-- Decode: `--sub_deemphasis` (and standard defaults: `--no_resample --recheck_phase --ire0_adjust`)
+- Decode: `--sub_deemphasis` (and standard defaults: `--no_resample --ire0_adjust`)
 - Chroma decoder: PAL2D (default for PAL S-Video)
 - Chroma gain: 1.0 (default — saturation adjusted in post if needed)
 
