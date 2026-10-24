@@ -47,20 +47,20 @@ This document describes how each tool in the VHS processing pipeline is sourced 
 
 ### Internal C++ Tools Called by tbc-video-export
 
-tbc-video-export internally calls these C++ tools which require `--input-json` support (from vhs-decode fork, NOT mainline ld-decode):
+tbc-video-export internally calls these C++ tools which require `--input-json` support (provided by the pinned `external/ld-decode`; vhs-decode >= 0.4.0 no longer ships these tools):
 
 | Internal Tool | Required Option | Easy Mode Source | Performance Mode Source | Status |
 |--------------|-----------------|------------------|------------------------|--------|
 | `ld-chroma-decoder` | `--input-json` | Bundled in AppImage | Compiled from `external/ld-decode` | ✅ Fixed |
-| `ld-dropout-correct` | `--input-json` | Bundled in AppImage | Compiled from `external/vhs-decode` | ✅ Fixed |
-| `ld-process-vbi` | `--input-json` | Bundled in AppImage | Compiled from `external/vhs-decode` | ✅ Fixed |
+| `ld-dropout-correct` | `--input-json` | Bundled in AppImage | Compiled from `external/ld-decode` | ✅ Fixed |
+| `ld-process-vbi` | `--input-json` | Bundled in AppImage | Compiled from `external/ld-decode` | ✅ Fixed |
 | `ffmpeg` | N/A | Bundled in AppImage | Compiled with `-march=native` | ✅ Fixed |
 
 ### Historical Note
 
-- **vhs-decode** (oyvindln/vhs-decode) ld-tools use `--input-json` - this is what tbc-video-export expects
-- **ld-decode** (happycube/ld-decode) ld-tools use `--input-metadata` - this was the WRONG version
-- The `build-ld-decode.sh` script was fixed to build from vhs-decode instead of ld-decode
+- Earlier, ld-tools were built from vhs-decode, because mainline ld-decode used `--input-metadata` rather than the `--input-json` that tbc-video-export expects.
+- vhs-decode 0.4.0 removed its ld-tools (they moved to tbc-tools under new `tbc-*` names), and the pinned `external/ld-decode` now has `--input-json`. Commit `b01e55a` switched `build-ld-decode.sh` back to building from `external/ld-decode`.
+- See `docs/architecture.md` for how the pieces fit together and what updates them.
 
 ---
 
@@ -140,7 +140,7 @@ The `_execute_tbc_export_job()` function looks for tbc-video-export in this orde
 The two modes share state in unintended ways, which has produced misleading version reporting and silent-failure bugs. These are open follow-ups to investigate:
 
 1. **`conda run -n ddd-capture-toolkit pip` resolves to the user-local pip, not the conda env's pip.**
-   When setup's version reporter (and likely other call sites) runs `conda run -n <env> pip show vhs-decode`, the resolved `pip` is `~/.local/bin/pip` (Python 3.14, user site-packages) rather than the conda env's `pip` (Python 3.10). It reports whatever's in `~/.local/lib/python3.14/site-packages` even when the conda env contains a different version. Needs a fix that forces use of the env's pip explicitly (e.g., `conda run -n <env> python -m pip` after verifying that resolves correctly, or invoking `$CONDA_ENV_PATH/bin/pip` directly).
+   When setup's version reporter (and likely other call sites) runs `conda run -n <env> pip show vhs-decode`, the resolved `pip` is `~/.local/bin/pip` (Python 3.14, user site-packages) rather than the conda env's `pip` (Python 3.12). It reports whatever's in `~/.local/lib/python3.14/site-packages` even when the conda env contains a different version. Needs a fix that forces use of the env's pip explicitly (e.g., `conda run -n <env> python -m pip` after verifying that resolves correctly, or invoking `$CONDA_ENV_PATH/bin/pip` directly).
 
 2. **`setuptools_scm` falls back to `0.0.0` when building vhs-decode from the submodule.**
    `external/vhs-decode/pyproject.toml` declares `dynamic = ["version"]` with `setuptools_scm`. The submodule has a gitlink `.git` *file* (not directory) — `setuptools_scm` apparently fails to follow it during the build, so the installed package metadata ends up as `vhs_decode-0.0.0` even though `v0.3.9` is checked out. Cosmetic only (the binary is fully functional and native-optimized), but produces confusing version output. The setup.sh reporter now uses `git describe` directly to side-step this, but the dist-info itself is still wrong.

@@ -92,3 +92,7 @@ CLAUDE.md
 .codeium/
 .continue/
 .windsurf/
+
+# Local planning/architecture notes (not published)
+docs/architecture.md
+docs/migration-plan.md
