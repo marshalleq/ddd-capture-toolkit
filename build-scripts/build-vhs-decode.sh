@@ -212,10 +212,15 @@ build_vhs_decode() {
         log_info "RUSTFLAGS: $RUSTFLAGS"
     fi
 
-    # Install setuptools-rust (required to build the Rust extension)
+    # Build dependencies. The install below runs with --no-build-isolation, so what
+    # pyproject.toml lists under [build-system] must already be in the environment:
+    #  - setuptools-rust builds the Rust extension;
+    #  - setuptools_scm reads the version from git. Without it the build quietly
+    #    reports version 0.0.0 / 'unknown', and every .tbc.json it writes records
+    #    version "unknown" instead of the vhs-decode release that decoded it.
     log_info "Installing build dependencies..."
-    pip install setuptools-rust || {
-        log_error "Failed to install setuptools-rust"
+    pip install setuptools-rust "setuptools_scm>=6.2" || {
+        log_error "Failed to install the build dependencies (setuptools-rust, setuptools_scm)"
         return 1
     }
 
