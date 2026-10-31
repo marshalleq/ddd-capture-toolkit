@@ -121,3 +121,28 @@ else
     log_error "The vhs-decode command was written but does not run: ${SHIM}"
     exit 1
 fi
+
+# ld-ldf-reader: the toolkit runs it for capture analysis and .ldf validation. The release
+# ships it as a Python script that needs PyAV, so install PyAV and fetch that script for
+# this tag. (It is a single standalone file.) Performance mode compiles the C reader instead.
+PY="${PREFIX}/bin/python"
+if [[ -x "$PY" ]]; then
+    READER="${PREFIX}/bin/ld-ldf-reader"
+    READER_URL="https://raw.githubusercontent.com/${REPO}/${VERSION}/lddecode/ldf_reader.py"
+    log_info "Installing ld-ldf-reader (PyAV and the ${VERSION} reader script)..."
+    if "$PY" -m pip install -q av \
+        && fetch "$READER_URL" "${READER}.part" \
+        && { printf '#!%s\n' "$PY"; cat "${READER}.part"; } > "${READER}.new" \
+        && chmod 755 "${READER}.new" \
+        && mv -f "${READER}.new" "$READER"; then
+        rm -f "${READER}.part"
+        if "$READER" --help > /dev/null 2>&1; then
+            log_success "ld-ldf-reader installed: ${READER}"
+        else
+            log_warning "ld-ldf-reader was written but does not run: ${READER}"
+        fi
+    else
+        rm -f "${READER}.part" "${READER}.new"
+        log_warning "Could not install ld-ldf-reader. Capture analysis of .ldf files and .ldf validation need it."
+    fi
+fi
