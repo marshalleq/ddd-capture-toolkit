@@ -537,6 +537,14 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
         log_info "This will take 30-60 minutes depending on your system..."
         echo ""
         
+        # Make sure the source submodules are present at their recorded commits.
+        # (build-vhs-decode.sh then moves vhs-decode to the release it was asked for.)
+        if [[ -e ".git" ]]; then
+            log_info "Checking out build sources (git submodules)..."
+            git submodule update --init external/ld-decode external/vhs-decode \
+                || log_warning "Could not update the ld-decode / vhs-decode submodules; building what is checked out"
+        fi
+
         # Build LD-Decode
         if [[ -x "build-scripts/build-ld-decode.sh" ]]; then
             log_info "Building LD-Decode..."
@@ -803,7 +811,7 @@ echo ""
 # into /usr) ahead of the env in PATH gets picked up whenever the toolkit
 # isn't started via ./start.sh, and isn't updated by setup.
 STRAY_TOOLS=()
-for tool in vhs-decode ld-chroma-decoder ld-dropout-correct ld-process-vbi ld-export-metadata ld-lds-converter ld-ldf-reader; do
+for tool in vhs-decode ld-chroma-decoder ld-dropout-correct ld-process-vbi ld-export-metadata ld-lds-converter ld-ldf-reader ld-analyse ld-compress ld-cut ld-decode ld-discmap ld-disc-stacker ld-chroma-encoder ld-process-efm ld-process-vits ld-ac3-decode ld-ac3-demodulate; do
     candidates=$(type -ap "$tool" 2>/dev/null; for d in "$HOME/.local/bin" /usr/local/bin /usr/bin; do [[ -e "$d/$tool" ]] && echo "$d/$tool"; done)
     while IFS= read -r p; do
         [[ -z "$p" || "$p" == "$CONDA_ENV_PATH"/* ]] && continue
@@ -816,6 +824,24 @@ if [[ ${#STRAY_TOOLS[@]} -gt 0 ]]; then
         echo "    $p"
     done
     log_warning "These are not managed by setup.sh and can shadow the env's copies."
-    log_warning "Remove them with whatever installed them (pip uninstall, or sudo rm for a manual install into /usr)."
+    if [[ "$FORCE_MODE" != "true" ]] && [[ -t 0 ]]; then
+        read -p "Move them aside (not deleted; may ask for sudo) so they cannot shadow the env? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            build-scripts/retire-stray-tools.sh "${STRAY_TOOLS[@]}" \
+                || log_warning "Some tools could not be moved aside; see above"
+        fi
+    else
+        log_warning "To move them aside later: build-scripts/retire-stray-tools.sh <path> [<path> ...]"
+    fi
+    echo ""
+fi
+
+# Finish with the dependency check, so a broken or shadowed tool shows up now
+# rather than as an empty decode later.
+if [[ -f "check_dependencies.py" ]]; then
+    log_info "Running the dependency check..."
+    conda run --no-capture-output -n ddd-capture-toolkit python3 check_dependencies.py \
+        || log_warning "The dependency check reported problems (see above)"
     echo ""
 fi
