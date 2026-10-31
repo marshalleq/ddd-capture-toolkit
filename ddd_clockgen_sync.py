@@ -851,7 +851,7 @@ def cleanup_existing_processes():
             time.sleep(0.5)  # Give time for device to be released
 
         # Check for running vhs-decode processes
-        result = subprocess.run(['pgrep', '-f', 'vhs-decode'], capture_output=True, text=True)
+        result = subprocess.run(['pgrep', '-f', 'vhs-decode|tape-decode'], capture_output=True, text=True)
         if result.returncode == 0 and result.stdout.strip():
             pids = result.stdout.strip().split('\n')
             print(f"\nFound {len(pids)} running vhs-decode process(es)")
@@ -911,7 +911,7 @@ def run_vhs_decode_with_params(rf_filename, tbc_filename, video_standard, tape_s
     """
     # Clean up any existing vhs-decode processes first
     try:
-        result = subprocess.run(['pgrep', '-f', 'vhs-decode'], capture_output=True, text=True)
+        result = subprocess.run(['pgrep', '-f', 'vhs-decode|tape-decode'], capture_output=True, text=True)
         if result.returncode == 0 and result.stdout.strip():
             pids = result.stdout.strip().split('\n')
             print(f"Found {len(pids)} existing vhs-decode process(es), terminating...")
@@ -925,48 +925,37 @@ def run_vhs_decode_with_params(rf_filename, tbc_filename, video_standard, tape_s
     except Exception as e:
         print(f"Process cleanup warning: {e}")
     
-    # Check if vhs-decode is available
-    vhs_decode_path = check_command_available('vhs-decode')
-    if not vhs_decode_path:
-        print("ERROR: vhs-decode not found in system PATH")
-        print("Please install vhs-decode or ensure it's in your PATH")
-        print("Visit: https://github.com/oyvindln/vhs-decode")
+    from decoder_backends import select_decoder
+    decoder = select_decoder()
+    decoder_path = decoder.executable()
+    if not decoder_path:
+        print(f"ERROR: {decoder.command_name} not found (decoder_backend = {decoder.key})")
+        print(decoder.install_hint)
         return False
-    
-    print(f"Using vhs-decode: {vhs_decode_path}")
-    
-    # Build the vhs-decode command with configurable options
-    cmd = [
-        'vhs-decode',
-        '--tf', 'vhs',          # Format: VHS
-        '-t', '3',              # Threads: 3
-        '--ts', tape_speed,     # Tape speed: SP, LP, or EP
-        '--no_resample',        # No resampling
-        '--ire0_adjust',        # IRE 0 adjust
-    ]
-    
-    # Add video standard (PAL or NTSC)
-    if video_standard.lower() == 'pal':
-        cmd.append('--pal')
-    elif video_standard.lower() == 'ntsc':
-        cmd.append('--ntsc')
-    else:
+    print(f"Using {decoder.key}: {decoder_path}")
+
+    if video_standard.lower() not in ('pal', 'ntsc'):
         print(f"ERROR: Invalid video standard '{video_standard}'. Must be 'pal' or 'ntsc'.")
         return False
-    
-    # Add additional user parameters if provided
-    if additional_params and additional_params.strip():
-        # Split the additional parameters and add them to the command
-        extra_params = additional_params.strip().split()
-        cmd.extend(extra_params)
-        print(f"Adding user parameters: {' '.join(extra_params)}")
-    
-    # Add input and output files at the end
-    cmd.extend([
-        rf_filename,            # Input RF file
-        tbc_filename.replace('.tbc', '')  # Output base name (without extension)
-    ])
-    
+    problem = decoder.input_problem(rf_filename)
+    if problem:
+        print(f"ERROR: {problem}")
+        return False
+    out_base = tbc_filename.replace('.tbc', '')
+    stale = decoder.stale_outputs(out_base)
+    if stale:
+        print(f"ERROR: {decoder.command_name} will not decode over an earlier decode's files: "
+              + ", ".join(os.path.basename(f) for f in stale))
+        return False
+    cmd, problems = decoder.build_command(
+        decoder_path,
+        {'video_standard': video_standard, 'tape_speed': tape_speed,
+         'additional_params': (additional_params or '').strip()},
+        ['--no_resample', '--ire0_adjust'], rf_filename, out_base)
+    if problems:
+        print(f"ERROR: {decoder.key}: " + "; ".join(problems))
+        return False
+
     print(f"Command: {' '.join(cmd)}")
     print(f"This may take several minutes depending on capture length...")
     

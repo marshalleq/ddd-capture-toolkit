@@ -34,6 +34,7 @@ DEFAULT_CONFIG = {
     "default_capture_name": "my_vhs_capture",
     "audio_delay": 0.000,  # Default audio delay for sync
     "audio_delay_backend": None,  # Capture backend the audio_delay was calibrated with (None = pre-backend, forked app)
+    "decoder_backend": "vhs-decode",  # RF decoder: "vhs-decode" or "tape-decode" (see decoder_backends.py)
     "capture_backend": "auto",  # RF capture program: "auto", "ddd-gui", "ddd-legacy" (see capture_backends.py)
     "capture_binary": None,  # Optional override of the RF capture program (path or command line)
     "preferred_video_format": "PAL",  # PAL or NTSC

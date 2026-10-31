@@ -704,7 +704,14 @@ def run_parallel_decode(jobs_list, max_workers=2):
     if not jobs_list:
         print("No jobs provided for parallel decode")
         return False
-    
+
+    from decoder_backends import select_decoder
+    chosen = select_decoder()
+    if chosen.key != 'vhs-decode':
+        print(f"ERROR: this menu runs vhs-decode, but decoder_backend is {chosen.key}.")
+        print("Queue the decode from the workflow control centre instead, or set decoder_backend to vhs-decode.")
+        return False
+
     print(f"Setting up {len(jobs_list)} parallel decode jobs (max {max_workers} concurrent)...")
     
     # Create decoder instance

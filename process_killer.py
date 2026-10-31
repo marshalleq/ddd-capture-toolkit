@@ -46,6 +46,7 @@ class ProcessKiller:
     VHS_PROCESS_PATTERNS = [
         'ld-decode',
         'vhs-decode', 
+        'tape-decode',
         'tbc-video-export',
         'ld-dropout-correct',
         'ld-chroma-decoder',
