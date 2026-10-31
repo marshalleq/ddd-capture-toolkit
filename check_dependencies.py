@@ -65,20 +65,10 @@ def check_python_packages():
             module = importlib.import_module(package)
             version = module.__version__ if hasattr(module, '__version__') else 'unknown'
             
-            # Special check for NumPy version compatibility with vhs-decode
-            if package == 'numpy':
-                try:
-                    major_version = int(version.split('.')[0])
-                    if major_version >= 2:
-                        print(f"   {name} {version} WARNING (vhs-decode requires NumPy 1.x)")
-                        print(f"      Current NumPy 2.x may cause vhs-decode to fail")
-                        print(f"      Fix with: pip install 'numpy<2.0'")
-                    else:
-                        print(f"   {name} {version} OK")
-                except (ValueError, AttributeError):
-                    print(f"   {name} {version} OK")
-            else:
-                print(f"   {name} {version} OK")
+            # NumPy 2.x is fine: vhs-decode 0.4.0 declares numpy>=1.24 and decodes
+            # correctly under NumPy 2.5 (and SciPy here needs NumPy 2). The old
+            # "requires NumPy 1.x" warning applied to earlier vhs-decode releases.
+            print(f"   {name} {version} OK")
         except ImportError:
             print(f"   {name} ERROR (install with: pip install {name})")
             all_good = False
