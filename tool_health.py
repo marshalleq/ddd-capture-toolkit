@@ -206,6 +206,37 @@ def format_report(report):
     if report['shadows']:
         lines.append(f"      hides the environment's own copy: {report['shadows']}")
     if severity != 'ok':
-        lines.append("      Setup builds its own copy into the environment; retire this one or put the "
+        lines.append("      Setup provides the environment's own copy; retire this one or put the "
                      "environment's bin first on PATH.")
     return lines, severity
+
+
+def ffmpeg_has_soxr(ffmpeg):
+    """True if this ffmpeg was built with libsoxr (the final mux resamples with it)."""
+    try:
+        out = subprocess.run([ffmpeg, '-hide_banner', '-version'],
+                             capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return 'libsoxr' in out
+
+
+def find_soxr_ffmpeg():
+    """Path of the first ffmpeg with libsoxr, or None.
+
+    The environment's own ffmpeg comes first (performance mode compiles one with
+    soxr). Easy mode's conda ffmpeg has none, so the system's is tried next: the
+    other ffmpegs on PATH, then the usual system locations.
+    """
+    candidates = []
+    for directory in os.environ.get('PATH', '').split(os.pathsep):
+        candidates.append(os.path.join(directory, 'ffmpeg'))
+    candidates += ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg']
+    seen = set()
+    for path in candidates:
+        if path in seen or not (os.path.isfile(path) and os.access(path, os.X_OK)):
+            continue
+        seen.add(path)
+        if ffmpeg_has_soxr(path):
+            return path
+    return None

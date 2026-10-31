@@ -75,6 +75,8 @@ SYSTEM PACKAGES (you install these; setup only tells you which are missing):
   pv          progress bars while compressing
   dvdauthor   creating calibration DVDs
   genisoimage creating calibration DVD images (cdrtools on Arch and openSUSE)
+  ffmpeg      easy mode only: the final mux needs one built with libsoxr (conda's has none).
+              Fedora: enable RPM Fusion, then 'sudo dnf swap ffmpeg-free ffmpeg --allowerasing'
   Fedora:  sudo dnf install sox pv dvdauthor genisoimage
   Debian:  sudo apt install sox pv dvdauthor genisoimage
   Arch:    sudo pacman -S sox pv dvdauthor cdrtools
@@ -355,6 +357,18 @@ report_system_packages() {
     fi
     if ! command -v genisoimage &> /dev/null && ! command -v mkisofs &> /dev/null; then
         missing_pkgs+=("$iso_pkg"); missing_why+=("creating calibration DVD images")
+    fi
+
+    # Easy mode only: conda's ffmpeg has no libsoxr, which the final mux needs.
+    # Performance mode compiles its own ffmpeg with it.
+    if [[ "$INSTALL_MODE" == "easy" ]]; then
+        local sys_ffmpeg="" f
+        for f in /usr/bin/ffmpeg /usr/local/bin/ffmpeg; do
+            if [[ -x "$f" ]] && "$f" -hide_banner -version 2>/dev/null | grep -q libsoxr; then sys_ffmpeg="$f"; break; fi
+        done
+        if [[ -z "$sys_ffmpeg" ]]; then
+            missing_pkgs+=("ffmpeg"); missing_why+=("final mux (easy mode; needs libsoxr. Fedora: from RPM Fusion, not ffmpeg-free)")
+        fi
     fi
 
     if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
