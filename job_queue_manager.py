@@ -831,29 +831,27 @@ class JobQueueManager:
                 job.total_frames = total_frames
                 self.logger.info(f"VHS decode total frames from capture JSON: {total_frames}")
 
-            # Find vhs-decode command - check PATH first (installed version), then submodule
-            import shutil
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-
-            vhs_decode_cmd = None
-            # First check if installed in PATH (via pip install)
-            if shutil.which('vhs-decode'):
-                vhs_decode_cmd = 'vhs-decode'
-            else:
-                # Fall back to submodule script
-                submodule_path = os.path.join(script_dir, 'external', 'vhs-decode', 'vhs-decode')
-                if os.path.exists(submodule_path):
-                    vhs_decode_cmd = submodule_path
-
-            if not vhs_decode_cmd:
-                self.logger.error("vhs-decode not found in PATH or external/vhs-decode/")
-                job.error_message = "vhs-decode not found. Run setup.sh to install it."
+            # The decoder is chosen in config ("decoder_backend"); see decoder_backends.py.
+            # Exactly that one is used: if it is not installed or cannot read this
+            # capture, the job fails and says so.
+            from decoder_backends import select_decoder
+            decoder = select_decoder()
+            decoder_exe = decoder.executable()
+            if not decoder_exe:
+                job.error_message = (f"{decoder.command_name} not found (decoder_backend = {decoder.key}). "
+                                     f"{decoder.install_hint}")
+                self.logger.error(job.error_message)
+                return False
+            input_problem = decoder.input_problem(job.input_file)
+            if input_problem:
+                job.error_message = input_problem
+                self.logger.error(input_problem)
                 return False
 
-            # A .ldf / .flac capture is read through ld-ldf-reader. If that program
-            # cannot start, vhs-decode does not fail - it finishes with no frames
+            # A .ldf / .flac capture read by vhs-decode goes through ld-ldf-reader. If that
+            # program cannot start, vhs-decode does not fail - it finishes with no frames
             # and an empty .tbc - so stop here with the real reason instead.
-            if job.input_file.lower().endswith(('.ldf', '.flac')):
+            if decoder.key == 'vhs-decode' and job.input_file.lower().endswith(('.ldf', '.flac')):
                 try:
                     import tool_health
                     reader_problem = tool_health.reader_problem()
@@ -864,34 +862,20 @@ class JobQueueManager:
                     job.error_message = reader_problem
                     return False
 
-            # Build vhs-decode command
-            cmd = [
-                vhs_decode_cmd,
-                '--tf', 'vhs',
-                '-t', '3',
-                '--ts', job.parameters.get('tape_speed', 'SP'),
-            ]
-
-            # Add video standard
-            if job.parameters.get('video_standard', 'pal').lower() == 'pal':
-                cmd.append('--pal')
-            else:
-                cmd.append('--ntsc')
-
-            # Add per-project decode flags (includes defaults like --no_resample, --ire0_adjust)
+            # Per-project decode flags (includes defaults like --no_resample, --ire0_adjust)
+            cli_flags = []
             if PROJECT_FLAGS_AVAILABLE and job.project_name:
                 flags_manager = ProjectFlagsManager()
                 cli_flags = flags_manager.get_cli_flags(job.project_name, 'decode')
                 if cli_flags:
-                    cmd.extend(cli_flags)
                     self.logger.info(f"Added project decode flags: {' '.join(cli_flags)}")
             else:
-                # Fallback if project flags not available - use hardcoded defaults
-                cmd.extend(['--no_resample', '--ire0_adjust'])
+                cli_flags = ['--no_resample', '--ire0_adjust']
 
             # Check for segment configuration (for testing partial decodes)
             # segment_start_frame is used later for progress calculation
             segment_start_frame = 0
+            segment = None
             try:
                 from segment_config import load_segment_config
                 segment_config = load_segment_config(job.project_name)
@@ -905,7 +889,7 @@ class JobQueueManager:
                         frame_count = segment_config.get('frame_count_ntsc', 0)
 
                     if segment_start_frame >= 0 and frame_count > 0:
-                        cmd.extend(['-s', str(segment_start_frame), '-l', str(frame_count)])
+                        segment = (segment_start_frame, frame_count)
                         self.logger.info(f"Segment mode: start={segment_start_frame}, length={frame_count} ({video_standard.upper()})")
                         # Update total_frames to segment frame count for accurate ETA
                         # CRITICAL: Update both the job object AND the local variable
@@ -919,31 +903,39 @@ class JobQueueManager:
             except Exception as e:
                 self.logger.warning(f"Error checking segment config: {e}")
 
-            # Add input and output
-            cmd.extend([
-                job.input_file,
-                job.output_file.replace('.tbc', '')
-            ])
-
-            # Add additional parameters if specified
-            additional_params = job.parameters.get('additional_params', '')
-            if additional_params:
-                cmd.extend(additional_params.split())
-            
-            # vhs-decode refuses to run if decode outputs already exist. Remove
-            # empty leftovers from a failed attempt; non-empty ones are kept so
-            # vhs-decode fails loudly rather than overwriting a real decode.
+            try:
+                threads = int(job.parameters.get('threads', 3) or 3)
+            except (TypeError, ValueError):
+                threads = 3
             out_base = job.output_file.replace('.tbc', '')
+            cmd, problems = decoder.build_command(
+                decoder_exe, job.parameters, cli_flags, job.input_file, out_base,
+                segment=segment, threads=threads)
+            if problems:
+                job.error_message = f"{decoder.key}: " + "; ".join(problems)
+                self.logger.error(job.error_message)
+                return False
+
+            # Decoders refuse to run over an earlier decode's files. Remove empty
+            # leftovers from a failed attempt; non-empty ones are kept so a real
+            # decode is never overwritten.
             for suffix in ('.tbc', '_chroma.tbc', '.log', '.tbc.json'):
                 leftover = out_base + suffix
                 if os.path.isfile(leftover) and os.path.getsize(leftover) == 0:
                     os.remove(leftover)
                     self.logger.info(f"Removed empty leftover from failed decode: {leftover}")
+            stale = decoder.stale_outputs(out_base)
+            if stale:
+                job.error_message = (f"{decoder.command_name} will not decode over an earlier decode's files "
+                                     f"({', '.join(os.path.basename(f) for f in stale)}). "
+                                     "Delete them to decode again, or re-run the decode with overwrite")
+                self.logger.error(job.error_message)
+                return False
 
             self.logger.info(f"Starting VHS decode: {' '.join(cmd)}")
             import shutil
             self.logger.info(
-                f"Using vhs-decode: {shutil.which(cmd[0]) or 'NOT FOUND in PATH'} "
+                f"Using {decoder.key}: {shutil.which(cmd[0]) or 'NOT FOUND in PATH'} "
                 f"(toolkit Python: {sys.executable})"
             )
 
@@ -954,11 +946,7 @@ class JobQueueManager:
             # second on the other CCD, and so on. Concurrent decodes don't
             # bounce across CCDs.
             # cores_wanted = -t threads + 1 (main process + worker pool).
-            try:
-                threads = int(job.parameters.get('threads', 3) or 3)
-            except (TypeError, ValueError):
-                threads = 3
-            cores_wanted = max(2, threads + 1)
+            cores_wanted = decoder.cores_wanted(threads)
             pinned_cpus = None
             preexec_fn = None
             if self.affinity_allocator is not None and self.affinity_allocator.available:
@@ -976,12 +964,12 @@ class JobQueueManager:
 
             if pinned_cpus:
                 self.logger.info(
-                    f"Pinning vhs-decode {job.job_id} to physical CPUs "
+                    f"Pinning {decoder.key} {job.job_id} to physical CPUs "
                     f"{pinned_cpus} (no SMT siblings)"
                 )
             else:
                 self.logger.info(
-                    f"vhs-decode {job.job_id}: running unpinned "
+                    f"{decoder.key} {job.job_id}: running unpinned "
                     f"(allocator unavailable or no free cores)"
                 )
 
@@ -1008,7 +996,7 @@ class JobQueueManager:
             current_frame = 0
             start_time = time.time()  # Track start time for FPS calculation
 
-            # Keep the tail of vhs-decode's output so a failure can be logged
+            # Keep the tail of the decoder's output so a failure can be logged
             from collections import deque
             output_tail = deque(maxlen=40)
 
@@ -1017,16 +1005,16 @@ class JobQueueManager:
                 if not line:
                     break
 
-                line = line.strip()
+                from decoder_backends import ansi_stripped
+                line = ansi_stripped(line.strip())
                 # Progress lines are \r-joined; keep only non-progress output
-                if line and 'File Frame' not in line:
+                if line and decoder.parse_progress(line) is None:
                     output_tail.append(line)
 
-                # Parse frame progress: "File Frame 1000: VHS"
-                import re
-                frame_match = re.search(r'File Frame (\d+):', line)
-                if frame_match:
-                    current_frame = int(frame_match.group(1))
+                # Frame progress, in whatever form the chosen decoder prints it
+                parsed_frame = decoder.parse_progress(line)
+                if parsed_frame is not None:
+                    current_frame = parsed_frame
 
                     # Calculate frames processed (relative to segment start for segment mode)
                     frames_processed = current_frame - segment_start_frame
@@ -1062,8 +1050,7 @@ class JobQueueManager:
             # Check if the job actually succeeded by verifying output files exist
             # VHS decode produces both .tbc and .tbc.json files (the bare
             # .json next to them is the capture's metadata, not decode output)
-            tbc_file = job.output_file
-            json_file = job.output_file + '.json'
+            tbc_file, json_file = decoder.output_files(out_base)
             
             tbc_exists = os.path.exists(tbc_file) and os.path.getsize(tbc_file) > 0
             json_exists = os.path.exists(json_file) and os.path.getsize(json_file) > 0
@@ -1087,27 +1074,12 @@ class JobQueueManager:
                         self.logger.error(f"VHS decode failed: output files not created or empty: {', '.join(missing_files)}")
                     if output_tail:
                         self.logger.error(
-                            "vhs-decode output (last lines):\n    "
+                            f"{decoder.key} output (last lines):\n    "
                             + "\n    ".join(output_tail)
                         )
                     # Say why on the job itself, so the matrix shows a reason rather
                     # than a bare "Failed".
-                    if return_code != 0:
-                        reason = f"vhs-decode exited with code {return_code}"
-                    else:
-                        reason = "vhs-decode finished but wrote no decoded output"
-                    if any('Existing decode files found' in line for line in (output_tail or [])):
-                        # vhs-decode lists the files it refuses to overwrite after that line
-                        found = [os.path.basename(l.strip()) for l in output_tail
-                                 if l.strip().startswith(os.sep)]
-                        reason = ("vhs-decode will not decode over an earlier decode's files"
-                                  + (f" ({', '.join(found)})" if found else "")
-                                  + ". Delete them to decode again, or re-run the decode with overwrite")
-                    elif any('without handling any frames' in line for line in (output_tail or [])):
-                        reason += (". It read no frames from the input: check the RF file and video "
-                                   "standard, and that ld-ldf-reader works (run check_dependencies.py)")
-                    elif output_tail:
-                        reason += f". Last output: {output_tail[-1].strip()[:160]}"
+                    reason = decoder.failure_reason(return_code, output_tail)
                     job.error_message = reason
 
             return return_code == 0 and output_files_exist

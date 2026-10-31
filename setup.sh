@@ -595,6 +595,10 @@ if command -v conda &> /dev/null; then
             if ! build-scripts/install-tbc-tools.sh $easy_args; then
                 log_warning "Could not install the prebuilt tbc-tools (ld-analyse, ld-lds-converter and the other ld-* programs)"
             fi
+            # the Rust decoder (namazso/tape-decode-rs): selected with "decoder_backend" in config
+            if ! build-scripts/install-tape-decode.sh --mode easy --prefix "$EASY_ENV_PATH"; then
+                log_warning "Could not install tape-decode (the Rust decoder); decoder_backend \"tape-decode\" will not work"
+            fi
         else
             # No prebuilt command-line bundle is installed on this platform; PyPI is what is left.
             log_warning "On $OS easy mode installs vhs-decode from PyPI, which is 0.3.8.1 (the current release is v0.4.0)."
@@ -828,6 +832,15 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
             fi
             build-scripts/install-tbc-tools.sh $perf_tools_args \
                 || log_warning "Could not install the prebuilt tbc-tools (ld-analyse will not be available)"
+        fi
+
+        # The Rust decoder (namazso/tape-decode-rs), compiled for this CPU
+        if [[ "$(uname -s)" == "Linux" && -x "build-scripts/install-tape-decode.sh" ]]; then
+            tape_env_path=$(conda env list | awk '$1=="ddd-capture-toolkit" {print $NF}' | head -n1)
+            tape_args="--mode performance --prefix $tape_env_path"
+            [[ "$build_args" == *--safe* ]] && tape_args="$tape_args --safe"
+            build-scripts/install-tape-decode.sh $tape_args \
+                || log_warning "Could not build tape-decode (the Rust decoder); decoder_backend \"tape-decode\" will not work"
         fi
 
         log_success "Source compilation completed"

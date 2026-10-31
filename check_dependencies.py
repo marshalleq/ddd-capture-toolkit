@@ -325,6 +325,24 @@ def check_system_commands():
     
     return all_good and ld_health_ok
 
+def check_decoder_backend():
+    """The decoder chosen by "decoder_backend" in config/config.json must be installed."""
+    print("\n Checking the chosen decoder...")
+    try:
+        from decoder_backends import select_decoder
+        decoder = select_decoder()
+    except ValueError as e:
+        print(f"    {e}")
+        return False
+    exe = decoder.executable()
+    if exe:
+        print(f"    {decoder.label} - found at {exe}")
+        return True
+    print(f"    {decoder.label} - not found (decoder_backend = {decoder.key})")
+    print(f"      {decoder.install_hint}")
+    return False
+
+
 def check_ffmpeg_features():
     """Check that an ffmpeg with libsoxr is available for final-mux.
 
@@ -441,6 +459,7 @@ def main():
         check_python_version(),
         check_python_packages(),
         check_system_commands(),
+        check_decoder_backend(),
         check_ffmpeg_features(),
     ]
 
