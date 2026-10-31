@@ -5,6 +5,7 @@ Unified workflow management with project matrix A-G, selection system, and rich 
 """
 
 import os
+import rf_formats
 import re
 import sys
 import time
@@ -1985,12 +1986,7 @@ class WorkflowControlCentre:
                     return False
                 
                 # Handle both .lds and .ldf extensions
-                if rf_file.endswith('.lds'):
-                    tbc_file = rf_file.replace('.lds', '.tbc')
-                elif rf_file.endswith('.ldf'):
-                    tbc_file = rf_file.replace('.ldf', '.tbc')
-                else:
-                    tbc_file = rf_file + '.tbc'
+                tbc_file = rf_formats.rf_with_suffix(rf_file, '.tbc')
 
                 # On explicit overwrite, remove any leftover decode outputs from
                 # prior runs BEFORE submitting the new job. Otherwise a partial
@@ -2043,20 +2039,10 @@ class WorkflowControlCentre:
                 elif hasattr(project, 'capture_files') and 'video' in project.capture_files:
                     # Try to find TBC file based on RF file name
                     rf_file = project.capture_files['video']
-                    if rf_file.endswith('.lds'):
-                        tbc_file = rf_file.replace('.lds', '.tbc')
-                    elif rf_file.endswith('.ldf'):
-                        tbc_file = rf_file.replace('.ldf', '.tbc')
-                    else:
-                        tbc_file = rf_file + '.tbc'
+                    tbc_file = rf_formats.rf_with_suffix(rf_file, '.tbc')
                 elif hasattr(project, 'rf_file'):
                     rf_file = project.rf_file
-                    if rf_file.endswith('.lds'):
-                        tbc_file = rf_file.replace('.lds', '.tbc')
-                    elif rf_file.endswith('.ldf'):
-                        tbc_file = rf_file.replace('.ldf', '.tbc')
-                    else:
-                        tbc_file = rf_file + '.tbc'
+                    tbc_file = rf_formats.rf_with_suffix(rf_file, '.tbc')
                     
                 if not tbc_file or not os.path.exists(tbc_file):
                     self.message = f"TBC file not found for {project.name} (tried: {tbc_file})"
@@ -2116,12 +2102,7 @@ class WorkflowControlCentre:
                 elif hasattr(project, 'capture_files') and 'video' in project.capture_files:
                     # Try to find TBC JSON based on RF file name
                     rf_file = project.capture_files['video']
-                    if rf_file.endswith('.lds'):
-                        tbc_json_file = rf_file.replace('.lds', '.tbc.json')
-                    elif rf_file.endswith('.ldf'):
-                        tbc_json_file = rf_file.replace('.ldf', '.tbc.json')
-                    else:
-                        tbc_json_file = rf_file + '.tbc.json'
+                    tbc_json_file = rf_formats.rf_with_suffix(rf_file, '.tbc.json')
                 
                 if not audio_file or not os.path.exists(audio_file):
                     self.message = f"Audio file not found for {project.name} (tried: {audio_file})"
@@ -2269,13 +2250,17 @@ class WorkflowControlCentre:
                     return
 
                 # Only compress .lds files (not already compressed .ldf files)
+                if rf_formats.is_native(lds_file):
+                    self.message = f"{project.name}: native FLAC capture, already compressed - nothing to compress"
+                    result_queue.put((False, self.message))
+                    return
                 if not lds_file.endswith('.lds'):
                     self.message = f"File is not an .lds file (already compressed?): {lds_file}"
                     result_queue.put((False, self.message))
                     return
 
                 # Generate output filename (.lds -> .ldf)
-                ldf_file = lds_file.replace('.lds', '.ldf')
+                ldf_file = rf_formats.rf_with_suffix(lds_file, '.ldf')
 
                 # Read global GPU compress setting
                 from config import get_compress_use_gpu
@@ -2638,13 +2623,11 @@ class WorkflowControlCentre:
                 p = project.capture_files.get(key)
                 if p and os.path.isfile(p):
                     capture_files.append(p)
-            # Add the .json metadata
+            # Add the capture metadata (.json for .lds/.ldf, .ddd.yaml for native captures)
             if 'video' in project.capture_files:
-                vp = project.capture_files['video']
-                base = vp[:-4] if vp.endswith(('.lds', '.ldf')) else os.path.splitext(vp)[0]
-                jp = base + '.json'
-                if os.path.isfile(jp):
-                    capture_files.append(jp)
+                for jp in rf_formats.capture_metadata_candidates(project.capture_files['video']):
+                    if jp not in capture_files:
+                        capture_files.append(jp)
         if capture_files:
             files_by_step['capture'] = capture_files
 
@@ -2854,6 +2837,11 @@ class WorkflowControlCentre:
             elif cap.endswith('.ldf'):
                 ldf_path = cap
 
+        if (hasattr(project, 'capture_files') and 'video' in project.capture_files
+                and rf_formats.is_native(project.capture_files['video'])):
+            self.message = (f"{project.name}: native FLAC capture - there is no .ldf to validate "
+                            f"(the capture is already FLAC; use the checksum hashes to verify it)")
+            return
         if not ldf_path or not os.path.exists(ldf_path):
             self.message = f"No .ldf file found for {project.name}"
             return
@@ -3353,7 +3341,7 @@ class WorkflowControlCentre:
                 if hasattr(project, 'output_files') and 'decode' in project.output_files:
                     return os.path.exists(project.output_files['decode'])
                 elif hasattr(project, 'capture_files') and 'video' in project.capture_files:
-                    tbc_file = project.capture_files['video'].replace('.lds', '.tbc')
+                    tbc_file = rf_formats.rf_with_suffix(project.capture_files['video'], '.tbc')
                     return os.path.exists(tbc_file)
                 return False
                 
@@ -3661,7 +3649,7 @@ def simple_workflow_interface():
                 if os.path.exists(capture_dir):
                     try:
                         files = os.listdir(capture_dir)
-                        rf_files = [f for f in files if f.lower().endswith(('.lds', '.ldf'))]
+                        rf_files = [f for f in files if rf_formats.is_rf_capture(f)]
                         tbc_files = [f for f in files if f.lower().endswith('.tbc')]
                         audio_files = [f for f in files if f.lower().endswith(('.wav', '.flac'))]
                         

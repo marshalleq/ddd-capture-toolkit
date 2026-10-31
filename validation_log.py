@@ -68,12 +68,13 @@ def file_identity(path):
 def find_capture_originals(base_path):
     """Find the originals for a project, given any related file path.
 
-    Returns a dict mapping {'lds': path, 'ldf': path, 'flac': path, 'json': path}
-    with only the entries whose files actually exist on disk.
+    Returns a dict mapping {'lds': path, 'ldf': path, 'flac': path, 'json': path,
+    'ddd_flac': path, 'ddd_yaml': path} with only the entries whose files actually
+    exist on disk. 'ddd_flac' / 'ddd_yaml' are a native capture and its metadata.
     """
     base, _ = os.path.splitext(base_path)
     while True:
-        for suffix in ('.tbc', '_aligned', '_ffv1', '_final', '_chroma'):
+        for suffix in ('.tbc', '.ddd', '_aligned', '_ffv1', '_final', '_chroma'):
             if base.endswith(suffix):
                 base = base[:-len(suffix)]
                 break
@@ -84,6 +85,8 @@ def find_capture_originals(base_path):
         'ldf': base + '.ldf',
         'flac': base + '.flac',
         'json': base + '.json',
+        'ddd_flac': base + '.ddd.flac',
+        'ddd_yaml': base + '.ddd.yaml',
     }
     return {role: path for role, path in candidates.items() if os.path.isfile(path)}
 
@@ -92,13 +95,13 @@ def find_capture_originals(base_path):
 
 def get_log_path(any_capture_file_path):
     """Return the validation log path for a project. Pass any related file
-    (.lds, .ldf, .flac, .json, _aligned.flac, _ffv1.mkv, _final.mkv, .tbc, .tbc.json)
+    (.lds, .ldf, .ddd.flac, .flac, .json, _aligned.flac, _ffv1.mkv, _final.mkv, .tbc, .tbc.json)
     and the log path is derived from the project's base name."""
     base, _ = os.path.splitext(any_capture_file_path)
     # Strip composite extensions / known downstream suffixes so the log path is
     # always anchored to the project's base name (no duplicate logs per output).
     while True:
-        for suffix in ('.tbc', '_aligned', '_ffv1', '_final', '_chroma'):
+        for suffix in ('.tbc', '.ddd', '_aligned', '_ffv1', '_final', '_chroma'):
             if base.endswith(suffix):
                 base = base[:-len(suffix)]
                 break

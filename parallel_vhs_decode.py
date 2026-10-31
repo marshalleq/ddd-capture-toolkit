@@ -6,6 +6,7 @@ Supports scanning multiple configured processing locations for RF files.
 """
 
 import os
+import rf_formats
 import sys
 import json
 import time
@@ -85,33 +86,27 @@ class ParallelVHSDecoder:
         self.running = False
         
     def get_frame_count_from_json(self, rf_file: str, video_standard: str) -> int:
-        """Extract frame count from Domesday Duplicator JSON metadata"""
-        json_file = rf_file.replace('.lds', '.json').replace('.ldf', '.json')
-        
-        if not os.path.exists(json_file):
-            print(f"Warning: JSON metadata not found for {os.path.basename(rf_file)}")
+        """Frame count from the capture's own metadata (progress and ETA depend on it).
+
+        .lds/.ldf: Domesday Duplicator <name>.json. Native .ddd.flac: <name>.ddd.yaml,
+        falling back to the FLAC header. See rf_formats.capture_duration_seconds.
+        """
+        duration_seconds = rf_formats.capture_duration_seconds(rf_file)
+
+        if not duration_seconds:
+            print(f"Warning: capture duration not found for {os.path.basename(rf_file)} "
+                  f"(looked for {os.path.basename(rf_formats.capture_metadata_path(rf_file))}"
+                  f"{' and the FLAC header' if rf_formats.is_native_flac(rf_file) else ''})")
             return 0
-            
-        try:
-            with open(json_file, 'r') as f:
-                data = json.load(f)
-            
-            # Extract duration from JSON
-            duration_ms = data['captureInfo']['durationInMilliseconds']
-            duration_seconds = duration_ms / 1000.0
-            
-            # Calculate frame count based on video standard
-            if video_standard.lower() == 'pal':
-                frames = int(duration_seconds * 25.0)  # PAL: 25fps
-            else:  # NTSC
-                frames = int(duration_seconds * 29.97)  # NTSC: 29.97fps
-                
-            print(f"Calculated {frames:,} frames for {os.path.basename(rf_file)} ({video_standard})")
-            return frames
-            
-        except Exception as e:
-            print(f"Error reading JSON metadata: {e}")
-            return 0
+
+        # Calculate frame count based on video standard
+        if video_standard.lower() == 'pal':
+            frames = int(duration_seconds * 25.0)  # PAL: 25fps
+        else:  # NTSC
+            frames = int(duration_seconds * 29.97)  # NTSC: 29.97fps
+
+        print(f"Calculated {frames:,} frames for {os.path.basename(rf_file)} ({video_standard})")
+        return frames
     
     def parse_decode_output(self, line: str) -> Tuple[Optional[int], Optional[float], Optional[str]]:
         """Parse VHS decode output for progress information"""
@@ -450,7 +445,7 @@ class ParallelVHSDecoder:
     def add_job(self, rf_file: str, video_standard: str, tape_speed: str, additional_params: str = ""):
         """Add a decode job to the queue"""
         job_id = len(self.jobs) + 1
-        tbc_file = rf_file.replace('.lds', '.tbc').replace('.ldf', '.tbc')
+        tbc_file = rf_formats.rf_with_suffix(rf_file, '.tbc')
         
         job = DecodeJob(
             job_id=job_id,
@@ -609,8 +604,8 @@ class ParallelVHSDecoder:
                 print(f"  Scanning: {location}")
                 location_files = []
                 
-                # Get all .lds and .ldf files in this location
-                for ext in ['.lds', '.ldf']:
+                # Get all RF capture files (.ddd.flac, .ddd.s16, .lds, .ldf) in this location
+                for ext in rf_formats.RF_SUFFIXES:
                     pattern = os.path.join(location, f"*{ext}")
                     import glob
                     location_files.extend(glob.glob(pattern))
@@ -652,15 +647,15 @@ class ParallelVHSDecoder:
                 # Count files in this location
                 try:
                     rf_count = 0
-                    for ext in ['.lds', '.ldf']:
+                    import glob
+                    for ext in rf_formats.RF_SUFFIXES:
                         pattern = os.path.join(location, f"*{ext}")
-                        import glob
                         rf_count += len(glob.glob(pattern))
                     
                     json_count = len(glob.glob(os.path.join(location, "*.json")))
                     tbc_count = len(glob.glob(os.path.join(location, "*.tbc")))
                     
-                    lines.append(f"   RF files: {rf_count} (.lds/.ldf)")
+                    lines.append(f"   RF files: {rf_count} (.ddd.flac/.lds/.ldf)")
                     lines.append(f"   Metadata: {json_count} (.json)")
                     lines.append(f"   TBC files: {tbc_count} (.tbc)")
                     
@@ -793,7 +788,7 @@ def main():
         print("\nTo add processing locations:")
         print("  1. Run the main menu: python ddd_main_menu.py")
         print("  2. Go to Settings → Manage Processing Locations")
-        print("  3. Add directories containing your RF (.lds/.ldf) files")
+        print("  3. Add directories containing your RF (.ddd.flac/.lds/.ldf) files")
         return
 
 if __name__ == '__main__':

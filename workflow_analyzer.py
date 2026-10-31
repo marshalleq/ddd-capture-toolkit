@@ -6,6 +6,7 @@ Integrates with the job queue system to prevent duplicates and show real-time pr
 """
 
 import os
+import rf_formats
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set
@@ -227,6 +228,13 @@ class WorkflowAnalyzer:
             if self._is_compress_validate_running(project):
                 return StepStatus.VERIFYING
 
+        # COMPRESS does not apply to native FLAC captures (.ddd.flac): the capture
+        # application already wrote them FLAC-compressed. Report the step as
+        # complete (shown as N/A) so it neither offers a pointless compress nor
+        # blocks anything that waits on it.
+        if step == WorkflowStep.COMPRESS and self._is_native_capture(project):
+            return StepStatus.COMPLETE
+
         # 1. Step itself currently running (decode, compress, etc.)
         if self._is_step_running(step, project):
             return StepStatus.PROCESSING
@@ -273,6 +281,12 @@ class WorkflowAnalyzer:
         # 6. Default: missing prerequisites
         return StepStatus.MISSING
     
+    @staticmethod
+    def _is_native_capture(project) -> bool:
+        """True if the project's RF capture is a native .ddd.flac / .ddd.s16."""
+        video = getattr(project, 'capture_files', {}).get('video')
+        return bool(video) and rf_formats.is_native(video)
+
     def _has_compress_validated_sidecar(self, project: Project) -> bool:
         """Return True if the project's .ldf has the .ldf.validated sidecar
         next to it. This sidecar is written only by a Tier 3 PASS (manual
@@ -429,13 +443,12 @@ class WorkflowAnalyzer:
                 p = project.capture_files.get(key) if hasattr(project, 'capture_files') else None
                 if p and os.path.isfile(p):
                     files.append(p)
-            # Also the .json metadata if present (derived from video path)
+            # Also the capture metadata if present (.json for .lds/.ldf, .ddd.yaml for native)
             if hasattr(project, 'capture_files') and 'video' in project.capture_files:
                 vp = project.capture_files['video']
-                base = vp[:-4] if vp.endswith(('.lds', '.ldf')) else os.path.splitext(vp)[0]
-                jp = base + '.json'
-                if os.path.isfile(jp):
-                    files.append(jp)
+                for mp in rf_formats.capture_metadata_candidates(vp):
+                    if mp not in files:
+                        files.append(mp)
             return files
         # compress: the .ldf
         if step == WorkflowStep.COMPRESS:
@@ -633,6 +646,9 @@ class WorkflowAnalyzer:
         the .ldf as it goes; size-only would falsely report the in-flight
         file as a finished compress.
         """
+        if self._is_native_capture(project):
+            return True  # already FLAC-compressed by the capture application
+
         ldf_found = False
         if 'compress' in project.output_files:
             compress_file = project.output_files['compress']
@@ -861,6 +877,10 @@ class WorkflowAnalyzer:
         if (step_status == StepStatus.COMPLETE and step == WorkflowStep.ALIGN and
             project and 'audio' not in project.capture_files):
             return "N/A"  # No audio to align
+
+        if (step_status == StepStatus.COMPLETE and step == WorkflowStep.COMPRESS and
+            project and self._is_native_capture(project)):
+            return "N/A"  # Native FLAC capture: already compressed
 
         if (step_status == StepStatus.COMPLETE and step == WorkflowStep.FINAL and
             project and 'audio' not in project.capture_files):

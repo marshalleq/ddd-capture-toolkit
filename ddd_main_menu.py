@@ -5,6 +5,7 @@ Enhanced menu providing access to all project functionality
 """
 
 import os
+import rf_formats
 import sys
 import subprocess
 import time
@@ -1112,7 +1113,7 @@ def manual_vhs_decode():
             return
         
         # Find all .lds and .ldf files in capture folder
-        rf_files = [f for f in os.listdir(capture_folder) if f.lower().endswith(('.lds', '.ldf'))]
+        rf_files = [f for f in os.listdir(capture_folder) if rf_formats.is_rf_capture(f)]
         
         if not rf_files:
             print(f"ERROR: No RF capture files (.lds/.ldf) found in '{capture_folder}' folder!")
@@ -1157,10 +1158,7 @@ def manual_vhs_decode():
             return
         
         # Generate output TBC filename based on RF file extension
-        if rf_file.lower().endswith('.lds'):
-            tbc_file = rf_file.replace('.lds', '.tbc')
-        else:  # .ldf file
-            tbc_file = rf_file.replace('.ldf', '.tbc')
+        tbc_file = rf_formats.rf_with_suffix(rf_file, '.tbc')
         
         print(f"\nSelected RF file: {os.path.basename(rf_file)}")
         print(f"Output TBC file: {os.path.basename(tbc_file)}")
@@ -1259,7 +1257,7 @@ def manual_vhs_decode_ntsc():
             return
         
         # Find all .lds and .ldf files in capture folder
-        rf_files = [f for f in os.listdir(capture_folder) if f.lower().endswith(('.lds', '.ldf'))]
+        rf_files = [f for f in os.listdir(capture_folder) if rf_formats.is_rf_capture(f)]
         
         if not rf_files:
             print(f"ERROR: No RF capture files (.lds/.ldf) found in '{capture_folder}' folder!")
@@ -1304,10 +1302,7 @@ def manual_vhs_decode_ntsc():
             return
         
         # Generate output TBC filename based on RF file extension
-        if rf_file.lower().endswith('.lds'):
-            tbc_file = rf_file.replace('.lds', '.tbc')
-        else:  # .ldf file
-            tbc_file = rf_file.replace('.ldf', '.tbc')
+        tbc_file = rf_formats.rf_with_suffix(rf_file, '.tbc')
         
         print(f"\nSelected RF file: {os.path.basename(rf_file)}")
         print(f"Output TBC file: {os.path.basename(tbc_file)}")
@@ -1427,7 +1422,7 @@ def manual_vhs_decode_with_params(video_standard, tape_speed):
             return
         
         # Find all .lds and .ldf files in capture folder
-        rf_files = [f for f in os.listdir(capture_folder) if f.lower().endswith(('.lds', '.ldf'))]
+        rf_files = [f for f in os.listdir(capture_folder) if rf_formats.is_rf_capture(f)]
         
         if not rf_files:
             print(f"ERROR: No RF capture files (.lds/.ldf) found in '{capture_folder}' folder!")
@@ -1472,10 +1467,7 @@ def manual_vhs_decode_with_params(video_standard, tape_speed):
             return
         
         # Generate output TBC filename based on RF file extension
-        if rf_file.lower().endswith('.lds'):
-            tbc_file = rf_file.replace('.lds', '.tbc')
-        else:  # .ldf file
-            tbc_file = rf_file.replace('.ldf', '.tbc')
+        tbc_file = rf_formats.rf_with_suffix(rf_file, '.tbc')
         
         print(f"\nSelected RF file: {os.path.basename(rf_file)}")
         print(f"Output TBC file: {os.path.basename(tbc_file)}")
@@ -1731,7 +1723,7 @@ def custom_parameter_builder():
             from ddd_clockgen_sync import run_vhs_decode_with_params, cleanup_existing_processes
             
             capture_folder = get_capture_directory()
-            lds_files = [f for f in os.listdir(capture_folder) if f.lower().endswith('.lds')]
+            lds_files = [f for f in os.listdir(capture_folder) if rf_formats.is_primary_capture(f)]
             
             if not lds_files:
                 print("No RF files found to decode.")
@@ -1751,7 +1743,7 @@ def custom_parameter_builder():
             selection = input(f"\nSelect file (1-{len(lds_paths)}): ").strip()
             file_index = int(selection) - 1
             rf_file = lds_paths[file_index]
-            tbc_file = rf_file.replace('.lds', '.tbc')
+            tbc_file = rf_formats.rf_with_suffix(rf_file, '.tbc')
             
             print(f"\nStarting custom decode...")
             cleanup_existing_processes()
@@ -1864,8 +1856,8 @@ def start_auto_parallel_decode():
         # Find all .lds files with corresponding .json metadata
         rf_files = []
         for f in os.listdir(capture_folder):
-            if f.endswith('.lds'):
-                json_file = f.replace('.lds', '.json')
+            if rf_formats.is_primary_capture(f):
+                json_file = os.path.basename(rf_formats.capture_metadata_path(f))
                 json_path = os.path.join(capture_folder, json_file)
                 rf_path = os.path.join(capture_folder, f)
                 
@@ -1873,7 +1865,7 @@ def start_auto_parallel_decode():
                     rf_files.append({
                         'rf_file': rf_path,
                         'json_file': json_path,
-                        'name': os.path.splitext(f)[0]
+                        'name': os.path.basename(rf_formats.rf_base_path(f))
                     })
                 else:
                     print(f"Warning: No JSON metadata for {f} - skipping")
@@ -1994,7 +1986,7 @@ def configure_parallel_decode():
             return
         
         # Find all .lds files
-        lds_files = [f for f in os.listdir(capture_folder) if f.endswith('.lds')]
+        lds_files = [f for f in os.listdir(capture_folder) if rf_formats.is_primary_capture(f)]
         
         if not lds_files:
             print(f"No RF files (.lds) found in {capture_folder}")
@@ -2012,7 +2004,7 @@ def configure_parallel_decode():
             mod_time = time.ctime(os.path.getmtime(lds_path))
             
             # Check for JSON metadata
-            json_path = lds_path.replace('.lds', '.json')
+            json_path = rf_formats.rf_with_suffix(lds_path, '.json')
             json_status = "✓" if os.path.exists(json_path) else "⚠️ no JSON"
             
             print(f"   {i}. {lds_file} ({size_mb:.1f} MB) - {mod_time} {json_status}")
@@ -5821,7 +5813,7 @@ def precision_timecode_capture():
             input("\nPress Enter to return to menu...")
             return
             
-        lds_files = [f for f in os.listdir(capture_folder) if f.endswith('.lds')]
+        lds_files = [f for f in os.listdir(capture_folder) if rf_formats.is_primary_capture(f)]
         if not lds_files:
             print(f"No RF capture files (.lds) found in {capture_folder}!")
             print("Please ensure the Domesday Duplicator created an RF capture file in the temp folder.")
@@ -5834,8 +5826,8 @@ def precision_timecode_capture():
         print(f"Found RF capture: {rf_file}")
         
         # Check if we already have decoded files
-        tbc_file = rf_file.replace('.lds', '.tbc')
-        tbc_json_file = rf_file.replace('.lds', '.tbc.json')
+        tbc_file = rf_formats.rf_with_suffix(rf_file, '.tbc')
+        tbc_json_file = rf_formats.rf_with_suffix(rf_file, '.tbc.json')
         
         if os.path.exists(tbc_json_file):
             print(f"TBC JSON already exists: {tbc_json_file}")
@@ -5848,7 +5840,7 @@ def precision_timecode_capture():
                 return
         
         # Check if we need to export video
-        video_file = rf_file.replace('.lds', '_ffv1.mkv')
+        video_file = rf_formats.rf_with_suffix(rf_file, '_ffv1.mkv')
         if os.path.exists(video_file):
             print(f"Video export already exists: {video_file}")
         else:
@@ -7033,7 +7025,7 @@ def manage_processing_locations():
                         free_gb = (statvfs.f_frsize * statvfs.f_bavail) / (1024**3)
                     
                     # Count RF files
-                    rf_files = len([f for f in os.listdir(location) if f.lower().endswith(('.lds', '.ldf', '.tbc'))])
+                    rf_files = len([f for f in os.listdir(location) if (rf_formats.is_rf_capture(f) or f.lower().endswith('.tbc'))])
                     print(f"   {i}. {location} ({free_gb:.1f} GB free, {rf_files} RF files)")
                 except Exception as e:
                     print(f"   {i}. {location} (error: {e})")
@@ -7187,7 +7179,7 @@ def view_all_processing_locations():
                 
                 # Count relevant files
                 if name == "Primary Capture":
-                    rf_files = len([f for f in os.listdir(path) if f.endswith(('.lds', '.tbc'))])
+                    rf_files = len([f for f in os.listdir(path) if (rf_formats.is_rf_capture(f) or f.endswith('.tbc'))])
                     audio_files = len([f for f in os.listdir(path) if f.endswith(('.wav', '.flac'))])
                     print(f"   Contents: {rf_files} RF/TBC files, {audio_files} audio files")
                 elif name == "Output Videos":
@@ -7805,7 +7797,7 @@ def view_detailed_settings():
     if os.path.exists(capture_dir):
         try:
             files = os.listdir(capture_dir)
-            capture_files = [f for f in files if f.endswith(('.lds', '.flac', '.wav', '.tbc', '.json'))]
+            capture_files = [f for f in files if f.endswith(('.lds', '.flac', '.wav', '.tbc', '.json', '.ddd.yaml'))]
             
             print(f"\nCAPTURE DIRECTORY CONTENTS:")
             if capture_files:
@@ -8001,8 +7993,8 @@ def add_vhs_decode_jobs_to_queue():
         # Find all .lds files with corresponding .json metadata
         rf_files = []
         for f in os.listdir(capture_folder):
-            if f.endswith('.lds'):
-                json_file = f.replace('.lds', '.json')
+            if rf_formats.is_primary_capture(f):
+                json_file = os.path.basename(rf_formats.capture_metadata_path(f))
                 json_path = os.path.join(capture_folder, json_file)
                 rf_path = os.path.join(capture_folder, f)
                 
@@ -8010,7 +8002,7 @@ def add_vhs_decode_jobs_to_queue():
                     rf_files.append({
                         'rf_file': rf_path,
                         'json_file': json_path,
-                        'name': os.path.splitext(f)[0]
+                        'name': os.path.basename(rf_formats.rf_base_path(f))
                     })
                 else:
                     print(f"Warning: No JSON metadata for {f} - skipping")
@@ -8077,7 +8069,7 @@ def add_vhs_decode_jobs_to_queue():
         # Add jobs to queue
         queued_jobs = []
         for rf_info in rf_files:
-            tbc_file = rf_info['rf_file'].replace('.lds', '.tbc')
+            tbc_file = rf_formats.rf_with_suffix(rf_info['rf_file'], '.tbc')
             
             parameters = {
                 'video_standard': video_standard,
@@ -8440,7 +8432,7 @@ def add_processing_location():
                 
                 # Show directory info
                 try:
-                    rf_files = len([f for f in os.listdir(new_location) if f.lower().endswith(('.lds', '.ldf', '.tbc'))])
+                    rf_files = len([f for f in os.listdir(new_location) if (rf_formats.is_rf_capture(f) or f.lower().endswith('.tbc'))])
                     print(f"   Found {rf_files} RF/TBC files in directory")
                     
                     if sys.platform == 'win32':
@@ -8555,7 +8547,7 @@ def view_location_details():
                     files = os.listdir(location)
                     
                     # Count different file types
-                    rf_files = [f for f in files if f.lower().endswith(('.lds', '.ldf'))]
+                    rf_files = [f for f in files if rf_formats.is_rf_capture(f)]
                     tbc_files = [f for f in files if f.lower().endswith('.tbc')]
                     json_files = [f for f in files if f.lower().endswith('.tbc.json')]
                     audio_files = [f for f in files if f.lower().endswith(('.wav', '.flac'))]

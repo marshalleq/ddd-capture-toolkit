@@ -1701,11 +1701,10 @@ def start_capture_and_record():
     # should exist on disk and be safe to hash.
     try:
         from config import get_auto_checksum
-        if get_auto_checksum() and backend.rf_suffix != '.lds':
-            print(f"\n(post-capture hashing only handles .lds captures so far; "
-                  f"{os.path.basename(video_output_path)} was not hashed)")
-        elif get_auto_checksum():
-            json_output_path = os.path.join(capture_folder, f"{capture_name}.json")
+        if get_auto_checksum():
+            # Capture details file: <name>.json for .lds, <name>.ddd.yaml for native captures
+            from rf_formats import capture_metadata_path
+            json_output_path = capture_metadata_path(video_output_path)
             try:
                 from post_capture_hash import prompt_and_hash_originals
                 prompt_and_hash_originals(
