@@ -4291,23 +4291,32 @@ def manual_calibration_entry():
     input("\nPress Enter to return to menu...")
 
 def calculate_ddd_startup_delay():
-    """Calculate DomesdayDuplicator startup delay using shell-based timing method for accuracy"""
+    """Calculate RF capture startup delay (active capture backend) using shell-based timing for accuracy"""
+    from capture_backends import select_backend
+    import shlex
     clear_screen()
     display_header()
+    backend, backend_reason = select_backend()
+    if not backend.available():
+        print(f"\n{backend.label} was not found, so the startup delay cannot be measured.")
+        input("\nPress Enter to return to menu...")
+        return
+    rf_suffix = backend.rf_suffix
     print("\nCALCULATE DdD STARTUP DELAY")
     print("=" * 35)
-    print("This tool measures the time between issuing the DomesdayDuplicator start command")
-    print("and when the first .lds file data is actually written to disk.")
+    print(f"This tool measures the time between issuing the {backend.label} start command")
+    print(f"and when the first {rf_suffix} file data is actually written to disk.")
     print()
     print("Purpose:")
-    print("   • Measure DomesdayDuplicator hardware/software startup latency")
+    print("   • Measure RF capture program hardware/software startup latency")
+    print(f"   • Capture program: {backend.label} ({backend_reason})")
     print("   • Understand timing delays in the capture pipeline")
     print("   • Compare with SOX startup delay for sync analysis")
     print("   • Help debug audio sync timing issues")
     print()
     print("Process:")
     print("   1. Uses shell-based timing for maximum accuracy")
-    print("   2. Tests DomesdayDuplicator headless capture mode")
+    print("   2. Tests the capture program in headless mode")
     print("   3. Monitors file creation and data writing separately")
     print("   4. Provides millisecond-precision timing measurements")
     print()
@@ -4324,35 +4333,35 @@ def calculate_ddd_startup_delay():
     print()
     
     # Check for existing .lds files and offer to clean
-    existing_lds = [f for f in os.listdir(temp_dir) if f.endswith('.lds')]
+    existing_lds = [f for f in os.listdir(temp_dir) if f.endswith(rf_suffix)]
     if existing_lds:
-        print(f"Found {len(existing_lds)} existing .lds file(s) in temp directory:")
+        print(f"Found {len(existing_lds)} existing {rf_suffix} file(s) in temp directory:")
         for f in existing_lds[:3]:  # Show first 3
             print(f"   - {f}")
         if len(existing_lds) > 3:
             print(f"   ... and {len(existing_lds) - 3} more")
         print()
         
-        clean_choice = input("Clean existing .lds files before test? (Y/n): ").strip().lower()
+        clean_choice = input(f"Clean existing {rf_suffix} files before test? (Y/n): ").strip().lower()
         if clean_choice not in ['n', 'no']:
             try:
                 for f in existing_lds:
                     os.remove(os.path.join(temp_dir, f))
-                print(f"Removed {len(existing_lds)} existing .lds files")
+                print(f"Removed {len(existing_lds)} existing {rf_suffix} files")
             except Exception as e:
                 print(f"Warning: Could not remove some files: {e}")
         print()
     
     # Prepare test filename for DomesdayDuplicator
     test_filename = "ddd_startup_test"
-    test_lds_file = os.path.join(temp_dir, f"{test_filename}.lds")
+    test_lds_file = os.path.join(temp_dir, f"{test_filename}{rf_suffix}")
     
     print("\033[91mIMPORTANT SETUP:\033[0m")
     print(f"\033[91m   ⚠️  Ensure your RF input is connected (tape playing or signal generator)\033[0m")
-    print(f"\033[91m   ⚠️  This uses DomesdayDuplicator headless mode for accurate timing\033[0m")
+    print(f"\033[91m   ⚠️  This uses {backend.label} in headless mode for accurate timing\033[0m")
     print(f"   ⚠️  Test captures for 5 seconds then automatically stops")
     print(f"   ⚠️  Uses shell timing for maximum measurement accuracy")
-    print(f"   ⚠️  Output file: {test_filename}.lds in temp directory")
+    print(f"   ⚠️  Output file: {test_filename}{rf_suffix} in temp directory")
     print()
     
     confirm = input("Ready to start DdD startup delay measurement? (Y/n): ").strip().lower()
@@ -4368,20 +4377,22 @@ def calculate_ddd_startup_delay():
     try:
         # Create shell script for precise timing measurement
         # Uses --capture-directory and --output-file to control output location
+        start_cmd = shlex.join(backend.start_command(os.path.abspath(temp_dir), test_filename))
+        stop_cmd = shlex.join(backend.stop_command())
         shell_script = f'''
 #!/bin/bash
-echo "Testing DomesdayDuplicator startup timing..."
+echo "Testing RF capture startup timing..."
 start_time=$(date +%s.%3N)
 echo "Start time: $start_time"
 
-# Record existing .lds files before starting
-existing_files=$(find "{temp_dir}" -name "*.lds" 2>/dev/null | wc -l)
-echo "Existing .lds files: $existing_files"
+# Record existing RF files before starting
+existing_files=$(find "{temp_dir}" -name "*{rf_suffix}" 2>/dev/null | wc -l)
+echo "Existing {rf_suffix} files: $existing_files"
 
 # Start DomesdayDuplicator in background with explicit output location
-DomesdayDuplicator --start-capture --headless --capture-directory "{os.path.abspath(temp_dir)}" --output-file "{test_filename}" &
+{start_cmd} &
 ddd_pid=$!
-echo "DomesdayDuplicator PID: $ddd_pid"
+echo "Capture program PID: $ddd_pid"
 
 # Monitor for new .lds files
 file_created_time=""
@@ -4391,12 +4402,12 @@ new_file=""
 # Wait for DomesdayDuplicator to start and create file
 for i in {{1..300}}; do  # Wait up to 30 seconds (300 * 0.1s)
     # Check for new .lds files
-    current_files=$(find "{temp_dir}" -name "*.lds" 2>/dev/null | wc -l)
+    current_files=$(find "{temp_dir}" -name "*{rf_suffix}" 2>/dev/null | wc -l)
     
     if [ "$current_files" -gt "$existing_files" ] && [ -z "$file_created_time" ]; then
         file_created_time=$(date +%s.%3N)
         # Find the newest .lds file
-        new_file=$(find "{temp_dir}" -name "*.lds" -printf "%T@ %p\\n" 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
+        new_file=$(find "{temp_dir}" -name "*{rf_suffix}" -printf "%T@ %p\\n" 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
         echo "File created at: $file_created_time"
         echo "New file: $(basename "$new_file")"
     fi
@@ -4418,11 +4429,11 @@ echo "Letting capture run for 5 seconds..."
 sleep 5
 
 # Stop DomesdayDuplicator
-echo "Stopping DomesdayDuplicator..."
-DomesdayDuplicator --stop-capture 2>/dev/null || kill $ddd_pid 2>/dev/null
+echo "Stopping capture..."
+{stop_cmd} 2>/dev/null || kill $ddd_pid 2>/dev/null
 wait $ddd_pid 2>/dev/null
 
-echo "DomesdayDuplicator stopped"
+echo "Capture stopped"
 end_time=$(date +%s.%3N)
 
 # Calculate delays
@@ -4460,12 +4471,14 @@ fi
 
         # Run the shell script and capture output
         # Use clean environment to avoid conda Qt conflicts with DomesdayDuplicator
+        timing_env = get_clean_env_for_system_tools()
+        timing_env.update(backend.extra_env())
         result = subprocess.run(['bash', script_path], capture_output=True, text=True, timeout=60,
-                               env=get_clean_env_for_system_tools())
+                               env=timing_env)
         
         print(result.stdout)
         if result.stderr:
-            print("DomesdayDuplicator stderr output:")
+            print("Capture program stderr output:")
             print(result.stderr)
         
         # Parse the timing results from output
