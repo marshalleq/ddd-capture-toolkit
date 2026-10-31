@@ -52,8 +52,8 @@ WHAT THE MODES DO:
   Easy:
     - Creates the 'ddd-capture-toolkit' conda environment from pre-compiled packages
     - Linux: downloads upstream's prebuilt vhs-decode release (the same code
-      performance mode compiles) and the tbc-video-export AppImage, which bundles
-      the export tools. The vhs-decode on PyPI is not used: it is older (0.3.8.1)
+      performance mode compiles), its tbc-tools (ld-analyse, ld-lds-converter and
+      the other ld-* programs) and the tbc-video-export AppImage. The vhs-decode on PyPI is not used: it is older (0.3.8.1)
       and crashes under the NumPy 2 that conda installs.
     - macOS and Windows: vhs-decode comes from PyPI (0.3.8.1, with a warning);
       use --performance there for the current release.
@@ -591,6 +591,10 @@ if command -v conda &> /dev/null; then
                 log_error "Could not install the prebuilt vhs-decode release"
                 log_warning "Decoding will not work until vhs-decode is installed. Try again, or use ./setup.sh --performance"
             fi
+            # upstream's prebuilt ld-* programs: ld-analyse (the viewer), ld-lds-converter, ...
+            if ! build-scripts/install-tbc-tools.sh $easy_args; then
+                log_warning "Could not install the prebuilt tbc-tools (ld-analyse, ld-lds-converter and the other ld-* programs)"
+            fi
         else
             # No prebuilt command-line bundle is installed on this platform; PyPI is what is left.
             log_warning "On $OS easy mode installs vhs-decode from PyPI, which is 0.3.8.1 (the current release is v0.4.0)."
@@ -814,6 +818,18 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
             fi
         fi
 
+        # Upstream's prebuilt tbc-tools add what the build does not compile (ld-analyse, the
+        # viewer). The compiled ld-* programs stay; only missing ones get a command.
+        if [[ "$(uname -s)" == "Linux" && -x "build-scripts/install-tbc-tools.sh" ]]; then
+            perf_env_path=$(conda env list | awk '$1=="ddd-capture-toolkit" {print $NF}' | head -n1)
+            perf_tools_args="--prefix $perf_env_path"
+            if [[ -n "$VHS_DECODE_VERSION" && "$VHS_DECODE_VERSION" != "latest" ]]; then
+                perf_tools_args="$perf_tools_args --version $VHS_DECODE_VERSION"
+            fi
+            build-scripts/install-tbc-tools.sh $perf_tools_args \
+                || log_warning "Could not install the prebuilt tbc-tools (ld-analyse will not be available)"
+        fi
+
         log_success "Source compilation completed"
     fi
 fi
@@ -933,6 +949,11 @@ elif [[ -x "tools/tbc-video-export.AppImage" ]]; then
 else
     echo "  ld-decode tools:   not installed"
 fi
+
+# Prebuilt tbc-tools (ld-analyse and any ld-* program the environment lacks)
+for tbc_tools_dir in tools/tbc-tools-*/; do
+    [[ -x "${tbc_tools_dir}squashfs-root/AppRun" ]] && echo "  tbc-tools:         ${tbc_tools_dir#tools/tbc-tools-} (prebuilt; provides ld-analyse)" | sed 's#/ (#  (#'
+done
 
 # tbc-video-export
 if [[ -x "tools/tbc-video-export.AppImage" ]]; then
