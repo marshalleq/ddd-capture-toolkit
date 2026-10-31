@@ -43,16 +43,20 @@ OPTIONS:
   --force               Skip confirmation prompts (for scripting)
   --no-update-check     Do not check whether a newer toolkit version is available
   --vhs-decode-version VERSION
-                        vhs-decode release to use (performance mode). The default
-                        is the newest release tag. Use 'latest' for the newest
-                        commit, or a tag such as v0.4.0.
+                        vhs-decode release to use. The default is the newest
+                        release. Give a tag such as v0.4.0 for a specific one.
+                        In performance mode 'latest' builds the newest commit.
   --help, -h            Show this help
 
 WHAT THE MODES DO:
   Easy:
     - Creates the 'ddd-capture-toolkit' conda environment from pre-compiled packages
-    - Installs vhs-decode and tbc-video-export with pip (on Linux also the
-      tbc-video-export AppImage, which bundles the export tools)
+    - Linux: downloads upstream's prebuilt vhs-decode release (the same code
+      performance mode compiles) and the tbc-video-export AppImage, which bundles
+      the export tools. The vhs-decode on PyPI is not used: it is older (0.3.8.1)
+      and crashes under the NumPy 2 that conda installs.
+    - macOS and Windows: vhs-decode comes from PyPI (0.3.8.1, with a warning);
+      use --performance there for the current release.
     - Good performance for most users; recommended for trying the toolkit
 
   Performance:
@@ -561,23 +565,30 @@ if command -v conda &> /dev/null; then
     # In easy mode, we use pre-built wheels/AppImages - no compilation needed
     # In performance mode, the build script compiles from source with CPU optimizations
     if [[ "$INSTALL_MODE" == "easy" ]]; then
-        # Check what version is available on PyPI
-        log_info "Checking vhs-decode versions on PyPI..."
-        PYPI_VERSION=$(conda run -n ddd-capture-toolkit pip index versions vhs-decode 2>/dev/null | grep -oP 'vhs-decode \(\K[^)]+' | head -n1)
-        if [[ -n "$PYPI_VERSION" ]]; then
-            log_info "Latest vhs-decode on PyPI: $PYPI_VERSION"
-        fi
-
-        echo "Installing vhs-decode from PyPI (pre-built package)..."
-        conda run -n ddd-capture-toolkit pip install --upgrade vhs-decode 2>/dev/null || {
-            log_warning "Could not install vhs-decode from PyPI."
-            echo "After activating the environment, run: pip install vhs-decode"
-        }
-
-        # Show installed version
-        INSTALLED_VERSION=$(conda run -n ddd-capture-toolkit pip show vhs-decode 2>/dev/null | grep -i "^Version:" | cut -d' ' -f2)
-        if [[ -n "$INSTALLED_VERSION" ]]; then
-            log_success "vhs-decode $INSTALLED_VERSION installed from PyPI"
+        if [[ "$OS" == "linux" ]]; then
+            # The vhs-decode on PyPI lags the releases (0.3.8.1 against v0.4.0) and crashes
+            # under the NumPy 2 that conda installs, so use upstream's prebuilt release.
+            EASY_ENV_PATH=$(conda env list | awk '$1=="ddd-capture-toolkit" {print $NF}' | head -n1)
+            easy_args="--prefix $EASY_ENV_PATH"
+            if [[ -n "$VHS_DECODE_VERSION" && "$VHS_DECODE_VERSION" != "latest" ]]; then
+                easy_args="$easy_args --version $VHS_DECODE_VERSION"
+            fi
+            if ! build-scripts/install-vhs-decode-binary.sh $easy_args; then
+                log_error "Could not install the prebuilt vhs-decode release"
+                log_warning "Decoding will not work until vhs-decode is installed. Try again, or use ./setup.sh --performance"
+            fi
+        else
+            # No prebuilt command-line bundle is installed on this platform; PyPI is what is left.
+            log_warning "On $OS easy mode installs vhs-decode from PyPI, which is 0.3.8.1 (the current release is v0.4.0)."
+            log_warning "That version can crash under NumPy 2. ./setup.sh --performance builds the current release instead."
+            conda run -n ddd-capture-toolkit pip install --upgrade vhs-decode || {
+                log_warning "Could not install vhs-decode from PyPI."
+                echo "After activating the environment, run: pip install vhs-decode"
+            }
+            INSTALLED_VERSION=$(conda run -n ddd-capture-toolkit pip show vhs-decode 2>/dev/null | grep -i "^Version:" | cut -d' ' -f2)
+            if [[ -n "$INSTALLED_VERSION" ]]; then
+                log_success "vhs-decode $INSTALLED_VERSION installed from PyPI"
+            fi
         fi
 
         # Download tbc-video-export AppImage (bundles ld-tools with correct --input-json support)
@@ -646,6 +657,14 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
         log_info "Removing tbc-video-export AppImage (performance mode uses compiled tools)"
         rm -f "$APPIMAGE_PATH"
     fi
+
+    # The prebuilt vhs-decode bundles easy mode downloads are not used either.
+    for bundle in tools/vhs-decode-*.AppImage; do
+        if [[ -f "$bundle" ]]; then
+            log_info "Removing $bundle (performance mode compiles vhs-decode)"
+            rm -f "$bundle"
+        fi
+    done
 
     # Check if build scripts are available
     if [[ ! -d "build-scripts" ]]; then
@@ -852,9 +871,12 @@ if [[ "$INSTALL_MODE" == "performance" ]] && [[ -e "external/vhs-decode/.git" ]]
         echo "  vhs-decode:        unknown (built from source)"
     fi
 else
-    # Easy mode: get version from pip
+    # Easy mode: the prebuilt release command (Linux), else the pip package
+    SHIM_VER=$(grep -s "^# vhs-decode-release:" "$CONDA_ENV_PATH/bin/vhs-decode" | awk '{print $3}')
     VHS_DECODE_VER=$(conda run -n ddd-capture-toolkit pip show vhs-decode 2>/dev/null | grep -i "^Version:" | cut -d' ' -f2)
-    if [[ -n "$VHS_DECODE_VER" ]]; then
+    if [[ -n "$SHIM_VER" ]]; then
+        echo "  vhs-decode:        $SHIM_VER (prebuilt release)"
+    elif [[ -n "$VHS_DECODE_VER" ]]; then
         echo "  vhs-decode:        $VHS_DECODE_VER (from PyPI)"
     else
         echo "  vhs-decode:        not installed"
