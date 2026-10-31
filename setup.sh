@@ -66,12 +66,23 @@ WHAT THE MODES DO:
     - Removes the 'ddd-capture-toolkit' conda environment and everything in it
     - Keeps your projects, captures, configuration and other conda environments
 
+SYSTEM PACKAGES (you install these; setup only tells you which are missing):
+  sox         audio capture. The system build is required: conda's sox has no ALSA
+  pv          progress bars while compressing
+  dvdauthor   creating calibration DVDs
+  genisoimage creating calibration DVD images (cdrtools on Arch and openSUSE)
+  Fedora:  sudo dnf install sox pv dvdauthor genisoimage
+  Debian:  sudo apt install sox pv dvdauthor genisoimage
+  Arch:    sudo pacman -S sox pv dvdauthor cdrtools
+  macOS:   brew install cdrtools dvdauthor
+
 BEFORE IT STARTS:
   - If this copy of the toolkit is behind its git remote, setup stops and asks you
     to run 'git pull' and then run setup again (--no-update-check skips this;
     being offline only gives a warning).
 
 AT THE END:
+  - Any system packages still missing are listed again.
   - Tools found outside the environment (for example old copies in /usr/bin) are
     listed with how each got there and the command that removes it. Setup never
     removes them itself.
@@ -307,9 +318,65 @@ check_performance_prerequisites() {
     fi
 }
 
+# System packages that conda cannot supply. Setup does not install these itself
+# (that needs sudo, and it is your package manager's job); it tells you which are
+# missing and the command to run. Nothing here stops setup.
+#   sox        audio capture. Must be the system build: conda's sox has no ALSA driver
+#   pv         progress bars while compressing (ld-compress)
+#   dvdauthor  creating calibration DVDs
+#   genisoimage (cdrtools on Arch/openSUSE) - creating calibration DVD images
+report_system_packages() {
+    [[ "$OS" == "linux" ]] || return 0
+
+    local manager="none"
+    if command -v dnf &> /dev/null; then manager="dnf"
+    elif command -v yum &> /dev/null; then manager="yum"
+    elif command -v apt &> /dev/null; then manager="apt"
+    elif command -v pacman &> /dev/null; then manager="pacman"
+    elif command -v zypper &> /dev/null; then manager="zypper"
+    fi
+
+    local iso_pkg="genisoimage"
+    [[ "$manager" == "pacman" || "$manager" == "zypper" ]] && iso_pkg="cdrtools"
+
+    local missing_pkgs=() missing_why=()
+    if [[ ! -x /usr/bin/sox ]]; then
+        missing_pkgs+=("sox"); missing_why+=("audio capture (needs the system build; conda's sox has no ALSA)")
+    fi
+    if ! command -v pv &> /dev/null; then
+        missing_pkgs+=("pv"); missing_why+=("progress bars while compressing")
+    fi
+    if ! command -v dvdauthor &> /dev/null; then
+        missing_pkgs+=("dvdauthor"); missing_why+=("creating calibration DVDs")
+    fi
+    if ! command -v genisoimage &> /dev/null && ! command -v mkisofs &> /dev/null; then
+        missing_pkgs+=("$iso_pkg"); missing_why+=("creating calibration DVD images")
+    fi
+
+    if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
+        log_success "System packages present (sox, pv, dvdauthor, DVD image tools)"
+        return 0
+    fi
+
+    log_warning "System packages to install yourself (conda cannot provide them):"
+    local i
+    for i in "${!missing_pkgs[@]}"; do
+        printf '    %-12s %s\n' "${missing_pkgs[$i]}" "${missing_why[$i]}"
+    done
+    case "$manager" in
+        dnf|yum) echo "  Install with:  sudo $manager install ${missing_pkgs[*]}" ;;
+        apt)     echo "  Install with:  sudo apt install ${missing_pkgs[*]}" ;;
+        pacman)  echo "  Install with:  sudo pacman -S ${missing_pkgs[*]}" ;;
+        zypper)  echo "  Install with:  sudo zypper install ${missing_pkgs[*]}" ;;
+        *)       echo "  Install these with your package manager: ${missing_pkgs[*]}" ;;
+    esac
+    echo ""
+}
+
 if [[ "$INSTALL_MODE" != "uninstall" ]]; then
     check_for_toolkit_update
     check_performance_prerequisites
+    report_system_packages
 fi
 
 # Call conda detection
@@ -739,56 +806,17 @@ echo ""
 echo "Or simply use: ./start.sh"
 echo ""
 
-# Install system packages that aren't available in conda
+# System packages are not installed by setup (see report_system_packages above);
+# say again at the end if any are still missing.
 echo "Checking for required system packages..."
 case "$OS" in
     "linux")
-        # Check which package manager is available
-        if command -v dnf &> /dev/null; then
-            PKG_MGR="dnf"
-        elif command -v yum &> /dev/null; then
-            PKG_MGR="yum"
-        elif command -v apt &> /dev/null; then
-            PKG_MGR="apt"
-        elif command -v pacman &> /dev/null; then
-            PKG_MGR="pacman"
-        elif command -v zypper &> /dev/null; then
-            PKG_MGR="zypper"
-        else
-            PKG_MGR="none"
-        fi
-
-        # Install required system packages:
-        # - DVD creation tools (genisoimage/cdrtools, dvdauthor)
-        # - pv (pipe viewer, for ld-compress progress)
-        # - sox (with ALSA support for audio capture - conda sox lacks ALSA driver)
-        if [[ "$PKG_MGR" == "dnf" ]] || [[ "$PKG_MGR" == "yum" ]]; then
-            echo "Installing system packages with $PKG_MGR..."
-            sudo $PKG_MGR install -y genisoimage dvdauthor pv sox || echo "Warning: Could not install system packages. Install manually: sudo $PKG_MGR install genisoimage dvdauthor pv sox"
-        elif [[ "$PKG_MGR" == "apt" ]]; then
-            echo "Installing system packages with apt..."
-            sudo apt update && sudo apt install -y genisoimage dvdauthor pv sox || echo "Warning: Could not install system packages. Install manually: sudo apt install genisoimage dvdauthor pv sox"
-        elif [[ "$PKG_MGR" == "pacman" ]]; then
-            echo "Installing system packages with pacman..."
-            sudo pacman -S --needed --noconfirm cdrtools dvdauthor pv sox || echo "Warning: Could not install system packages. Install manually: sudo pacman -S cdrtools dvdauthor pv sox"
-        elif [[ "$PKG_MGR" == "zypper" ]]; then
-            echo "Installing system packages with zypper..."
-            sudo zypper install -y cdrtools dvdauthor pv sox || echo "Warning: Could not install system packages. Install manually: sudo zypper install cdrtools dvdauthor pv sox"
-        else
-            echo "Warning: Unknown package manager. Please install these packages manually:"
-            echo "  - cdrtools (or genisoimage on Ubuntu/Debian)"
-            echo "  - dvdauthor"
-            echo "  - pv (pipe viewer, required for ld-compress progress)"
-            echo "  - sox (with ALSA support, required for audio capture)"
-        fi
+        report_system_packages
 
         echo ""
         echo "Linux-specific setup notes:"
         echo "  - You may need to set up udev rules for USB devices"
         echo "  - Run the toolkit with ./start.sh or python3 ddd_main_menu.py"
-        if [[ "$PKG_MGR" == "none" ]]; then
-            echo "  - Install DVD creation tools manually: cdrtools/genisoimage and dvdauthor"
-        fi
         ;;
     "macos")
         echo "macOS-specific setup notes:"
