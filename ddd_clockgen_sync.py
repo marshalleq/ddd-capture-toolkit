@@ -1607,14 +1607,20 @@ def start_capture_and_record():
             '.flac',          # Audio capture
             '.json',          # Capture metadata
             '.tbc',           # Luma TBC
-            '.tbc.chroma',    # Chroma TBC
+            '_chroma.tbc',    # Chroma TBC
             '.tbc.json',      # TBC metadata
             '.tbc.lz4',       # Compressed TBC
             '_ffv1.mkv',      # Exported video
             '_aligned.flac',  # Aligned audio (FLAC, current)
             '_aligned.wav',   # Aligned audio (WAV, legacy)
-            '_final.mkv'      # Final muxed output
+            '_final.mkv',     # Final muxed output
+            '.log',           # vhs-decode log (it refuses to decode over an existing one)
+            '.capture.log',   # Audio capture log
+            '_validation.log',            # Validation log
+            '_aligned.flac.watchdog.log', # Align watchdog log
         ]
+        # Hash sidecars of anything above describe files that are about to go
+        extensions += [ext + '.sha256' for ext in list(extensions)]
         for ext in extensions:
             filepath = os.path.join(capture_folder, f"{capture_name}{ext}")
             if os.path.exists(filepath):
