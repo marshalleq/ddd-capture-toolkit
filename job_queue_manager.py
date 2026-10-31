@@ -1090,6 +1090,18 @@ class JobQueueManager:
                             "vhs-decode output (last lines):\n    "
                             + "\n    ".join(output_tail)
                         )
+                    # Say why on the job itself, so the matrix shows a reason rather
+                    # than a bare "Failed".
+                    if return_code != 0:
+                        reason = f"vhs-decode exited with code {return_code}"
+                    else:
+                        reason = "vhs-decode finished but wrote no decoded output"
+                    if any('without handling any frames' in line for line in (output_tail or [])):
+                        reason += (". It read no frames from the input: check the RF file and video "
+                                   "standard, and that ld-ldf-reader works (run check_dependencies.py)")
+                    elif output_tail:
+                        reason += f". Last output: {output_tail[-1].strip()[:160]}"
+                    job.error_message = reason
 
             return return_code == 0 and output_files_exist
 
