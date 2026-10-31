@@ -850,6 +850,20 @@ class JobQueueManager:
                 job.error_message = "vhs-decode not found. Run setup.sh to install it."
                 return False
 
+            # A .ldf / .flac capture is read through ld-ldf-reader. If that program
+            # cannot start, vhs-decode does not fail - it finishes with no frames
+            # and an empty .tbc - so stop here with the real reason instead.
+            if job.input_file.lower().endswith(('.ldf', '.flac')):
+                try:
+                    import tool_health
+                    reader_problem = tool_health.reader_problem()
+                except ImportError:
+                    reader_problem = None
+                if reader_problem:
+                    self.logger.error(reader_problem)
+                    job.error_message = reader_problem
+                    return False
+
             # Build vhs-decode command
             cmd = [
                 vhs_decode_cmd,
