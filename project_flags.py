@@ -9,62 +9,95 @@ import json
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 
-# Flag definitions for vhs-decode (decode step)
-# Note: vhs-decode does NOT support --reverse. Field order reversal must be done
-# during export using the 'fix_reverse' export flag (which uses ld-dropout-correct).
+# Decode settings. One list for every decoder (see decoder_backends.py): each setting says,
+# per decoder, how that decoder takes it:
+#   '--flag'      the command-line flag that decoder uses
+#   'forced'      that decoder always behaves this way; shown on and locked
+#   'structural'  the decoder backend applies it itself (not a plain flag)
+#   missing       that decoder does not have it; shown greyed out and not applied
+# 'cli_flag' is vhs-decode's spelling, kept for anything that still reads it.
 # Flags with 'default': True are enabled by default and can be disabled per-project.
+# (vhs-decode does not support --reverse; field order reversal is done during export with
+# the 'fix_reverse' export flag, which uses ld-dropout-correct.)
+def _decode_flag(vhs, tape, label, description, default=False, **extra):
+    engines = {}
+    if vhs:
+        engines['vhs-decode'] = vhs
+    if tape:
+        engines['tape-decode'] = tape
+    flag = {'cli_flag': vhs, 'engines': engines, 'label': label,
+            'description': description, 'default': default}
+    flag.update(extra)
+    return flag
+
+
 DECODE_FLAGS = {
-    'no_resample': {
-        'cli_flag': '--no_resample',
-        'label': 'No resample',
-        'description': 'Disable resampling',
-        'default': True
-    },
-    'ire0_adjust': {
-        'cli_flag': '--ire0_adjust',
-        'label': 'IRE0 adjust',
-        'description': 'Adjust black level to IRE 0',
-        'default': True
-    },
-    'skip_chroma': {
-        'cli_flag': '--skip_chroma',
-        'label': 'Skip chroma',
-        'description': 'Skip chroma decoding (for B&W sources)',
-        'default': False
-    },
-    'non_linear_deemphasis': {
-        'cli_flag': '--non_linear_deemphasis',
-        'label': 'Non-linear deemphasis (NLD)',
-        'description': 'Anti-ringing: clip luma overshoots after demod. Reduces ringing on sharp edges; can soften luma slightly.',
-        'default': False
-    },
-    'sub_deemphasis': {
-        'cli_flag': '--sub_deemphasis',
-        'label': 'Sub deemphasis (SD)',
-        'description': 'Anti-ringing: alternative non-linear deemph mechanism. Often cleaner chroma side-effects than NLD on consumer 80s sources.',
-        'default': False
-    },
-    'high_boost': {
-        'cli_flag': '--high_boost',
-        'value_type': 'float',
-        'label': 'High frequency boost',
-        'description': 'Multiplier for luma HF boost during demod. Default (off) uses the tape-format profile value. Set 0 to disable boost; >1 sharpens (more ringing); <1 softens (less ringing).',
-        'default': False  # off = use tape-format profile default
-    },
-    'sharpness': {
-        'cli_flag': '--sharpness',
-        'value_type': 'int',
-        'label': 'Sharpness filter (0-100)',
-        'description': 'Crude post-demod sharpness filter. Off by default; experiment with low values (10-30) if the picture needs subtle detail enhancement.',
-        'default': False
-    },
-    'nodd': {
-        'cli_flag': '--nodd',
-        'label': 'No dropout detect',
-        'description': 'Disable dropout detection',
-        'default': False
-    },
+    'no_resample': _decode_flag(
+        '--no_resample', 'forced', 'No resample', 'Disable resampling', True),
+    'ire0_adjust': _decode_flag(
+        '--ire0_adjust', '--ire0-adjust', 'IRE0 adjust', 'Adjust black level to IRE 0', True),
+    'skip_chroma': _decode_flag(
+        '--skip_chroma', 'structural', 'Skip chroma', 'Skip chroma decoding (for B&W sources)'),
+    'non_linear_deemphasis': _decode_flag(
+        '--non_linear_deemphasis', '--nldeemp', 'Non-linear deemphasis (NLD)',
+        'Anti-ringing: clip luma overshoots after demod. Reduces ringing on sharp edges; can soften luma slightly.'),
+    'sub_deemphasis': _decode_flag(
+        '--sub_deemphasis', '--subdeemp', 'Sub deemphasis (SD)',
+        'Anti-ringing: alternative non-linear deemph mechanism. Often cleaner chroma side-effects than NLD on consumer 80s sources.'),
+    'high_boost': _decode_flag(
+        '--high_boost', '--high-boost', 'High frequency boost',
+        'Multiplier for luma HF boost during demod. Default (off) uses the tape-format profile value. Set 0 to disable boost; >1 sharpens (more ringing); <1 softens (less ringing).',
+        value_type='float'),
+    'sharpness': _decode_flag(
+        '--sharpness', '--sharpness', 'Sharpness filter (0-100)',
+        'Crude post-demod sharpness filter. Off by default; experiment with low values (10-30) if the picture needs subtle detail enhancement.',
+        value_type='int'),
+    'nodd': _decode_flag(
+        '--nodd', '--no-dod', 'No dropout detect', 'Disable dropout detection'),
+    'chroma_trap': _decode_flag(
+        '--chroma_trap', '--chroma-trap', 'Chroma trap',
+        'Apply a chroma trap to the luma path, removing leftover colour-carrier dots from the luma.'),
+    'y_comb': _decode_flag(
+        '--y_comb', '--y-comb', 'Luma comb filter',
+        'Luma Y comb filtering with the decoder\'s default clamp (1.5 IRE). Can reduce vertical chroma crawl in the luma.'),
+    'no_comb': _decode_flag(
+        '--no_comb', '--no-comb', 'No chroma comb',
+        'Disable the chroma comb filter.'),
+    'fm_audio_notch': _decode_flag(
+        '--fm_audio_notch', '--fm-audio-notch', 'FM audio notch',
+        'Notch out the FM audio carriers from the video signal, which removes wave-like patterns some decks leave.'),
+    'enable_dc_offset': _decode_flag(
+        '--enable_dc_offset', '--enable-dc-offset', 'DC offset correction',
+        'Apply detected RF DC-offset correction to the decoded video.'),
+    'disable_phase_correction': _decode_flag(
+        '--disable_phase_correction', '--disable-phase-correction', 'No chroma phase correction',
+        'Disable chroma phase correction.'),
+    'disable_burst_hsync': _decode_flag(
+        '--disable_burst_hsync', '--disable-burst-hsync', 'No burst hsync correction',
+        'Disable burst-based horizontal sync correction.'),
+    'ntscj': _decode_flag(
+        '--ntscj', '--ntscj', 'NTSC-J black level',
+        'Treat NTSC black level as 0 IRE instead of 7.5 IRE (Japanese NTSC).'),
 }
+
+
+def decode_flag_state(flag_def: Dict, backend_key: str) -> str:
+    """'supported', 'forced' or 'unsupported' for the given decoder."""
+    spec = flag_def.get('engines', {}).get(backend_key)
+    if spec is None:
+        return 'unsupported'
+    return 'forced' if spec == 'forced' else 'supported'
+
+
+def decode_flag_option(flag_def: Dict, backend_key: str) -> str:
+    """The command-line text the given decoder uses for this setting, for display."""
+    spec = flag_def.get('engines', {}).get(backend_key)
+    if spec is None:
+        return 'not available'
+    if spec in ('forced', 'structural'):
+        return {'forced': 'always on', 'structural': 'built in'}[spec]
+    return spec
+
 
 # Flag definitions for the lds-compress step (.lds → .ldf).
 # These control how the toolkit validates a successful compress; the actual
@@ -387,6 +420,37 @@ class ProjectFlagsManager:
                 cli_flags.append(str(setting))
         return cli_flags
 
+    def get_decode_args(self, project_name, backend_key: str):
+        """
+        Decode settings for one decoder: (tokens, structural).
+
+        tokens      command-line arguments in that decoder's own spelling
+        structural  keys of settings the decoder backend applies itself (e.g. skip_chroma)
+        Settings the decoder does not have are left out; forced ones need no argument.
+        project_name None gives the defaults only.
+        """
+        project_data = self.flags_data.get('projects', {}).get(project_name, {}) if project_name else {}
+        stored = project_data.get('decode', {})
+        tokens, structural = [], set()
+        for key, flag_def in DECODE_FLAGS.items():
+            spec = flag_def['engines'].get(backend_key)
+            if spec is None or spec == 'forced':
+                continue
+            setting = stored.get(key, flag_def.get('default', False))
+            if flag_def.get('value_type'):
+                # a bare on/off toggle has no value to pass; set values in project_flags.json
+                if setting is False or setting is None or setting == '' or setting is True:
+                    continue
+            elif not setting:
+                continue
+            if spec == 'structural':
+                structural.add(key)
+                continue
+            tokens.append(spec)
+            if flag_def.get('value_type'):
+                tokens.append(str(setting))
+        return tokens, structural
+
     def get_enabled_flag_labels(self, project_name: str, flag_type: str = 'export') -> List[str]:
         """
         Get list of human-readable labels for enabled flags.
@@ -416,6 +480,53 @@ class ProjectFlagsManager:
             if enabled:
                 labels.append(flag_def['label'])
         return labels
+
+
+def translate_decode_extras(text: str, backend_key: str):
+    """
+    Free-form decode parameters, written in either decoder's spelling, for one decoder.
+
+    Returns (tokens, structural, problems). A setting the toolkit knows is rewritten into
+    the chosen decoder's spelling; one that decoder does not have is a problem. Anything
+    else is passed through unchanged for the decoder itself to accept or refuse.
+    """
+    spellings = {}
+    for key, flag_def in DECODE_FLAGS.items():
+        for spec in flag_def['engines'].values():
+            if spec not in ('forced', 'structural'):
+                spellings[spec] = key
+    words = (text or '').split()
+    tokens, structural, problems = [], set(), []
+    i = 0
+    while i < len(words):
+        word = words[i]
+        key = spellings.get(word)
+        if key is None:
+            tokens.append(word)
+            i += 1
+            continue
+        flag_def = DECODE_FLAGS[key]
+        spec = flag_def['engines'].get(backend_key)
+        takes_value = bool(flag_def.get('value_type'))
+        value = words[i + 1] if takes_value and i + 1 < len(words) else None
+        i += 2 if takes_value else 1
+        if spec is None:
+            problems.append(f"{word} is not available in {backend_key}")
+        elif spec == 'structural':
+            structural.add(key)
+        elif spec != 'forced':
+            tokens.append(spec)
+            if value is not None:
+                tokens.append(value)
+    return tokens, structural, problems
+
+
+def decode_arguments(project_name, backend_key: str, extra_text: str = ''):
+    """Everything a decoder is told by the project's decode settings plus free-form
+    parameters: (tokens, structural, problems)."""
+    tokens, structural = ProjectFlagsManager().get_decode_args(project_name, backend_key)
+    extra_tokens, extra_structural, problems = translate_decode_extras(extra_text, backend_key)
+    return tokens + extra_tokens, structural | extra_structural, problems
 
 
 def get_flag_definitions(flag_type: str = 'export') -> Dict:

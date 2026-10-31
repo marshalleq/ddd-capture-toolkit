@@ -8,6 +8,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from decoder_backends import select_decoder, ansi_stripped
+from project_flags import DECODE_FLAGS, decode_arguments, decode_flag_state
 
 
 def test_registry():
@@ -23,8 +24,10 @@ def test_registry():
 
 def test_vhs_decode_command():
     d = select_decoder('vhs-decode')
+    tokens, structural, problems = decode_arguments(None, 'vhs-decode')
+    assert not problems
     cmd, problems = d.build_command('/x/vhs-decode', {'video_standard': 'pal', 'tape_speed': 'LP'},
-                                    ['--no_resample', '--ire0_adjust'], 'in.flac', '/o/out', threads=3)
+                                    tokens, structural, 'in.flac', '/o/out', threads=3)
     assert not problems
     assert cmd == ['/x/vhs-decode', '--tf', 'vhs', '-t', '3', '--ts', 'LP', '--pal',
                    '--no_resample', '--ire0_adjust', 'in.flac', '/o/out']
@@ -34,16 +37,17 @@ def test_vhs_decode_command():
 
 def test_tape_decode_command():
     d = select_decoder('tape-decode')
-    cmd, problems = d.build_command(
-        '/x/tape-decode', {'video_standard': 'ntsc', 'tape_speed': 'EP'},
-        ['--no_resample', '--ire0_adjust', '--sub_deemphasis', '--high_boost', '1.5'],
-        'in.ddd.flac', '/o/out', threads=3)
+    tokens, structural, problems = decode_arguments(
+        None, 'tape-decode', '--sub_deemphasis --high_boost 1.5 --chroma_trap')
+    assert not problems, problems
+    cmd, problems = d.build_command('/x/tape-decode', {'video_standard': 'ntsc', 'tape_speed': 'EP'},
+                                    tokens, structural, 'in.ddd.flac', '/o/out', threads=3)
     assert not problems, problems
     assert cmd[:3] == ['/x/tape-decode', 'decode', '--profile']
     assert cmd[3] == 'NTSC_VHS_EP'
-    assert '--ire0-adjust' in cmd and '--subdeemp' in cmd
+    assert '--ire0-adjust' in cmd and '--subdeemp' in cmd and '--chroma-trap' in cmd
     assert cmd[cmd.index('--high-boost') + 1] == '1.5'
-    assert '--no_resample' not in cmd
+    assert '--no_resample' not in cmd and '--no-resample' not in cmd
     assert cmd[cmd.index('--luma-out') + 1] == '/o/out.tbc'
     assert cmd[cmd.index('--chroma-out') + 1] == '/o/out_chroma.tbc'
     assert cmd[cmd.index('--metadata-out') + 1] == '/o/out.tbc.json'
@@ -52,21 +56,47 @@ def test_tape_decode_command():
     assert select_decoder('tape-decode').profile({'video_standard': 'pal', 'tape_speed': 'SP'}) == 'PAL_VHS'
 
 
-def test_tape_decode_skip_chroma_and_nodd():
+def test_free_form_follows_the_chosen_decoder():
+    # either spelling is accepted and written the way the chosen decoder wants it
+    assert decode_arguments(None, 'tape-decode', '--nodd')[0][-1] == '--no-dod'
+    assert decode_arguments(None, 'tape-decode', '--no-dod')[0][-1] == '--no-dod'
+    assert decode_arguments(None, 'vhs-decode', '--subdeemp')[0][-1] == '--sub_deemphasis'
+    # a value follows its flag
+    assert decode_arguments(None, 'tape-decode', '--high_boost 2')[0][-2:] == ['--high-boost', '2']
+    # anything the toolkit does not know passes through for the decoder to judge
+    assert decode_arguments(None, 'tape-decode', '--notch 3.58')[0][-2:] == ['--notch', '3.58']
+
+
+def test_unsupported_and_forced_settings():
+    assert decode_flag_state(DECODE_FLAGS['no_resample'], 'tape-decode') == 'forced'
+    assert decode_flag_state(DECODE_FLAGS['no_resample'], 'vhs-decode') == 'supported'
+    assert decode_flag_state(DECODE_FLAGS['ire0_adjust'], 'tape-decode') == 'supported'
+    # forced: nothing is passed, so the setting cannot be turned off
+    tokens, _, _ = decode_arguments(None, 'tape-decode')
+    assert not any('resample' in t for t in tokens)
+    # a setting a decoder lacks is a problem when asked for in free-form
+    fake = dict(DECODE_FLAGS['chroma_trap']['engines'])
+    del DECODE_FLAGS['chroma_trap']['engines']['tape-decode']
+    try:
+        assert decode_flag_state(DECODE_FLAGS['chroma_trap'], 'tape-decode') == 'unsupported'
+        _, _, problems = decode_arguments(None, 'tape-decode', '--chroma_trap')
+        assert problems and 'not available in tape-decode' in problems[0]
+    finally:
+        DECODE_FLAGS['chroma_trap']['engines'].update(fake)
+
+
+def test_tape_decode_skip_chroma():
     d = select_decoder('tape-decode')
-    cmd, problems = d.build_command('/x/td', {}, ['--skip_chroma', '--nodd'], 'in.flac', '/o/out')
+    tokens, structural, _ = decode_arguments(None, 'tape-decode', '--skip_chroma --nodd')
+    cmd, problems = d.build_command('/x/td', {}, tokens, structural, 'in.flac', '/o/out')
     assert not problems
-    assert '--chroma-out' not in cmd and '--no-dod' in cmd
+    assert '--chroma-out' not in cmd and '--no-dod' in cmd and '--skip_chroma' not in cmd
 
 
 def test_tape_decode_refuses_what_it_cannot_do():
     d = select_decoder('tape-decode')
-    _, problems = d.build_command('/x/td', {}, ['--made_up_flag'], 'in.flac', '/o/out')
-    assert any('--made_up_flag' in p for p in problems)
-    _, problems = d.build_command('/x/td', {}, [], 'in.flac', '/o/out', segment=(100, 500))
+    _, problems = d.build_command('/x/td', {}, [], set(), 'in.flac', '/o/out', segment=(100, 500))
     assert any('segment' in p for p in problems)
-    _, problems = d.build_command('/x/td', {'additional_params': '--foo'}, [], 'in.flac', '/o/out')
-    assert any('additional' in p for p in problems)
     assert d.input_problem('capture.lds')
     assert d.input_problem('capture.ldf')
     assert d.input_problem('capture.ddd.flac') is None

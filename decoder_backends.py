@@ -48,10 +48,15 @@ class DecoderBackend:
         """Return a message if this decoder cannot read input_file, else None."""
         return None
 
-    def build_command(self, exe, job_params, flags, input_file, output_base,
+    def build_command(self, exe, job_params, tokens, structural, input_file, output_base,
                       segment=None, threads=3):
-        """Return (argv, problems). problems lists anything asked for that this
-        decoder cannot do; the caller fails the job with them."""
+        """Return (argv, problems).
+
+        tokens      the decode settings already in this decoder's own spelling
+                    (see project_flags.decode_arguments)
+        structural  settings this backend applies itself rather than as a flag
+        problems    anything asked for that this decoder cannot do; the caller
+                    fails the job with them."""
         raise NotImplementedError
 
     def output_files(self, output_base):
@@ -85,19 +90,16 @@ class VhsDecodeBackend(DecoderBackend):
     label = 'vhs-decode (upstream Python decoder)'
     command_name = 'vhs-decode'
 
-    def build_command(self, exe, job_params, flags, input_file, output_base,
+    def build_command(self, exe, job_params, tokens, structural, input_file, output_base,
                       segment=None, threads=3):
         cmd = [exe, '--tf', 'vhs', '-t', str(threads),
                '--ts', job_params.get('tape_speed', 'SP')]
         cmd.append('--pal' if job_params.get('video_standard', 'pal').lower() == 'pal' else '--ntsc')
-        cmd.extend(flags)
+        cmd.extend(tokens)
         if segment:
             start, length = segment
             cmd.extend(['-s', str(start), '-l', str(length)])
         cmd.extend([input_file, output_base])
-        extra = job_params.get('additional_params', '')
-        if extra:
-            cmd.extend(extra.split())
         return cmd, []
 
     def parse_progress(self, line):
@@ -129,19 +131,6 @@ class TapeDecodeBackend(DecoderBackend):
 
     SAMPLE_RATE_MHZ = 40            # the Domesday Duplicator captures at 40 MHz
 
-    # vhs-decode flag -> tape-decode arguments. None means tape-decode has no
-    # such setting because it behaves that way always.
-    FLAG_MAP = {
-        '--no_resample': None,
-        '--ire0_adjust': ['--ire0-adjust'],
-        '--non_linear_deemphasis': ['--nldeemp'],
-        '--sub_deemphasis': ['--subdeemp'],
-        '--nodd': ['--no-dod'],
-        '--high_boost': ['--high-boost'],       # takes a value, passed on unchanged
-        '--sharpness': ['--sharpness'],         # takes a value, passed on unchanged
-        '--skip_chroma': 'skip_chroma',
-    }
-
     def input_problem(self, input_file):
         if not input_file.lower().endswith('.flac'):
             return (f"tape-decode reads FLAC captures (.flac / .ddd.flac); "
@@ -155,7 +144,7 @@ class TapeDecodeBackend(DecoderBackend):
         suffix = '' if speed == 'SP' else '_' + speed
         return f"{standard}_VHS{suffix}"
 
-    def build_command(self, exe, job_params, flags, input_file, output_base,
+    def build_command(self, exe, job_params, tokens, structural, input_file, output_base,
                       segment=None, threads=3):
         problems = []
         if segment:
@@ -163,28 +152,9 @@ class TapeDecodeBackend(DecoderBackend):
                             "turn segment mode off for this project or set decoder_backend to vhs-decode")
         cmd = [exe, 'decode', '--profile', self.profile(job_params),
                '--frequency', str(self.SAMPLE_RATE_MHZ), '--input-format', 'flac']
-        skip_chroma = False
-        i = 0
-        while i < len(flags):
-            flag = flags[i]
-            if flag not in self.FLAG_MAP:
-                problems.append(f"tape-decode does not support the decode setting {flag}")
-                i += 1
-                continue
-            mapped = self.FLAG_MAP[flag]
-            takes_value = flag in ('--high_boost', '--sharpness')
-            if mapped == 'skip_chroma':
-                skip_chroma = True
-            elif mapped:
-                cmd.extend(mapped)
-                if takes_value and i + 1 < len(flags):
-                    cmd.append(flags[i + 1])
-            i += 2 if takes_value else 1
-        if job_params.get('additional_params', ''):
-            problems.append("additional decode parameters are written for vhs-decode and are not "
-                            "passed to tape-decode; remove them or set decoder_backend to vhs-decode")
+        cmd.extend(tokens)
         cmd.extend(['--luma-out', output_base + '.tbc'])
-        if not skip_chroma:
+        if 'skip_chroma' not in structural:
             cmd.extend(['--chroma-out', output_base + '_chroma.tbc'])
         cmd.extend(['--metadata-out', output_base + '.tbc.json',
                     '--mt-threads', str(self.cores_wanted(threads)), input_file])

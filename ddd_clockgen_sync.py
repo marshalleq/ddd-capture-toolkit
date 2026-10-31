@@ -947,11 +947,12 @@ def run_vhs_decode_with_params(rf_filename, tbc_filename, video_standard, tape_s
         print(f"ERROR: {decoder.command_name} will not decode over an earlier decode's files: "
               + ", ".join(os.path.basename(f) for f in stale))
         return False
+    from project_flags import decode_arguments
+    tokens, structural, flag_problems = decode_arguments(None, decoder.key, additional_params or '')
     cmd, problems = decoder.build_command(
-        decoder_path,
-        {'video_standard': video_standard, 'tape_speed': tape_speed,
-         'additional_params': (additional_params or '').strip()},
-        ['--no_resample', '--ire0_adjust'], rf_filename, out_base)
+        decoder_path, {'video_standard': video_standard, 'tape_speed': tape_speed},
+        tokens, structural, rf_filename, out_base)
+    problems = flag_problems + problems
     if problems:
         print(f"ERROR: {decoder.key}: " + "; ".join(problems))
         return False

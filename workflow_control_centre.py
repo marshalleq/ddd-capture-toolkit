@@ -43,7 +43,8 @@ try:
     from directory_manager import DirectoryManager
     from job_queue_manager import get_job_queue_manager
     from project_status_display import ProjectStatusDisplay, DisplayConfig
-    from project_flags import ProjectFlagsManager, DECODE_FLAGS, EXPORT_FLAGS, AUDIO_FLAGS, COMPRESS_FLAGS, get_flag_definitions
+    from project_flags import (ProjectFlagsManager, DECODE_FLAGS, EXPORT_FLAGS, AUDIO_FLAGS, COMPRESS_FLAGS,
+                               get_flag_definitions, decode_flag_state, decode_flag_option)
     from segment_config import load_segment_config, save_segment_config, toggle_segment_enabled, clear_segment_config, has_segment_config
     COMPONENTS_AVAILABLE = True
     SEGMENT_AVAILABLE = True
@@ -1269,9 +1270,17 @@ class WorkflowControlCentre:
         # Initialize flags manager
         flags_manager = ProjectFlagsManager()
 
+        # The decode page follows the decoder chosen in config ("decoder_backend")
+        try:
+            from decoder_backends import select_decoder
+            decoder_key = select_decoder().key
+        except ValueError as e:
+            self.message = str(e)
+            return
+
         # Page definitions
         pages = [
-            {'type': 'decode', 'title': 'DECODE FLAGS', 'subtitle': 'vhs-decode options'},
+            {'type': 'decode', 'title': 'DECODE FLAGS', 'subtitle': f'{decoder_key} options'},
             {'type': 'export', 'title': 'EXPORT FLAGS', 'subtitle': 'tbc-video-export options'},
             {'type': 'audio', 'title': 'AUDIO FLAGS', 'subtitle': 'final mux audio options'},
             {'type': 'compress', 'title': 'COMPRESS FLAGS', 'subtitle': 'lds-compress validation options'},
@@ -1507,8 +1516,15 @@ class WorkflowControlCentre:
                 else:
                     indicator = Text(" ")
 
+                # Decode settings the chosen decoder lacks are greyed out; ones it always applies are locked on
+                decode_state = decode_flag_state(flag_def, decoder_key) if page['type'] == 'decode' else 'supported'
+
                 # Checkbox with color - show differently for default-on flags
-                if is_enabled:
+                if decode_state == 'unsupported':
+                    checkbox = Text("[-]", style="dim")
+                elif decode_state == 'forced':
+                    checkbox = Text("[X]", style="dim cyan")
+                elif is_enabled:
                     if is_default_on:
                         checkbox = Text("[X]", style="cyan")  # Default-on, currently on
                     else:
@@ -1522,16 +1538,23 @@ class WorkflowControlCentre:
                 # Flag name - highlight if selected
                 if is_selected:
                     flag_name = Text(flag_def['label'], style="bold white on blue")
+                elif decode_state != 'supported':
+                    flag_name = Text(flag_def['label'], style="dim")
                 else:
                     flag_name = Text(flag_def['label'], style="white")
 
                 # CLI option
-                cli_opt = flag_def['cli_flag']
+                cli_opt = (decode_flag_option(flag_def, decoder_key) if page['type'] == 'decode'
+                           else flag_def['cli_flag'])
 
                 # Description - add default indicator
                 desc = Text()
-                desc.append(flag_def['description'])
-                if is_default_on:
+                desc.append(flag_def['description'], style="dim" if decode_state != 'supported' else "")
+                if decode_state == 'unsupported':
+                    desc.append(f" (not available in {decoder_key})", style="yellow")
+                elif decode_state == 'forced':
+                    desc.append(f" ({decoder_key} always does this)", style="cyan")
+                elif is_default_on:
                     desc.append(" (default: on)", style="cyan")
 
                 table.add_row(indicator, checkbox, flag_name, cli_opt, desc)
@@ -1781,7 +1804,10 @@ class WorkflowControlCentre:
 
                     elif key == ' ':  # Space - toggle
                         flag_key = flag_keys[selected_idx]
-                        current_flags[page_type][flag_key] = not current_flags[page_type].get(flag_key, False)
+                        if page_type == 'decode' and decode_flag_state(flag_defs[flag_key], decoder_key) != 'supported':
+                            pass  # greyed out or locked for the chosen decoder
+                        else:
+                            current_flags[page_type][flag_key] = not current_flags[page_type].get(flag_key, False)
 
                     elif key in ('\r', '\n'):  # Enter - save all
                         # Save all flag types
