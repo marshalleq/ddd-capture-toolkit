@@ -48,7 +48,7 @@ explain() {
     real="$(readlink -f "$p" 2>/dev/null || echo "$p")"
     echo "  $p"
 
-    if command -v rpm >/dev/null 2>&1 && pkg="$(rpm -qf "$p" 2>/dev/null)" && [[ -n "$pkg" ]]; then
+    if command -v rpm >/dev/null 2>&1 && pkg="$(rpm -qf --qf '%{NAME}' "$p" 2>/dev/null)" && [[ -n "$pkg" ]]; then
         echo "      installed by the system package $pkg"
         echo "      remove with:  $(remove_cmd "$pkg" rpm)"
     elif command -v dpkg >/dev/null 2>&1 && pkg="$(dpkg -S "$p" 2>/dev/null | head -n1 | cut -d: -f1)" && [[ -n "$pkg" ]]; then
