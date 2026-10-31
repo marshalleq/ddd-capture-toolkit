@@ -78,7 +78,19 @@ else
 fi
 log_info "Using optimization flags: $OPT_FLAGS"
 
-CC_BIN="${CC:-gcc}"
+# Compile with the system compiler, not the conda cross-compiler in $CC. The
+# performance FFmpeg in the environment is built with the system gcc against the
+# system C library, so its libavcodec needs symbols (for example log10f@GLIBC_2.43)
+# that conda's older-glibc linker cannot resolve: 'undefined reference ... GLIBC_2.43'.
+CC_BIN="$(command -v gcc || true)"
+if [[ -z "$CC_BIN" || "$CC_BIN" == "${CONDA_PREFIX}"/* ]]; then
+    CC_BIN="$(command -v cc || true)"
+fi
+if [[ -z "$CC_BIN" ]]; then
+    log_error "No system C compiler (gcc) found. Install one, e.g. sudo dnf install gcc"
+    exit 1
+fi
+log_info "Using compiler: $CC_BIN"
 OUT="${CONDA_PREFIX}/bin/ld-ldf-reader"
 TMP_OUT="$(mktemp "${CONDA_PREFIX}/bin/.ld-ldf-reader.XXXXXX")"
 

@@ -443,7 +443,7 @@ if conda env list | grep -q "^ddd-capture-toolkit[[:space:]]"; then
         conda env create -f "$ENV_FILE"
     else
         # Easy mode - check for compiled tools from previous performance install
-        CONDA_ENV_PATH=$(conda env list | awk '/^ddd-capture-toolkit[[:space:]]/ {print $2}' | head -n1)
+        CONDA_ENV_PATH=$(conda env list | awk '$1=="ddd-capture-toolkit" {print $NF}' | head -n1)
         has_compiled_tools=false
 
         if [[ -n "$CONDA_ENV_PATH" ]]; then
@@ -637,7 +637,7 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
             
             # Export conda environment info for build script
             # Get the correct conda environment path using conda env list
-            CONDA_ENV_PATH=$(conda env list | awk '/^ddd-capture-toolkit[[:space:]]/ {print $2}' | head -n1)
+            CONDA_ENV_PATH=$(conda env list | awk '$1=="ddd-capture-toolkit" {print $NF}' | head -n1)
             
             # If that didn't work, try alternative method
             if [[ -z "$CONDA_ENV_PATH" ]]; then
@@ -811,7 +811,7 @@ log_success "Installed Tool Versions"
 echo "=============================================="
 
 # Get conda environment path
-CONDA_ENV_PATH=$(conda env list | awk '/^ddd-capture-toolkit[[:space:]]/ {print $2}' | head -n1)
+CONDA_ENV_PATH=$(conda env list | awk '$1=="ddd-capture-toolkit" {print $NF}' | head -n1)
 
 # vhs-decode version
 if [[ "$INSTALL_MODE" == "performance" ]] && [[ -e "external/vhs-decode/.git" ]]; then
@@ -894,7 +894,9 @@ echo ""
 # isn't started via ./start.sh, and isn't updated by setup.
 STRAY_TOOLS=()
 for tool in vhs-decode ld-chroma-decoder ld-dropout-correct ld-process-vbi ld-export-metadata ld-lds-converter ld-ldf-reader ld-analyse ld-compress ld-cut ld-decode ld-discmap ld-disc-stacker ld-chroma-encoder ld-process-efm ld-process-vits ld-ac3-decode ld-ac3-demodulate; do
-    candidates=$(type -ap "$tool" 2>/dev/null; for d in "$HOME/.local/bin" /usr/local/bin /usr/bin; do [[ -e "$d/$tool" ]] && echo "$d/$tool"; done)
+    # 'true' at the end: the last [[ -e ]] failing would otherwise make the whole
+    # assignment fail, and 'set -e' would end setup here without a word.
+    candidates=$(type -ap "$tool" 2>/dev/null; for d in "$HOME/.local/bin" /usr/local/bin /usr/bin; do [[ -e "$d/$tool" ]] && echo "$d/$tool"; done; true)
     while IFS= read -r p; do
         [[ -z "$p" || "$p" == "$CONDA_ENV_PATH"/* ]] && continue
         [[ " ${STRAY_TOOLS[*]} " =~ " $p " ]] || STRAY_TOOLS+=("$p")
