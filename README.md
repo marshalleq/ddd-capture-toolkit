@@ -55,7 +55,29 @@ Measured on one decode of a 26 second PAL capture, pinned to four cores of a Ryz
 The compiler's CPU-specific instructions matter a great deal for `tape-decode`: a generic build with none of
 them managed 7.6 frames/s on the same capture. Part of the gap in the table is also that performance mode
 builds the decoder's current source while easy mode takes its latest release, which is older. The figures
-are for the decode step only; the other steps were not measured. Full results: [Decoders](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Decoders).
+are for the decode step only; the other steps were not measured. 
+
+All the builds we measured, on every machine we tried:
+
+| Build (frames per second, higher is faster) | Ryzen 9 9950X3D | Ryzen 7 5800X | Apple M1 Pro | Apple M2 (Air) |
+|---|---|---|---|---|
+| **tape-decode**, compiled for the CPU (current source) | **35** | **25** | **28.5** | **30** |
+| tape-decode, easy-mode release (best x86-64 build for the CPU) | 19 | 13 | not built | not built |
+| tape-decode, generic x86-64 build | 7.6 | 5.9 | n/a | n/a |
+| vhs-decode v0.4.0, compiled | 8.6 | 4.6 | would not load | not tried |
+| vhs-decode v0.4.0, easy-mode AppImage | 8.0 | 4.5 | n/a | n/a |
+| vhs-decode March 2026, compiled | 12.3 | 6.7 | not tried | not tried |
+
+Each figure is a typical result of two to six decodes of the same 26 second PAL capture (668 frames, FLAC), using four cores or
+threads. On the two Ryzens the decode is pinned to four cores; the Macs cannot pin, so they get four
+threads with the rest of the chip free. An hour of PAL is 90,000 frames, so divide by the figure: 35 frames/s
+is 43 minutes, 8.6 is 2.9 hours, 4.6 is 5.4 hours. With eight threads `tape-decode` reaches about 43 on the
+9950X3D, 42 on the M1 Pro and 36 on the M2. The March 2026 `vhs-decode` row on the 5800X was measured on a
+10 second sample (6.7); the rest are the 26 second capture. "Would not load" means the build finished but its
+Rust extension failed to start on this macOS, so no figure exists. The M2 binary was built on the M1 Mac
+for the M2 chip (`target-cpu=apple-m2`).
+
+Full results and method: [Decoders](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Decoders).
 
 > **Use the conda environment — do not `pip install -r requirements.txt` against a system Python.** The toolkit pins Python 3.12 and installs everything (including `tbc-video-export`, which has no wheels for Python ≥ 3.14) into the isolated `ddd-capture-toolkit` conda env. Installing into a bare python.org interpreter will fail to resolve dependencies. **On Windows** this means installing [Git for Windows](https://git-scm.com/downloads/win) (for the Git Bash shell `setup.sh` needs) and [Miniconda](https://docs.conda.io/en/latest/miniconda.html) first, then running `./setup.sh` from Git Bash — see [SETUP.md](SETUP.md).
 
