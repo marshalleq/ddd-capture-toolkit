@@ -43,6 +43,29 @@ def check_python_version():
         print(f"   Python {ver_str} OK")
         return True
 
+def _installed_vhs_decode_version():
+    """Version string of the pip-installed vhs-decode, or None if it is not installed."""
+    try:
+        from importlib import metadata
+        return metadata.version('vhs_decode')
+    except Exception:
+        return None
+
+
+def _numpy2_breaks_installed_vhs_decode(numpy_version):
+    """True if NumPy is 2.x and the installed vhs-decode is older than 0.4.0."""
+    try:
+        if int(str(numpy_version).split('.')[0]) < 2:
+            return False
+        vhs = _installed_vhs_decode_version()
+        if not vhs:
+            return False
+        parts = [int(p) for p in vhs.split('.')[:2]]
+        return parts < [0, 4]
+    except (ValueError, TypeError):
+        return False
+
+
 def check_python_packages():
     """Check required Python packages"""
     print("\nChecking Python packages...")
@@ -65,10 +88,16 @@ def check_python_packages():
             module = importlib.import_module(package)
             version = module.__version__ if hasattr(module, '__version__') else 'unknown'
             
-            # NumPy 2.x is fine: vhs-decode 0.4.0 declares numpy>=1.24 and decodes
-            # correctly under NumPy 2.5 (and SciPy here needs NumPy 2). The old
-            # "requires NumPy 1.x" warning applied to earlier vhs-decode releases.
-            print(f"   {name} {version} OK")
+            # NumPy 2.x is fine for vhs-decode 0.4.0 or newer (it declares numpy>=1.24 and
+            # decodes correctly under NumPy 2.5). Earlier releases, including the 0.3.8.1
+            # on PyPI that easy mode installs, crash on the first frame under NumPy 2
+            # ("only 0-dimensional arrays can be converted to Python scalars").
+            if package == 'numpy' and _numpy2_breaks_installed_vhs_decode(version):
+                print(f"   {name} {version} WARNING (the installed vhs-decode needs NumPy 1.x)")
+                print(f"      vhs-decode {_installed_vhs_decode_version()} crashes under NumPy 2.x; use vhs-decode 0.4.0 or newer")
+                print(f"      (performance setup builds it), or: pip install 'numpy<2.0'")
+            else:
+                print(f"   {name} {version} OK")
         except ImportError:
             print(f"   {name} ERROR (install with: pip install {name})")
             all_good = False
