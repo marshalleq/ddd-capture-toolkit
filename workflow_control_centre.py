@@ -3117,6 +3117,9 @@ class WorkflowControlCentre:
     # move into the backup folder. Every project *.log also moves except
     # the decode log, and so does the .sha256 sidecar of each moved file.
     _ARCHIVE_BACKUP_SUFFIXES = (
+        '.ddd.flac',                     # native FLAC RF master (current capture application)
+        '.ddd.s16',                      # native uncompressed RF master
+        '.ddd.yaml',                     # native capture metadata
         '.ldf',                          # compressed RF master
         '.ldf.validated',                # Tier 3 proof .ldf == .lds
         '.flac',                         # original captured audio
@@ -3162,7 +3165,8 @@ class WorkflowControlCentre:
         """Move a project's backup set into <basename>.backup/.
 
         Refuses unless the .ldf.validated sidecar is present (the Tier 3
-        gate). Non-destructive: every file is mv'd, not deleted, so a
+        gate); for a native .ddd.flac capture the gate is that the capture
+        originals have current recorded hashes. Non-destructive: every file is mv'd, not deleted, so a
         later 'unstage N' restores the original layout. The .lds stays at
         the top level with the other regenerable files — once Tier 3 has
         passed it's safely droppable, but the delete is left to the user.
@@ -3173,21 +3177,37 @@ class WorkflowControlCentre:
             return
         project = self.current_projects[project_idx]
 
-        ldf_path = self._find_ldf_path(project)
-        if not ldf_path or not os.path.exists(ldf_path):
-            self.message = f"Cannot stage {project.name}: no .ldf file found."
-            return
+        video = getattr(project, 'capture_files', {}).get('video')
+        if video and rf_formats.is_native(video):
+            # Native capture (.ddd.flac): there is no .lds to compare against, so
+            # the gate is that the capture originals have current recorded hashes.
+            if not os.path.exists(video):
+                self.message = f"Cannot stage {project.name}: {os.path.basename(video)} not found."
+                return
+            hash_state = self.workflow_analyzer._get_step_hash_state(WorkflowStep.CAPTURE, project)
+            if hash_state != 'validated':
+                self.message = (
+                    f"Refusing to stage {project.name}: the capture files' hashes are not recorded "
+                    f"and current (state: {hash_state}). Hash the originals first."
+                )
+                return
+            source_dir = os.path.dirname(video)
+        else:
+            ldf_path = self._find_ldf_path(project)
+            if not ldf_path or not os.path.exists(ldf_path):
+                self.message = f"Cannot stage {project.name}: no .ldf file found."
+                return
 
-        sidecar = ldf_path + '.validated'
-        if not os.path.isfile(sidecar):
-            self.message = (
-                f"Refusing to stage {project.name}: {os.path.basename(sidecar)} "
-                f"missing. Run {project_num}mv first to validate the .ldf against "
-                f"its source .lds."
-            )
-            return
+            sidecar = ldf_path + '.validated'
+            if not os.path.isfile(sidecar):
+                self.message = (
+                    f"Refusing to stage {project.name}: {os.path.basename(sidecar)} "
+                    f"missing. Run {project_num}mv first to validate the .ldf against "
+                    f"its source .lds."
+                )
+                return
 
-        source_dir = os.path.dirname(ldf_path)
+            source_dir = os.path.dirname(ldf_path)
         base = project.name
         backup_dir = self._stage_backup_dir(project)
         if not backup_dir:
