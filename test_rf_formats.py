@@ -253,9 +253,18 @@ def test_tool_health(tmp):
         ok = tool_health.check_tool('ld-ldf-reader', prefix)
         check("environment copy first is healthy", ok['managed'] and not ok['problem'] and tool_health.reader_problem(prefix) is None)
         check("healthy report severity ok", tool_health.format_report(ok)[1] == 'ok')
+        # starts here only because LD_LIBRARY_PATH is set
+        script(stale, 'ld-process-vits', '[ -n "$LD_LIBRARY_PATH" ] || { echo "x: error while loading shared libraries: libz.so.1" >&2; exit 127; }; echo ok')
+        os.environ['PATH'] = os.pathsep.join([stale, saved_path])
+        os.environ['LD_LIBRARY_PATH'] = '/somewhere/lib'
+        fr = tool_health.check_tool('ld-process-vits', prefix)
+        check("starts only with LD_LIBRARY_PATH -> fragile", fr['fragile'] and not fr['problem'], str(fr))
+        check("fragile is a warning", tool_health.format_report(fr)[1] == 'warn')
+        del os.environ['LD_LIBRARY_PATH']
         check("missing tool is reported not found", tool_health.check_tool('ld-no-such-tool', prefix)['path'] is None)
     finally:
         os.environ['PATH'] = saved_path
+        os.environ.pop('LD_LIBRARY_PATH', None)
 
 
 def main():

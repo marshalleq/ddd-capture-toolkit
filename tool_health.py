@@ -41,7 +41,16 @@ _LOAD_ERRORS = (
 
 
 def env_prefix():
-    """The directory of the active environment (conda prefix, or the Python prefix)."""
+    """
+    The directory of the environment the toolkit runs in.
+
+    The Python prefix when Python itself lives in a conda environment (the
+    toolkit always runs from its own), otherwise CONDA_PREFIX, otherwise the
+    Python prefix. CONDA_PREFIX alone can name the base install when the
+    environment's python was run by path without activating it.
+    """
+    if os.path.isdir(os.path.join(sys.prefix, 'conda-meta')):
+        return sys.prefix
     return os.environ.get('CONDA_PREFIX') or sys.prefix
 
 
@@ -63,11 +72,24 @@ def _is_inside(path, prefix):
         return False
 
 
-def _startup_problem(path):
-    """Return a one-line reason if the program cannot start, else None."""
+_LIBRARY_PATH_VARS = ('LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH')
+
+
+def _startup_problem(path, scrub_library_path=False):
+    """
+    Return a one-line reason if the program cannot start, else None.
+
+    scrub_library_path runs it without LD_LIBRARY_PATH / DYLD_LIBRARY_PATH, which
+    shows whether it only starts because something (importing OpenCV, for one,
+    adds the environment's lib folder to LD_LIBRARY_PATH) is propping it up.
+    """
+    env = os.environ.copy()
+    if scrub_library_path:
+        for var in _LIBRARY_PATH_VARS:
+            env.pop(var, None)
     try:
         proc = subprocess.run([path, '--help'], capture_output=True, text=True, timeout=10,
-                              stdin=subprocess.DEVNULL)
+                              stdin=subprocess.DEVNULL, env=env)
     except subprocess.TimeoutExpired:
         return None        # it started and is waiting: it can run
     except OSError as e:
@@ -87,16 +109,23 @@ def check_tool(name, prefix=None):
     path     the copy that would run (first on PATH), or None if not found
     managed  True if it lives inside the environment the toolkit built
     problem  why it cannot start, or None
+    fragile  True if it starts here but not without LD_LIBRARY_PATH (so it only
+             works while something sets that variable)
     shadows  a managed copy that exists but is hidden behind `path`, or None
     """
     prefix = prefix or env_prefix()
     hits = _path_hits(name)
-    report = {'name': name, 'path': None, 'managed': False, 'problem': None, 'shadows': None, 'notes': []}
+    report = {'name': name, 'path': None, 'managed': False, 'problem': None, 'fragile': False,
+              'shadows': None, 'notes': []}
     if not hits:
         return report
     report['path'] = hits[0]
     report['managed'] = _is_inside(hits[0], prefix)
     report['problem'] = _startup_problem(hits[0])
+    if not report['problem'] and any(os.environ.get(v) for v in _LIBRARY_PATH_VARS):
+        # Starts only because a library path is set in this process? Recheck without it.
+        if _startup_problem(hits[0], scrub_library_path=True):
+            report['fragile'] = True
     if not report['managed']:
         managed_copy = next((h for h in hits[1:] if _is_inside(h, prefix)), None)
         report['shadows'] = managed_copy
@@ -139,6 +168,11 @@ def format_report(report):
         severity = 'fail'
         lines.append(f"    {name} - CANNOT START ({where}): {report['path']}")
         lines.append(f"      {report['problem']}")
+    elif report['fragile']:
+        severity = 'warn'
+        lines.append(f"    {name} - starts only while LD_LIBRARY_PATH is set ({where}): {report['path']}")
+        lines.append("      It cannot find its libraries on its own (for example it was linked against an older "
+                     "FFmpeg). Anything that launches it without that variable gets no output.")
     elif report['managed']:
         lines.append(f"    {name} - OK ({report['path']})")
     else:
