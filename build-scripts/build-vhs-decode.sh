@@ -212,15 +212,28 @@ build_vhs_decode() {
         log_info "RUSTFLAGS: $RUSTFLAGS"
     fi
 
-    # Build dependencies. The install below runs with --no-build-isolation, so what
-    # pyproject.toml lists under [build-system] must already be in the environment:
-    #  - setuptools-rust builds the Rust extension;
-    #  - setuptools_scm reads the version from git. Without it the build quietly
-    #    reports version 0.0.0 / 'unknown', and every .tbc.json it writes records
-    #    version "unknown" instead of the vhs-decode release that decoded it.
+    # Build dependencies. The install below runs with --no-build-isolation, so every
+    # package pyproject.toml lists under [build-system] requires must already be in the
+    # environment, or the build quietly goes wrong. (Missing setuptools_scm, for example,
+    # makes the compiled build report version 0.0.0, and each .tbc.json it writes then
+    # says version "unknown".) Install exactly what the project declares.
     log_info "Installing build dependencies..."
-    pip install setuptools-rust "setuptools_scm>=6.2" || {
-        log_error "Failed to install the build dependencies (setuptools-rust, setuptools_scm)"
+    local build_reqs=() req
+    while IFS= read -r req; do
+        [[ -n "$req" ]] && build_reqs+=("$req")
+    done < <(python - <<'PYREQ'
+import tomllib
+with open("pyproject.toml", "rb") as f:
+    print("\n".join(tomllib.load(f)["build-system"]["requires"]))
+PYREQ
+)
+    if [[ ${#build_reqs[@]} -eq 0 ]]; then
+        log_error "Could not read [build-system] requires from pyproject.toml"
+        return 1
+    fi
+    log_info "Build requirements: ${build_reqs[*]}"
+    pip install "${build_reqs[@]}" || {
+        log_error "Failed to install the build dependencies"
         return 1
     }
 
