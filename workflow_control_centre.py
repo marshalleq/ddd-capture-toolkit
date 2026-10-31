@@ -5,6 +5,7 @@ Unified workflow management with project matrix A-G, selection system, and rich 
 """
 
 import os
+import tool_health
 import rf_formats
 import re
 import sys
@@ -2911,7 +2912,7 @@ class WorkflowControlCentre:
 
                 start = _t.time()
                 proc = subprocess.Popen(
-                    [tool, ldf_path],
+                    tool_health.ldf_reader_argv(tool, ldf_path),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                 )

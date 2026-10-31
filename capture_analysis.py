@@ -15,6 +15,7 @@ applies (raw - 512) * 64 to centre and scale into signed 16-bit, so:
 """
 
 import os
+import tool_health
 import shutil
 import subprocess
 import sys
@@ -82,7 +83,7 @@ def _extract_ldf_to_raw(input_path, skip_seconds, duration_seconds, raw_path):
 
     with open(raw_path, 'wb') as fout:
         reader = subprocess.Popen(
-            [tool, '-s', str(skip_samples), input_path],
+            tool_health.ldf_reader_argv(tool, input_path, skip_samples),
             stdout=subprocess.PIPE,
         )
         try:
