@@ -22,7 +22,7 @@ import os
 import re
 import shutil
 
-DEFAULT_DECODER = 'vhs-decode'
+DEFAULT_DECODER = 'tape-decode'
 
 _DECODERS = {}
 
@@ -194,7 +194,7 @@ def select_decoder(key=None):
     Return the decoder backend to use.
 
     key: a registered key, or None to read "decoder_backend" from the config
-    (default 'vhs-decode'). An unknown key is an error.
+    (default 'tape-decode'). An unknown key is an error.
     """
     if key is None:
         from config import load_config
