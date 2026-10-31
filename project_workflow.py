@@ -8,6 +8,7 @@ Project Workflow Status Browser implementation.
 """
 
 import os
+import rf_formats
 import sys
 import time
 from datetime import datetime
@@ -60,7 +61,7 @@ def _show_legacy_workflow_status():
             if os.path.exists(capture_folder):
                 try:
                     files = os.listdir(capture_folder)
-                    rf_files = [f for f in files if f.lower().endswith(('.lds', '.ldf'))]
+                    rf_files = [f for f in files if rf_formats.is_rf_capture(f)]
                     tbc_files = [f for f in files if f.lower().endswith('.tbc')]
                     audio_files = [f for f in files if f.lower().endswith(('.wav', '.flac'))]
                     video_files = [f for f in files if f.lower().endswith('.mkv')]

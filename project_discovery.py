@@ -13,6 +13,8 @@ from typing import List, Dict, Optional, Set
 from pathlib import Path
 import re
 
+import rf_formats
+
 # Subfolder suffixes created by the WCC's 'stage N' command. '.backup' holds
 # the archive set; '.intermediate' is the older layout (intermediates moved
 # aside) and is still recognised so existing staged projects can be unstaged.
@@ -50,7 +52,9 @@ class ProjectDiscovery:
     """Discovers and analyzes VHS archival projects in directories"""
     
     # File extensions for different types
-    RF_EXTENSIONS = {'.lds', '.ldf', '.s16'}  # RF capture files
+    RF_EXTENSIONS = {'.lds', '.ldf', '.s16'}  # RF capture files (legacy single-extension forms)
+    # Native captures (.ddd.flac / .ddd.s16) are recognised by rf_formats before
+    # the extension tables, because '.ddd.flac' would otherwise look like audio.
     AUDIO_EXTENSIONS = {'.wav', '.flac'}       # Audio files
     VIDEO_EXTENSIONS = {'.tbc'}                # TBC files (decoded video)
     EXPORT_EXTENSIONS = {'.mkv', '.mp4', '.avi'} # Exported video files
@@ -222,6 +226,14 @@ class ProjectDiscovery:
         project.file_sizes[filename] = file_size
         project.timestamps[filename] = file_mtime
         
+        # Native captures first: '.ddd.flac' must not be mistaken for an audio .flac
+        if rf_formats.is_native(filename):
+            project.capture_files['video'] = filepath
+            return
+        if filename.lower().endswith('.ddd.yaml'):
+            project.capture_files['metadata'] = filepath
+            return
+
         # Categorize by extension and naming patterns
         if file_ext == '.ldf':
             # .ldf is compressed LDS - check if we have an uncompressed .lds
@@ -295,7 +307,7 @@ class ProjectDiscovery:
         
         # Check if video capture file exists
         if 'video' not in project.capture_files:
-            validation.issues.append("No video capture file (.lds) found")
+            validation.issues.append("No video capture file (.ddd.flac, .lds or .ldf) found")
             validation.is_valid = False
         else:
             video_file = project.capture_files['video']

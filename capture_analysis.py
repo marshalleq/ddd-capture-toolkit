@@ -2,7 +2,8 @@
 """
 DdD Sync Capture - Capture analysis tool
 
-Extracts a slice of a .lds (10-bit packed) or .ldf (FLAC-compressed) RF capture,
+Extracts a slice of a .lds (10-bit packed), .ldf (FLAC-compressed) or native
+.ddd.flac RF capture,
 unpacks it to a raw signed-16-bit PCM file suitable for inspection in Audacity,
 and prints a numeric summary (clipping %, min/max, mean, RMS).
 
@@ -17,6 +18,8 @@ import os
 import shutil
 import subprocess
 import sys
+
+import rf_formats
 
 DDD_SAMPLE_RATE = 40_000_000          # 40 MHz
 LDS_BYTES_PER_SECOND = 50_000_000     # 4 samples per 5 bytes * 40 Msps
@@ -102,6 +105,25 @@ def _extract_ldf_to_raw(input_path, skip_seconds, duration_seconds, raw_path):
                 reader.kill()
 
 
+def _extract_native_flac_to_raw(input_path, skip_seconds, duration_seconds, raw_path):
+    """For native .ddd.flac: slice with ffmpeg to signed 16-bit LE PCM.
+
+    The FLAC header carries the label 40000 (Hz) while the real rate is 40 MHz,
+    so one real second is 1000 'label seconds'; ffmpeg's time arguments are
+    scaled to match. The samples are the converter's 10-bit codes centred about
+    zero in 16 bits, the same scaling _compute_stats expects.
+    """
+    tool = _which_or_die('ffmpeg')
+    label_scale = DDD_SAMPLE_RATE // 40_000
+    subprocess.run(
+        [tool, '-v', 'error', '-y',
+         '-ss', str(skip_seconds * label_scale),
+         '-t', str(duration_seconds * label_scale),
+         '-i', input_path, '-f', 's16le', '-acodec', 'pcm_s16le', raw_path],
+        check=True,
+    )
+
+
 def _compute_stats(raw_path):
     """Compute clipping/level statistics from a signed 16-bit LE raw PCM file."""
     try:
@@ -158,9 +180,10 @@ def analyse_capture(input_path, skip_seconds=30, duration_seconds=60, output_pat
     if not os.path.isfile(input_path):
         raise FileNotFoundError(f"Capture file not found: {input_path}")
 
-    ext = os.path.splitext(input_path)[1].lower()
-    if ext not in ('.lds', '.ldf'):
-        raise ValueError(f"Unsupported extension {ext}; expected .lds or .ldf")
+    ext = rf_formats.rf_suffix(input_path)
+    if ext not in ('.lds', '.ldf', '.ddd.flac'):
+        raise ValueError(f"Unsupported file {os.path.basename(input_path)}; "
+                         f"expected .lds, .ldf or .ddd.flac")
 
     file_size = os.path.getsize(input_path)
 
@@ -181,8 +204,26 @@ def analyse_capture(input_path, skip_seconds=30, duration_seconds=60, output_pat
             )
             duration_seconds = available
 
+    if ext == '.ddd.flac':
+        total_seconds = rf_formats.capture_duration_seconds(input_path)
+        if total_seconds:
+            if skip_seconds >= total_seconds:
+                raise ValueError(
+                    f"Skip offset {skip_seconds}s is past end of file "
+                    f"(file is only ~{int(total_seconds)}s long)."
+                )
+            available = int(total_seconds - skip_seconds)
+            if available < 1:
+                raise ValueError("Less than one second available after the skip offset.")
+            if duration_seconds > available:
+                print(
+                    f"  Note: only ~{available}s available after {skip_seconds}s skip; "
+                    f"using that instead of requested {duration_seconds}s."
+                )
+                duration_seconds = available
+
     if output_path is None:
-        base = os.path.splitext(input_path)[0]
+        base = rf_formats.rf_base_path(input_path)
         output_path = f"{base}_slice_{skip_seconds}s_{duration_seconds}s.raw"
 
     if ext == '.lds':
@@ -193,6 +234,8 @@ def analyse_capture(input_path, skip_seconds=30, duration_seconds=60, output_pat
         finally:
             if not keep_slice and os.path.exists(slice_path):
                 os.remove(slice_path)
+    elif ext == '.ddd.flac':
+        _extract_native_flac_to_raw(input_path, skip_seconds, duration_seconds, output_path)
     else:  # .ldf
         _extract_ldf_to_raw(input_path, skip_seconds, duration_seconds, output_path)
 
@@ -371,7 +414,7 @@ def _scan_processing_locations():
         for fp in base.glob('*'):
             if not fp.is_file():
                 continue
-            if fp.suffix.lower() not in ('.lds', '.ldf'):
+            if not rf_formats.is_rf_capture(fp.name):
                 continue
             try:
                 st = fp.stat()
@@ -400,7 +443,7 @@ def _select_capture_file():
 
     if entries is None:
         # directory_manager not importable — last-resort fallback
-        sel = input("Path to .lds/.ldf file: ").strip()
+        sel = input("Path to .lds/.ldf/.ddd.flac file: ").strip()
         if not sel:
             print("Cancelled.")
             return None
@@ -411,10 +454,10 @@ def _select_capture_file():
         return path
 
     if not entries:
-        print("No .lds/.ldf files found in any enabled processing location.")
+        print("No .lds/.ldf/.ddd.flac files found in any enabled processing location.")
         print("Add or enable a location via Configuration menu → 4,2,")
         print("or enter a path manually below (leave blank to cancel).")
-        sel = input("Path to .lds/.ldf file: ").strip()
+        sel = input("Path to .lds/.ldf/.ddd.flac file: ").strip()
         if not sel:
             return None
         path = os.path.expanduser(sel)
@@ -467,7 +510,7 @@ def _prompt_int(label, default, minimum=None, maximum=None):
 def main():
     """CLI entry: capture_analysis.py <file> [skip_seconds] [duration_seconds]"""
     if len(sys.argv) < 2:
-        print("Usage: capture_analysis.py <file.lds|file.ldf> [skip_seconds=30] [duration_seconds=60]")
+        print("Usage: capture_analysis.py <file.lds|file.ldf|file.ddd.flac> [skip_seconds=30] [duration_seconds=60]")
         sys.exit(1)
     path = sys.argv[1]
     skip = int(sys.argv[2]) if len(sys.argv) > 2 else 30
