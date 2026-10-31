@@ -1987,7 +1987,9 @@ class JobQueueManager:
                 self.logger.warning("Could not import config module, using default 4 threads")
                 ffmpeg_threads = 4
             
-            ffmpeg_cmd = ['ffmpeg']
+            # Easy mode's conda ffmpeg has no libsoxr; use one that does if the system has it
+            import tool_health
+            ffmpeg_cmd = [tool_health.find_soxr_ffmpeg() or 'ffmpeg']
             
             # Add thread control for performance management
             if ffmpeg_threads > 0:
