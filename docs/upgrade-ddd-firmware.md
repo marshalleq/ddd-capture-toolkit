@@ -16,8 +16,6 @@ pages, listed at the end, are the authority if they differ.
   as `1209:2347` instead of `1d50:603b`. Any program that looks for the old ID, including older Domesday Duplicator
   command-line builds and forks of the old Qt application, will no longer find the board. Upstream documents no way
   to return a board to the original firmware.
-- **Make a known-good capture first.** If you can, record a reference capture on the original firmware before
-  upgrading, so you have something to compare against and a fallback while you move your tools over.
 - **Modified units.** Upstream says one signal (`CTL_07`) is driven by the FX3 board under the original design and by
   the FPGA under the current one. If your unit carries modifications, such as an external clock or clock-bridge mod,
   check whether any of it touches that signal before you begin, and photograph the wiring. Upstream has not said
