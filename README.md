@@ -33,11 +33,29 @@ It runs entirely in a terminal (no X server, no desktop required), so a dedicate
 git clone --recurse-submodules https://github.com/marshalleq/ddd-capture-toolkit.git
 cd ddd-capture-toolkit
 ./setup.sh                 # easy mode, ~5 min, uses prebuilt packages
-# or ./setup.sh --performance    # compile-from-source with -march=native, ~30–60 min,
-                                 # notable throughput win for ffmpeg-bound steps
+# or ./setup.sh --performance    # compile-from-source for your CPU, ~30–60 min,
+                                 # decodes nearly twice as fast (see below)
 conda activate ddd-capture-toolkit
 python3 ddd_main_menu.py
 ```
+
+### Easy mode or performance mode?
+
+Easy mode installs prebuilt programs and is working in five minutes. **Performance mode compiles the
+decoder for your exact CPU, and a tape you decode overnight finishes in about half the time.** You pay once,
+at install, and every decode after that is faster.
+
+Measured on one decode of a 26 second PAL capture, pinned to four cores of a Ryzen 9 9950X3D:
+
+| Decoder | Easy mode | Performance mode | Time for one hour of tape |
+|---|---|---|---|
+| **tape-decode** (the default) | 19 frames/s | **35 frames/s** (1.8× faster) | 77 minutes → **43 minutes** |
+| vhs-decode | 8.0 frames/s | 8.6 frames/s (7% faster) | 3.1 hours → 2.9 hours |
+
+The compiler's CPU-specific instructions matter a great deal for `tape-decode`: a generic build with none of
+them managed 7.6 frames/s on the same capture. Part of the gap in the table is also that performance mode
+builds the decoder's current source while easy mode takes its latest release, which is older. The figures
+are for the decode step only; the other steps were not measured. Full results: [Decoders](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Decoders).
 
 > **Use the conda environment — do not `pip install -r requirements.txt` against a system Python.** The toolkit pins Python 3.12 and installs everything (including `tbc-video-export`, which has no wheels for Python ≥ 3.14) into the isolated `ddd-capture-toolkit` conda env. Installing into a bare python.org interpreter will fail to resolve dependencies. **On Windows** this means installing [Git for Windows](https://git-scm.com/downloads/win) (for the Git Bash shell `setup.sh` needs) and [Miniconda](https://docs.conda.io/en/latest/miniconda.html) first, then running `./setup.sh` from Git Bash — see [SETUP.md](SETUP.md).
 
