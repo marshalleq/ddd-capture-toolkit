@@ -862,15 +862,14 @@ class JobQueueManager:
                     job.error_message = reader_problem
                     return False
 
-            # Per-project decode flags (includes defaults like --no_resample, --ire0_adjust)
-            cli_flags = []
-            if PROJECT_FLAGS_AVAILABLE and job.project_name:
-                flags_manager = ProjectFlagsManager()
-                cli_flags = flags_manager.get_cli_flags(job.project_name, 'decode')
-                if cli_flags:
-                    self.logger.info(f"Added project decode flags: {' '.join(cli_flags)}")
-            else:
-                cli_flags = ['--no_resample', '--ire0_adjust']
+            # Per-project decode settings (with the defaults, e.g. no resample and IRE0 adjust) plus
+            # any free-form parameters, in the chosen decoder's own spelling
+            from project_flags import decode_arguments
+            cli_flags, structural, flag_problems = decode_arguments(
+                job.project_name if PROJECT_FLAGS_AVAILABLE else None,
+                decoder.key, job.parameters.get('additional_params', ''))
+            if cli_flags:
+                self.logger.info(f"Decode arguments for {decoder.key}: {' '.join(cli_flags)}")
 
             # Check for segment configuration (for testing partial decodes)
             # segment_start_frame is used later for progress calculation
@@ -909,8 +908,9 @@ class JobQueueManager:
                 threads = 3
             out_base = job.output_file.replace('.tbc', '')
             cmd, problems = decoder.build_command(
-                decoder_exe, job.parameters, cli_flags, job.input_file, out_base,
+                decoder_exe, job.parameters, cli_flags, structural, job.input_file, out_base,
                 segment=segment, threads=threads)
+            problems = flag_problems + problems
             if problems:
                 job.error_message = f"{decoder.key}: " + "; ".join(problems)
                 self.logger.error(job.error_message)
