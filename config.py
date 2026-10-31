@@ -102,7 +102,22 @@ def save_config(config):
     Returns True if successful, False otherwise.
     """
     config_path = get_project_root() / CONFIG_FILE
-    
+
+    # A calibrated audio_delay only holds for the capture backend it was measured
+    # with. Every calibration path saves it through here, so record the backend
+    # whenever the delay changes and the caller has not named one itself.
+    try:
+        previous = {}
+        if config_path.exists():
+            with open(config_path) as f:
+                previous = json.load(f)
+        if (config.get('audio_delay') != previous.get('audio_delay')
+                and config.get('audio_delay_backend') == previous.get('audio_delay_backend')):
+            from capture_backends import select_backend
+            config['audio_delay_backend'] = select_backend()[0].key
+    except Exception:
+        pass
+
     try:
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=4)
