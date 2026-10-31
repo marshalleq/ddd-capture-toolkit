@@ -418,13 +418,17 @@ def prepare_capture_resources(audio_output_path):
     return audio_capture_spec, device_info
 
 
-def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_command):
+def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_command, backend=None):
     """
     Run the synchronised audio + video capture, assuming all resources have
     been pre-prepared by prepare_capture_resources():
     - audio device is already released from PipeWire/PulseAudio
     - sox|flac pipeline argv is already built
-    - DDD command is ready to launch
+    - RF capture command (ddd_command) is ready to launch
+
+    backend is the capture_backends.CaptureBackend that built ddd_command; it
+    supplies the stop command and process environment. Defaults to the
+    configured/auto-selected backend.
 
     The capture loop runs until a stop request is received (via the stop_event
     or a /tmp/domesday_stop_request marker file).
@@ -437,6 +441,9 @@ def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_
         except Exception:
             pass
 
+    if backend is None:
+        backend, _ = select_backend()
+
     stop_event = threading.Event()
 
     def video_capture_thread():
@@ -447,6 +454,7 @@ def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_
 
         try:
             clean_env = get_clean_env_for_system_tools()
+            clean_env.update(backend.extra_env())
             ddd_process = subprocess.Popen(ddd_command,
                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                          text=True, bufsize=1, universal_newlines=True,
@@ -456,7 +464,7 @@ def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_
             time.sleep(0.3)
             if ddd_process.poll() is not None:
                 stdout, _ = ddd_process.communicate()
-                print(f"[Video] ERROR: DomesdayDuplicator failed to start!")
+                print(f"[Video] ERROR: {backend.label} failed to start!")
                 if stdout:
                     print(f"[Video] Output: {stdout.strip()}")
                 return
@@ -473,7 +481,7 @@ def shared_capture_process_fast(sox_command, audio_delay, capture_duration, ddd_
                     time.sleep(0.1)
 
             # Stop capture
-            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+            stop_result = subprocess.run(backend.stop_command(),
                                        capture_output=True, text=True, timeout=10,
                                        env=clean_env)
 
@@ -587,20 +595,20 @@ sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
 # --- CONFIGURATION ---
-# DomesdayDuplicator command line interface
-# Commands available:
-# - DomesdayDuplicator --start-capture: Start capture with GUI visible
-# - DomesdayDuplicator --start-capture --headless: Start capture without GUI
-# - DomesdayDuplicator --stop-capture: Stop any running capture
-# - DomesdayDuplicator --debug --start-capture: Show debug info while capturing
+# The RF capture program is chosen by capture_backends.py (config key
+# "capture_backend": "auto", "ddd-gui" or "ddd-legacy"). Each backend knows its
+# own command line, output file extension and stop command, so nothing in this
+# file hard-codes a particular program.
 
 # 2. Output Filename:
 #    This will be set dynamically by prompting the user
-#    The script will use this name for both RF (.lds) and audio files
+#    The script will use this name for both the RF file (extension depends on
+#    the capture backend: .lds or .ddd.flac) and the audio .flac file
 CAPTURE_NAME = 'my_vhs_capture'  # Default fallback
 
 # Import configuration management
 from config import get_capture_directory, load_config, save_config
+from capture_backends import select_backend, list_backends
 
 # Get actual temp folder for calibration (always uses project temp directory)
 def get_temp_folder():
@@ -857,10 +865,11 @@ def cleanup_existing_processes():
             print("   Cleanup completed")
 
         # Check for running DomesdayDuplicator processes (but don't kill them automatically)
-        result = subprocess.run(['pgrep', '-f', 'DomesdayDuplicator.*capture'], capture_output=True, text=True)
+        result = subprocess.run(['pgrep', '-f', 'DomesdayDuplicator.*capture|ddd-gui.*(headless|start-capture)'],
+                                capture_output=True, text=True)
         if result.returncode == 0 and result.stdout.strip():
             pids = result.stdout.strip().split('\n')
-            print(f"\nWarning: Found {len(pids)} running DomesdayDuplicator capture process(es)")
+            print(f"\nWarning: Found {len(pids)} running Domesday Duplicator capture process(es)")
             print("   These may interfere with new captures")
             print("   Consider stopping them manually or use 'Stop Current Capture' menu option")
 
@@ -1418,8 +1427,9 @@ def update_capture_delay_only(new_delay):
         config = load_config()
         old_delay = config.get('audio_delay', 0.000)
         
-        # Update the audio delay value
+        # Update the audio delay value, and record which capture backend it was measured with
         config['audio_delay'] = new_delay
+        config['audio_delay_backend'] = select_backend()[0].key
         
         # Save the updated configuration
         if save_config(config):
@@ -1449,10 +1459,12 @@ def validate_calibration_with_configured_delay():
     )
 
 
-def prompt_for_capture_name(target_folder=None):
+def prompt_for_capture_name(target_folder=None, rf_suffix='.lds'):
     """
     Prompt user for capture name to use for both RF and audio files
     Returns the base filename (without extension)
+
+    rf_suffix is the extension the active capture backend writes for the RF file.
     """
     # Use temp folder if no target folder specified (for backwards compatibility)
     if target_folder is None:
@@ -1460,7 +1472,7 @@ def prompt_for_capture_name(target_folder=None):
     
     print("\n--- CAPTURE NAMING ---")
     print("Enter a name for this capture session.")
-    print("This name will be used for both RF (.lds) and audio (.flac) files.")
+    print(f"This name will be used for both RF ({rf_suffix}) and audio (.flac) files.")
     print("")
     print("Examples:")
     print("   VHS_Movie_Title_1985")
@@ -1485,12 +1497,12 @@ def prompt_for_capture_name(target_folder=None):
                 continue
             
             # Check if files already exist in the target folder
-            lds_path = os.path.join(target_folder, f"{capture_name}.lds")
+            rf_path = os.path.join(target_folder, f"{capture_name}{rf_suffix}")
             flac_path = os.path.join(target_folder, f"{capture_name}.flac")
             
             existing_files = []
-            if os.path.exists(lds_path):
-                existing_files.append(lds_path)
+            if os.path.exists(rf_path):
+                existing_files.append(rf_path)
             if os.path.exists(flac_path):
                 existing_files.append(flac_path)
             
@@ -1507,7 +1519,7 @@ def prompt_for_capture_name(target_folder=None):
             
             print(f"\nCapture name set to: {capture_name}")
             print(f"Files will be saved as:")
-            print(f"   RF capture: {capture_name}.lds")
+            print(f"   RF capture: {capture_name}{rf_suffix}")
             print(f"   Audio: {capture_name}.flac")
             print(f"   Location: {os.path.abspath(target_folder)}/")
             
@@ -1551,6 +1563,20 @@ def start_capture_and_record():
     config = load_config()
     calibration_mode = config.get('calibration_mode', False)
 
+    # Choose the RF capture program (config "capture_backend", default auto)
+    try:
+        backend, backend_reason = select_backend()
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        return
+    print(f"RF capture program: {backend.label}")
+    print(f"   Chosen because: {backend_reason}")
+    if not backend.available():
+        print(f"ERROR: {backend.label} was not found.")
+        print("   Install it, or set \"capture_backend\" / \"capture_binary\" in config/config.json.")
+        print("   Available backends: " + ", ".join(b.key for b in list_backends()))
+        return
+
     # Calibration captures always go to the project temp folder so that
     # analyze_v2_calibration() can find them. Normal captures use the
     # user-configured capture directory.
@@ -1575,7 +1601,9 @@ def start_capture_and_record():
         # Check for existing calibration files (all stages of workflow)
         existing_files = []
         extensions = [
-            '.lds',           # RF capture
+            '.lds',           # RF capture (forked app)
+            '.ddd.flac',      # RF capture (ddd-gui)
+            '.ddd.yaml',      # ddd-gui capture metadata
             '.flac',          # Audio capture
             '.json',          # Capture metadata
             '.tbc',           # Luma TBC
@@ -1614,14 +1642,26 @@ def start_capture_and_record():
         audio_delay = 0.000
     else:
         # Normal mode - prompt for capture name
-        capture_name = prompt_for_capture_name(capture_folder)
+        capture_name = prompt_for_capture_name(capture_folder, backend.rf_suffix)
         if not capture_name:
             return  # User cancelled
         audio_delay = config.get('audio_delay', 0.000)  # Default to 0.000 if not set
         print(f"Using configured audio delay: {audio_delay:.3f}s")
+        # The calibrated delay includes the RF program's start-up latency, so it
+        # only holds for the backend it was measured with.
+        from config import get_audio_delay_backend
+        calibrated_with = get_audio_delay_backend()
+        if calibrated_with != backend.key:
+            print(f"\nWARNING: this audio delay was calibrated with '{calibrated_with}', "
+                  f"but this capture uses '{backend.key}'.")
+            print("   The two start the RF capture with different latency, so the delay may be")
+            print("   wrong. Run the calibration again with this backend before an important capture.")
+            if input("Continue anyway? (y/N): ").strip().lower() not in ('y', 'yes'):
+                print("Capture cancelled.")
+                return
 
     # Construct output file paths
-    video_output_path = os.path.join(capture_folder, f"{capture_name}.lds")
+    video_output_path = backend.rf_path(capture_folder, capture_name)
     audio_output_path = os.path.join(capture_folder, f"{capture_name}.flac")
 
     # PRE-PREPARE: Do all slow operations NOW (before user presses Enter)
@@ -1631,9 +1671,15 @@ def start_capture_and_record():
         print(f"Error preparing capture: {result}")
         return
 
-    # Build DDD command (instant, no subprocess calls)
-    ddd_command = ['DomesdayDuplicator', '--start-capture', '--headless',
-                  '--capture-directory', capture_folder, '--output-file', capture_name]
+    folder_warning = backend.check_folder(capture_folder)
+    if folder_warning:
+        print(f"\nWARNING: {folder_warning}")
+        if input("Continue anyway? (y/N): ").strip().lower() not in ('y', 'yes'):
+            print("Capture cancelled.")
+            return
+
+    # Build the RF capture command (instant apart from a one-off installed-app probe)
+    ddd_command = backend.start_command(capture_folder, capture_name)
 
     print(f"\nVideo will be saved to: {video_output_path}")
     print(f"Audio will be saved to: {audio_output_path}")
@@ -1645,7 +1691,8 @@ def start_capture_and_record():
     input()
 
     # Start capture immediately (resources already prepared)
-    shared_capture_process_fast(sox_command, audio_delay, capture_duration=None, ddd_command=ddd_command)
+    shared_capture_process_fast(sox_command, audio_delay, capture_duration=None,
+                                ddd_command=ddd_command, backend=backend)
 
     # ----- Post-capture: optional auto-checksum of the 3 originals -----
     # Capture has fully exited at this point (shared_capture_process_fast
@@ -1654,7 +1701,10 @@ def start_capture_and_record():
     # should exist on disk and be safe to hash.
     try:
         from config import get_auto_checksum
-        if get_auto_checksum():
+        if get_auto_checksum() and backend.rf_suffix != '.lds':
+            print(f"\n(post-capture hashing only handles .lds captures so far; "
+                  f"{os.path.basename(video_output_path)} was not hashed)")
+        elif get_auto_checksum():
             json_output_path = os.path.join(capture_folder, f"{capture_name}.json")
             try:
                 from post_capture_hash import prompt_and_hash_originals
@@ -1772,7 +1822,8 @@ def save_calibration_results(alignment_base_name, offset_seconds, delay_seconds,
             },
             "file_references": {
                 "audio_file": f"{alignment_base_name}.flac",
-                "rf_file": f"{alignment_base_name}.lds",
+                "rf_file": f"{alignment_base_name}{select_backend()[0].rf_suffix}",
+                "capture_backend": select_backend()[0].key,
                 "tbc_file": f"{alignment_base_name}.tbc",
                 "tbc_json_file": f"{alignment_base_name}.tbc.json",
                 "video_file": f"{alignment_base_name}_ffv1.mkv",
@@ -1822,25 +1873,29 @@ def stop_current_capture():
         except subprocess.CalledProcessError:
             print("No SOX processes found to stop.")
         
-        # Stop DomesdayDuplicator using command line (clean env to avoid Qt conflicts)
+        # Stop the RF capture program using its own stop command (clean env to avoid Qt conflicts)
+        backend, _ = select_backend()
+        pattern = backend.process_pattern
         try:
-            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture', '--headless'],
+            stop_env = get_clean_env_for_system_tools()
+            stop_env.update(backend.extra_env())
+            stop_result = subprocess.run(backend.stop_command(),
                                        capture_output=True, text=True, timeout=10,
-                                       env=get_clean_env_for_system_tools())
+                                       env=stop_env)
             if stop_result.returncode == 0:
-                print("DomesdayDuplicator capture stopped via command line.")
+                print(f"{backend.label} capture stopped via command line.")
             else:
-                print(f"DomesdayDuplicator stop returned code {stop_result.returncode}")
+                print(f"{backend.label} stop returned code {stop_result.returncode}")
                 # Fallback to process kill
-                subprocess.run(['pkill', '-f', 'DomesdayDuplicator'], check=False)
-                print("Attempted to kill DomesdayDuplicator processes.")
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+                subprocess.run(['pkill', '-f', pattern], check=False)
+                print(f"Attempted to kill {pattern} processes.")
+        except (subprocess.TimeoutExpired, FileNotFoundError, TypeError):
             print("Command line stop failed, trying process kill...")
             try:
-                subprocess.run(['pkill', '-f', 'DomesdayDuplicator'], check=True)
-                print("DomesdayDuplicator processes killed.")
+                subprocess.run(['pkill', '-f', pattern], check=True)
+                print(f"{pattern} processes killed.")
             except subprocess.CalledProcessError:
-                print("No DomesdayDuplicator processes found to stop.")
+                print(f"No {pattern} processes found to stop.")
                 
     except Exception as e:
         print(f"Error when stopping captures: {e}")

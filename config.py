@@ -33,6 +33,9 @@ DEFAULT_CONFIG = {
     "capture_directory": "temp",  # Default to temp folder in project directory
     "default_capture_name": "my_vhs_capture",
     "audio_delay": 0.000,  # Default audio delay for sync
+    "audio_delay_backend": None,  # Capture backend the audio_delay was calibrated with (None = pre-backend, forked app)
+    "capture_backend": "auto",  # RF capture program: "auto", "ddd-gui", "ddd-legacy" (see capture_backends.py)
+    "capture_binary": None,  # Optional override of the RF capture program (path or command line)
     "preferred_video_format": "PAL",  # PAL or NTSC
     "last_used_test_pattern": "default",  # For custom test patterns
     "audio_device": {
@@ -375,6 +378,23 @@ def set_compress_use_gpu(enabled):
         print(f"Compress GPU acceleration: {'enabled' if enabled else 'disabled'}")
         return True
     return False
+
+
+def get_audio_delay_backend():
+    """
+    Key of the capture backend the stored audio_delay was calibrated with.
+    The calibrated delay includes the RF program's start-up latency, so it only
+    holds for that backend. Delays saved before backends existed were measured
+    with the forked app, so None means 'ddd-legacy'.
+    """
+    return load_config().get('audio_delay_backend') or 'ddd-legacy'
+
+
+def set_audio_delay_backend(backend_key):
+    """Record which capture backend the stored audio_delay belongs to."""
+    config = load_config()
+    config['audio_delay_backend'] = backend_key
+    return save_config(config)
 
 
 def get_auto_checksum():
