@@ -25,12 +25,20 @@ def check(name, condition, detail=""):
         FAILED.append(name)
 
 
-def flac_header(total_samples, rate_label=40000):
-    """Minimal FLAC header: 'fLaC' + STREAMINFO block with the given totals."""
+def flac_header(total_samples, rate_label=40000, tags=None):
+    """Minimal FLAC header: 'fLaC' + STREAMINFO (+ VORBIS_COMMENT when tags are given)."""
     info = struct.pack('>HHBBB', 4096, 4096, 0, 0, 0) + struct.pack('>BBB', 0, 0, 0)
     packed = (rate_label << 44) | (0 << 41) | (15 << 36) | total_samples   # mono, 16 bit
     info += struct.pack('>Q', packed) + b'\x00' * 16
-    return b'fLaC' + bytes([0x80]) + struct.pack('>I', len(info))[1:] + info
+    out = b'fLaC' + bytes([0x00 if tags else 0x80]) + struct.pack('>I', len(info))[1:] + info
+    if tags:
+        vendor = b'test'
+        body = struct.pack('<I', len(vendor)) + vendor + struct.pack('<I', len(tags))
+        for key, value in tags.items():
+            comment = f'{key}={value}'.encode()
+            body += struct.pack('<I', len(comment)) + comment
+        out += bytes([0x84]) + struct.pack('>I', len(body))[1:] + body
+    return out
 
 
 def make(path, size=2 * 1024 * 1024, head=b''):
@@ -56,17 +64,38 @@ def test_names():
 
 def test_durations(tmp):
     print("\nrf_formats: capture duration (drives frame counts, progress and ETA)")
-    # native with yaml
+    # native: header + DDD_SAMPLE_RATE_HZ tag win over the yaml (they travel with the file)
     p = os.path.join(tmp, 'n1.ddd.flac')
-    make(p, head=flac_header(400_000_000))
+    make(p, head=flac_header(400_000_000, tags={'DDD_SAMPLE_RATE_HZ': '40000000'}))
     with open(os.path.join(tmp, 'n1.ddd.yaml'), 'w') as f:
-        f.write('"capture":\n  "duration_seconds": 10.0139\n  "samples": 400556032\n')
-    check("yaml duration", abs(rf_formats.capture_duration_seconds(p) - 10.0139) < 1e-6)
-    # native, no yaml: FLAC header at 40 MHz
+        f.write('"capture":\n  "duration_seconds": 99.0\n  "samples": 400556032\n')
+    check("header+tag duration preferred", abs(rf_formats.capture_duration_seconds(p) - 10.0) < 1e-6,
+          str(rf_formats.capture_duration_seconds(p)))
+    # a 20 Msps capture: label 20000, real rate in the tag
+    p20 = os.path.join(tmp, 'n20.ddd.flac')
+    make(p20, head=flac_header(156_000_000, rate_label=20000, tags={'DDD_SAMPLE_RATE_HZ': '20000000'}))
+    check("20 Msps duration", abs(rf_formats.capture_duration_seconds(p20) - 7.8) < 1e-6)
+    # no tags: label x 1000
     p2 = os.path.join(tmp, 'n2.ddd.flac')
     make(p2, head=flac_header(315_621_376))
     d = rf_formats.capture_duration_seconds(p2)
-    check("header-only duration", d is not None and abs(d - 7.8905344) < 1e-6, str(d))
+    check("header-only duration (label x 1000)", d is not None and abs(d - 7.8905344) < 1e-6, str(d))
+    # MISRC-style tags
+    pm = os.path.join(tmp, 'm1.ddd.flac')
+    make(pm, head=flac_header(400556, tags={'RF_TOTAL_SAMPLES': '400556032', 'RF_SAMPLE_RATE': '40000000'}))
+    check("MISRC-style tags", abs(rf_formats.capture_duration_seconds(pm) - 10.0139008) < 1e-6)
+    # header unusable (0 samples, e.g. unfinished) -> yaml
+    p0 = os.path.join(tmp, 'n0.ddd.flac')
+    make(p0, head=flac_header(0))
+    with open(os.path.join(tmp, 'n0.ddd.yaml'), 'w') as f:
+        f.write('"capture":\n  "duration_seconds": 12.5\n')
+    check("falls back to yaml when header has no length", rf_formats.capture_duration_seconds(p0) == 12.5)
+    # .ddd.s16 has no header: yaml only
+    ps = os.path.join(tmp, 's1.ddd.s16')
+    make(ps)
+    with open(os.path.join(tmp, 's1.ddd.yaml'), 'w') as f:
+        f.write('"capture":\n  "samples": 800000000\n  "sample_rate_hz": 40000000\n')
+    check("s16 duration from yaml samples/rate", rf_formats.capture_duration_seconds(ps) == 20.0)
     # legacy json
     p3 = os.path.join(tmp, 'l1.lds')
     make(p3)
@@ -77,7 +106,7 @@ def test_durations(tmp):
 
     from parallel_vhs_decode import ParallelVHSDecoder
     dec = ParallelVHSDecoder()
-    check("PAL frames from yaml", dec.get_frame_count_from_json(p, 'pal') == int(10.0139 * 25))
+    check("PAL frames from file header", dec.get_frame_count_from_json(p, 'pal') == 250)
     check("NTSC frames from header", dec.get_frame_count_from_json(p2, 'ntsc') == int(7.8905344 * 29.97))
     check("PAL frames legacy (unchanged)", dec.get_frame_count_from_json(p3, 'pal') == 1500)
 
@@ -145,6 +174,44 @@ def test_backends():
           rf_formats.rf_suffix('x' + g.rf_suffix) == g.rf_suffix and rf_formats.rf_suffix('x' + lg.rf_suffix) == lg.rf_suffix)
 
 
+def test_staging(tmp):
+    print("\nstage command for a native capture")
+    import time
+    import post_capture_hash
+    import workflow_control_centre as wcc
+    from workflow_analyzer import WorkflowAnalyzer
+
+    d = os.path.join(tmp, 'stage')
+    os.makedirs(d)
+    keep = ['S.tbc', 'S.tbc.json', 'S_chroma.tbc', 'S.log']          # regenerable decode outputs
+    move = ['S.ddd.flac', 'S.ddd.yaml', 'S.flac', 'S.capture.log']   # the archive set
+    make(os.path.join(d, 'S.ddd.flac'), head=flac_header(400_000_000))
+    for name in ['S.ddd.yaml', 'S.flac', 'S.capture.log'] + keep:
+        make(os.path.join(d, name), size=2 * 1024 * 1024 if name.endswith(('.flac', '.tbc')) else 200)
+
+    project = {p.name: p for p in ProjectDiscovery().discover_projects([d])}['S']
+    centre = wcc.WorkflowControlCentre.__new__(wcc.WorkflowControlCentre)
+    centre.workflow_analyzer = WorkflowAnalyzer()
+    centre.current_projects = [project]
+    centre.message = ''
+
+    centre.handle_stage_project(1)
+    check("refused before hashes exist", 'Refusing to stage' in centre.message, centre.message)
+    check("nothing moved when refused", all(os.path.exists(os.path.join(d, n)) for n in move))
+
+    post_capture_hash.prompt_and_hash_originals(
+        os.path.join(d, 'S.ddd.flac'), os.path.join(d, 'S.flac'), os.path.join(d, 'S.ddd.yaml'), countdown_seconds=0)
+    centre.handle_stage_project(1)
+    for _ in range(50):
+        time.sleep(0.1)
+        if os.path.isdir(os.path.join(d, 'S.backup')) and 'Staged' in centre.message:
+            break
+    backup = os.path.join(d, 'S.backup')
+    moved = sorted(os.listdir(backup)) if os.path.isdir(backup) else []
+    check("archive set moved into S.backup/", all(n in moved for n in move), str(moved))
+    check("decode outputs stay put", all(os.path.exists(os.path.join(d, n)) for n in keep))
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         test_names()
@@ -152,6 +219,7 @@ def main():
         test_discovery_and_status(tmp)
         test_validation_log(tmp)
         test_backends()
+        test_staging(tmp)
     print()
     if FAILED:
         print(f"{len(FAILED)} FAILED: {', '.join(FAILED)}")

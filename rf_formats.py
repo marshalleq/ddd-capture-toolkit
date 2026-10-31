@@ -119,34 +119,82 @@ def _duration_from_yaml(yaml_path):
     return None
 
 
-def _flac_streaminfo(path):
-    """(sample_rate_label, total_samples) from a FLAC file's STREAMINFO, or None."""
+def _read_flac_header(path, limit=262144):
+    """The metadata blocks of a FLAC file: ({'streaminfo': (rate_label, total_samples), 'tags': {...}})
+    or None if it is not a FLAC file. Reads only the start of the file."""
     try:
         with open(path, 'rb') as f:
-            head = f.read(42)
+            data = f.read(limit)
     except OSError:
         return None
-    if len(head) < 42 or head[:4] != b'fLaC':
+    if len(data) < 8 or data[:4] != b'fLaC':
         return None
-    # 4 bytes marker + 4 bytes block header, then STREAMINFO: sample rate is the
-    # top 20 bits of bytes 10..13 of the block; total samples the low 36 bits of
-    # bytes 13..17.
-    block = head[8:42]
-    packed = struct.unpack('>Q', block[10:18])[0]
-    sample_rate = (packed >> 44) & 0xFFFFF
-    total_samples = packed & 0xFFFFFFFFF
-    return sample_rate, total_samples
+    result = {'streaminfo': None, 'tags': {}}
+    pos = 4
+    while pos + 4 <= len(data):
+        is_last = bool(data[pos] & 0x80)
+        block_type = data[pos] & 0x7F
+        length = int.from_bytes(data[pos + 1:pos + 4], 'big')
+        body = data[pos + 4:pos + 4 + length]
+        pos += 4 + length
+        if len(body) < length:
+            break
+        if block_type == 0 and length >= 34:
+            # sample rate = top 20 bits, total samples = low 36 bits of bytes 10..17
+            packed = struct.unpack('>Q', body[10:18])[0]
+            result['streaminfo'] = ((packed >> 44) & 0xFFFFF, packed & 0xFFFFFFFFF)
+        elif block_type == 4:
+            try:
+                vendor_len = struct.unpack('<I', body[:4])[0]
+                off = 4 + vendor_len
+                count = struct.unpack('<I', body[off:off + 4])[0]
+                off += 4
+                for _ in range(count):
+                    clen = struct.unpack('<I', body[off:off + 4])[0]
+                    comment = body[off + 4:off + 4 + clen].decode('utf-8', errors='replace')
+                    off += 4 + clen
+                    if '=' in comment:
+                        key, value = comment.split('=', 1)
+                        result['tags'][key.upper()] = value
+            except (struct.error, IndexError):
+                pass
+        if is_last:
+            break
+    return result
 
 
-def _duration_from_flac_header(path):
-    """Duration of a native FLAC capture from its header (real rate assumed 40 MHz)."""
-    info = _flac_streaminfo(path)
-    if not info:
+def _duration_from_flac(path):
+    """
+    Duration of a FLAC capture from the file's own header and tags.
+
+    The FLAC sample-rate field cannot hold 40 MHz, so captures carry a label
+    (40000) and the real rate in a tag. This reads, in order of preference:
+      - a duration/total-and-rate pair written by the capture program
+        (DURATION_SECONDS, or RF_TOTAL_SAMPLES with RF_SAMPLE_RATE);
+      - the header's sample count over the real rate (DDD_SAMPLE_RATE_HZ tag, or
+        the label x 1000 if the tag is absent).
+    Returns None if the file does not say.
+    """
+    header = _read_flac_header(path)
+    if not header:
         return None
-    _, total_samples = info
-    if total_samples <= 0:
+    tags = header['tags']
+    try:
+        if tags.get('DURATION_SECONDS'):
+            return float(tags['DURATION_SECONDS'])
+        if tags.get('RF_TOTAL_SAMPLES') and tags.get('RF_SAMPLE_RATE'):
+            return int(tags['RF_TOTAL_SAMPLES']) / int(tags['RF_SAMPLE_RATE'])
+        info = header['streaminfo']
+        if not info or info[1] <= 0:
+            return None
+        label, total_samples = info
+        if tags.get('DDD_SAMPLE_RATE_HZ'):
+            real_rate = int(tags['DDD_SAMPLE_RATE_HZ'])
+        else:
+            real_rate = label * 1000
+        return total_samples / real_rate if real_rate > 0 else None
+    except (ValueError, ZeroDivisionError):
         return None
-    return total_samples / NATIVE_SAMPLE_RATE_HZ
 
 
 def _duration_from_legacy_json(json_path):
@@ -164,15 +212,16 @@ def capture_duration_seconds(rf_path):
     How long the capture is, in seconds, or None if it cannot be established.
 
     .lds/.ldf: durationInMilliseconds from the capture .json (as before).
-    .ddd.flac: duration_seconds from the .ddd.yaml; failing that the FLAC header
-               (sample count at the real 40 MHz rate). This keeps frame-count
-               based progress and ETAs working for native captures.
+    .ddd.flac: the file's own FLAC header and tags first (they travel with the
+               file and cannot be separated from it), then the <name>.ddd.yaml
+               beside it. This keeps frame-count based progress and ETAs working
+               for native captures.
+    .ddd.s16:  no header, so the .ddd.yaml only.
     """
     if is_native(rf_path):
-        duration = _duration_from_yaml(rf_base_path(rf_path) + '.ddd.yaml')
-        if duration:
-            return duration
         if is_native_flac(rf_path):
-            return _duration_from_flac_header(rf_path)
-        return None
+            duration = _duration_from_flac(rf_path)
+            if duration:
+                return duration
+        return _duration_from_yaml(rf_base_path(rf_path) + '.ddd.yaml')
     return _duration_from_legacy_json(rf_base_path(rf_path) + '.json')

@@ -392,6 +392,31 @@ def _parse_latest_hashes(log_path):
     return latest
 
 
+def hash_role(path):
+    """The validation-log role a file's hash is recorded under.
+
+    Normally the file's extension ('lds', 'json', 'tbc', ...). The exceptions are
+    where one extension covers different files: _final / _ffv1 .mkv, an _aligned
+    .flac (distinct from the captured audio .flac), and the native capture files,
+    whose '.ddd.flac' must not collide with the audio '.flac'.
+    """
+    low = str(path).lower()
+    if low.endswith('.ddd.flac'):
+        return 'ddd_flac'
+    if low.endswith('.ddd.s16'):
+        return 'ddd_s16'
+    if low.endswith('.ddd.yaml'):
+        return 'ddd_yaml'
+    ext = os.path.splitext(path)[1].lower().lstrip('.')
+    if ext == 'mkv' and '_final' in path:
+        return 'final'
+    if ext == 'mkv' and '_ffv1' in path:
+        return 'ffv1'
+    if ext == 'flac' and '_aligned' in path:
+        return 'aligned'
+    return ext
+
+
 def file_state(path, log_path=None):
     """Cheap status check for a file: returns one of
     {'missing', 'no-hash', 'validated', 'touched', 'changed'} based on log
@@ -415,15 +440,7 @@ def file_state(path, log_path=None):
         log_path = get_log_path(path)
     latest = _parse_latest_hashes(log_path)
 
-    ext = os.path.splitext(path)[1].lower().lstrip('.')
-    if ext == 'mkv' and '_final' in path:
-        role = 'final'
-    elif ext == 'mkv' and '_ffv1' in path:
-        role = 'ffv1'
-    elif ext == 'flac' and '_aligned' in path:
-        role = 'aligned'
-    else:
-        role = ext
+    role = hash_role(path)
 
     rec = latest.get(role)
     if rec is None:

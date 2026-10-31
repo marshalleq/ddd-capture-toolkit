@@ -120,10 +120,15 @@ def prompt_and_hash_originals(lds_path, flac_path, json_path,
     # Sanity: make sure each target file exists. If a file is missing we don't
     # block the whole flow — just skip it and note in the log.
     targets = []
-    for role, path in (('lds', lds_path), ('flac', flac_path), ('json', json_path)):
-        if path and os.path.isfile(path):
+    for path in (lds_path, flac_path, json_path):
+        if not path:
+            continue
+        # Role comes from the file itself, so a native '.ddd.flac' does not collide
+        # with the audio '.flac' (legacy files keep the roles lds / flac / json).
+        role = validation_log.hash_role(path)
+        if os.path.isfile(path):
             targets.append((role, path))
-        elif path:
+        else:
             print(f"  \033[93m{role:<4} missing: {path}\033[0m")
     if not targets:
         print("\033[91mNo capture files to hash.\033[0m")

@@ -3472,21 +3472,7 @@ class JobQueueManager:
                 _, mtime = validation_log.file_identity(path)
 
                 # Classify the role from the extension for the log entry
-                ext = os.path.splitext(path)[1].lower().lstrip('.')
-                if rf_formats.is_native(path):
-                    role = 'ddd_flac' if path.lower().endswith('.flac') else 'ddd_s16'
-                elif path.lower().endswith('.ddd.yaml'):
-                    role = 'ddd_yaml'
-                elif ext == 'tbc':
-                    role = 'tbc'
-                elif ext == 'mkv' and '_final' in path:
-                    role = 'final'
-                elif ext == 'mkv' and '_ffv1' in path:
-                    role = 'ffv1'
-                elif ext == 'flac' and '_aligned' in path:
-                    role = 'aligned'
-                else:
-                    role = ext
+                role = validation_log.hash_role(path)
 
                 results[role] = {
                     'path': path, 'size': size, 'mtime': mtime,
