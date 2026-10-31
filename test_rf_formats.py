@@ -276,7 +276,24 @@ def test_tool_health(tmp):
         os.environ.pop('LD_LIBRARY_PATH', None)
 
 
+def test_no_hardcoded_capture_program():
+    """Only capture_backends.py may name the capture program; everything else asks the backend."""
+    print("no hard-coded capture program")
+    here = os.path.dirname(os.path.abspath(__file__))
+    offenders = []
+    for name in sorted(os.listdir(here)):
+        if not name.endswith('.py') or name in ('capture_backends.py', 'test_rf_formats.py'):
+            continue
+        with open(os.path.join(here, name), encoding='utf-8') as f:
+            for number, line in enumerate(f, 1):
+                if ("'DomesdayDuplicator'" in line or '"DomesdayDuplicator"' in line
+                        or "'--output-file'" in line):
+                    offenders.append(f"{name}:{number}")
+    check("capture programs are started only through the backend", not offenders, ', '.join(offenders))
+
+
 def main():
+    test_no_hardcoded_capture_program()
     with tempfile.TemporaryDirectory() as tmp:
         test_names()
         test_durations(tmp)

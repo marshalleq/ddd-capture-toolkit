@@ -4612,7 +4612,7 @@ fi
         print("\nTest cancelled by user")
         # Try to stop DomesdayDuplicator if it's running and clean up files
         try:
-            subprocess.run(['DomesdayDuplicator', '--stop-capture'], timeout=5,
+            subprocess.run(backend.stop_command(), timeout=5,
                          env=get_clean_env_for_system_tools())
             script_path = os.path.join(temp_dir, "ddd_timing_test.sh")
             if os.path.exists(script_path):
@@ -5350,7 +5350,9 @@ def capture_calibration_vhs():
 
     # Fixed calibration filename
     calibration_base_name = "calibration_v2"
-    rf_file = os.path.join(capture_folder, f"{calibration_base_name}.lds")
+    from capture_backends import select_backend
+    backend, _ = select_backend()
+    rf_file = backend.rf_path(capture_folder, calibration_base_name)
     audio_file = os.path.join(capture_folder, f"{calibration_base_name}.flac")
 
     # Check for existing files
@@ -5402,12 +5404,12 @@ def capture_calibration_vhs():
 
         # Start DomesdayDuplicator capture
         print("Starting DomesdayDuplicator capture...")
+        capture_env = get_clean_env_for_system_tools()
+        capture_env.update(backend.extra_env())
         ddd_process = subprocess.Popen(
-            ['DomesdayDuplicator', '--start-capture', '--headless',
-             '--capture-directory', os.path.abspath(capture_folder),
-             '--output-file', calibration_base_name],
+            backend.start_command(os.path.abspath(capture_folder), calibration_base_name),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            env=get_clean_env_for_system_tools()
+            env=capture_env
         )
         time.sleep(2)
 
@@ -5436,9 +5438,13 @@ def capture_calibration_vhs():
 
             # Stop DomesdayDuplicator
             print("Stopping DomesdayDuplicator capture...")
-            subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+            subprocess.run(backend.stop_command(),
                           capture_output=True, text=True, timeout=10,
-                          env=get_clean_env_for_system_tools())
+                          env=capture_env)
+            try:
+                ddd_process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                ddd_process.terminate()
 
             print("\n" + "="*50)
             print("CAPTURE COMPLETE")
@@ -5633,10 +5639,12 @@ def precision_timecode_capture():
 
     # Fixed calibration filename (not timestamped)
     calibration_base_name = "calibration_v2"
+    from capture_backends import select_backend
+    backend, _ = select_backend()
 
     # Define all calibration file paths
     calibration_files = {
-        'rf': os.path.join(capture_folder, f"{calibration_base_name}.lds"),
+        'rf': backend.rf_path(capture_folder, calibration_base_name),
         'audio': os.path.join(capture_folder, f"{calibration_base_name}.flac"),
         'tbc': os.path.join(capture_folder, f"{calibration_base_name}.tbc"),
         'tbc_json': os.path.join(capture_folder, f"{calibration_base_name}.tbc.json"),
@@ -5702,11 +5710,12 @@ def precision_timecode_capture():
         try:
             # 1. Start video capture using command line (headless mode for minimal latency)
             print("Starting DomesdayDuplicator capture (headless mode for minimal latency)...")
-            ddd_process = subprocess.Popen(['DomesdayDuplicator', '--start-capture', '--headless',
-                                           '--capture-directory', os.path.abspath(capture_folder),
-                                           '--output-file', alignment_base_name],
+            capture_env = get_clean_env_for_system_tools()
+            capture_env.update(backend.extra_env())
+            ddd_process = subprocess.Popen(backend.start_command(os.path.abspath(capture_folder),
+                                                                 alignment_base_name),
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                      env=get_clean_env_for_system_tools())
+                                      env=capture_env)
             time.sleep(2)  # Wait for startup
             
             # Check if process started successfully
@@ -5746,9 +5755,13 @@ def precision_timecode_capture():
 
                 # 3. Stop video capture using command line
                 print("\nStopping DomesdayDuplicator capture...")
-                stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+                stop_result = subprocess.run(backend.stop_command(),
                                            capture_output=True, text=True, timeout=10,
-                                           env=get_clean_env_for_system_tools())
+                                           env=capture_env)
+                try:
+                    ddd_process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    ddd_process.terminate()
 
                 if stop_result.returncode == 0:
                     print("DomesdayDuplicator capture stopped successfully")
@@ -7884,19 +7897,21 @@ def stop_current_capture():
         print("\nStopping Domesday Duplicator capture...")
 
         try:
-            stop_result = subprocess.run(['DomesdayDuplicator', '--stop-capture'],
+            from capture_backends import select_backend
+            backend = select_backend()[0]
+            stop_result = subprocess.run(backend.stop_command(),
                                        capture_output=True, text=True, timeout=10,
                                        env=get_clean_env_for_system_tools())
 
             if stop_result.returncode == 0:
-                print("DomesdayDuplicator capture stopped successfully via command line")
+                print("Capture stopped successfully via command line")
                 print("\nCapture stopped successfully!")
             else:
                 print(f"DomesdayDuplicator stop returned code {stop_result.returncode}")
                 print("Falling back to process termination...")
                 # Fallback to process kill
                 try:
-                    subprocess.run(['pkill', '-f', 'DomesdayDuplicator'], check=True)
+                    subprocess.run(['pkill', '-f', backend.process_pattern], check=True)
                     print("DomesdayDuplicator processes terminated")
                     print("\nCapture stopped!")
                 except subprocess.CalledProcessError:
@@ -7907,7 +7922,7 @@ def stop_current_capture():
             print("DomesdayDuplicator stop command timed out")
             print("Attempting to terminate processes...")
             try:
-                subprocess.run(['pkill', '-f', 'DomesdayDuplicator'], check=True)
+                subprocess.run(['pkill', '-f', backend.process_pattern], check=True)
                 print("DomesdayDuplicator processes terminated")
             except subprocess.CalledProcessError:
                 print("No DomesdayDuplicator processes found")
@@ -7916,7 +7931,7 @@ def stop_current_capture():
             print("DomesdayDuplicator command not found")
             print("Attempting to terminate any running processes...")
             try:
-                subprocess.run(['pkill', '-f', 'DomesdayDuplicator'], check=True)
+                subprocess.run(['pkill', '-f', backend.process_pattern], check=True)
                 print("DomesdayDuplicator processes terminated")
             except subprocess.CalledProcessError:
                 print("No DomesdayDuplicator processes found")
