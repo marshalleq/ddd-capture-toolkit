@@ -248,8 +248,13 @@ PYREQ
     # DYLD_LIBRARY_PATH is cleared for this step: on macOS it makes Homebrew's
     # cargo/libgit2 load conda's libiconv, which lacks the _iconv symbol and
     # aborts cargo. Conda's own libraries resolve via rpath without it.
+    # On macOS the Rust extension must not be stripped: vhs-decode's Cargo profile sets
+    # strip = "symbols", and Apple's strip leaves a string table that macOS 27's dyld
+    # refuses to load ("mis-aligned LINKEDIT string pool"), so vhs-decode would fail on import.
     log_info "Installing VHS-Decode with optimizations (this may take several minutes)..."
-    env -u DYLD_LIBRARY_PATH pip install --no-build-isolation --force-reinstall . || {
+    local strip_override=()
+    [[ "$(uname -s)" == "Darwin" ]] && strip_override=(CARGO_PROFILE_RELEASE_STRIP=none)
+    env -u DYLD_LIBRARY_PATH "${strip_override[@]}" pip install --no-build-isolation --force-reinstall . || {
         log_error "VHS-Decode installation failed"
         return 1
     }
@@ -263,7 +268,9 @@ PYREQ
         if vhs-decode --help >/dev/null 2>&1; then
             log_success "VHS-Decode installation verified"
         else
-            log_warning "VHS-Decode installed but --help failed (may be normal)"
+            log_error "VHS-Decode installed but cannot start (vhs-decode --help failed)"
+            vhs-decode --help 2>&1 | tail -5
+            return 1
         fi
     else
         log_error "VHS-Decode installation verification failed"

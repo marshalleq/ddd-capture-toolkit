@@ -64,17 +64,18 @@ All the builds we measured, on every machine we tried:
 | **tape-decode**, compiled for the CPU (current source) | **35** | **25** | **28.5** | **30** |
 | tape-decode, easy-mode release (best x86-64 build for the CPU) | 19 | 13 | not built | not built |
 | tape-decode, generic x86-64 build | 7.6 | 5.9 | n/a | n/a |
-| vhs-decode v0.4.0, compiled | 8.6 | 4.6 | would not load | not tried |
+| vhs-decode v0.4.0, compiled | 8.6 | 4.6 | 5.2* | not tried |
 | vhs-decode v0.4.0, easy-mode AppImage | 8.0 | 4.5 | n/a | n/a |
-| vhs-decode March 2026, compiled | 12.3 | 6.7 | not tried | not tried |
+| vhs-decode March 2026, compiled | 12.3 | 6.7* | 7.1* | not tried |
 
 Each figure is a typical result of two to six decodes of the same 26 second PAL capture (668 frames, FLAC), using four cores or
 threads. On the two Ryzens the decode is pinned to four cores; the Macs cannot pin, so they get four
 threads with the rest of the chip free. An hour of PAL is 90,000 frames, so divide by the figure: 35 frames/s
 is 43 minutes, 8.6 is 2.9 hours, 4.6 is 5.4 hours. With eight threads `tape-decode` reaches about 43 on the
-9950X3D, 42 on the M1 Pro and 36 on the M2. The March 2026 `vhs-decode` row on the 5800X was measured on a
-10 second sample (6.7); the rest are the 26 second capture. "Would not load" means the build finished but its
-Rust extension failed to start on this macOS, so no figure exists. The M2 binary was built on the M1 Mac
+9950X3D, 42 on the M1 Pro and 36 on the M2. Figures marked * were measured on a 10 second sample
+instead (the M1 Pro `vhs-decode` rows, and the March 2026 row on the 5800X), where start-up time lowers every
+result a little; the rest are the 26 second capture. On the M1 Pro the March 2026 build read an uncompressed
+`.lds` and v0.4.0 read FLAC. The Air has no Python, so it was only run with `tape-decode`. The M2 binary was built on the M1 Mac
 for the M2 chip (`target-cpu=apple-m2`).
 
 Full results and method: [Decoders](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Decoders).
