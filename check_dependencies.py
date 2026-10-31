@@ -190,6 +190,22 @@ def check_system_commands():
     except Exception as e:
         print(f"    tbc-video-export (TBC to video converter) - error: {e}")
 
+    # LD helper programs the decode and export stages run. Flags copies that sit
+    # outside the environment and copies that can no longer start (for example a
+    # reader linked against an older FFmpeg after an operating system upgrade).
+    ld_health_ok = True
+    print(f"\n    LD helper programs (decode and export):")
+    try:
+        import tool_health
+        for report in tool_health.check_ld_tools():
+            lines, severity = tool_health.format_report(report)
+            for line in lines:
+                print(line)
+            if severity == 'fail':
+                ld_health_ok = False
+    except ImportError:
+        print(f"      (tool_health module not available - skipped)")
+
     # Add ld-compress dependencies check (for LDS to LDF compression)
     print(f"\n    LDS Compression dependencies (ld-compress):")
 
@@ -288,7 +304,7 @@ def check_system_commands():
             print(f"    {description} - error: {e}")
             all_good = False
     
-    return all_good
+    return all_good and ld_health_ok
 
 def check_ffmpeg_features():
     """Check that ffmpeg has the libraries final-mux depends on.

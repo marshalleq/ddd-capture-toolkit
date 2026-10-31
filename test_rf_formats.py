@@ -212,6 +212,52 @@ def test_staging(tmp):
     check("decode outputs stay put", all(os.path.exists(os.path.join(d, n)) for n in keep))
 
 
+def test_tool_health(tmp):
+    print("\nld helper health (unmanaged and broken copies)")
+    import stat
+    import tool_health
+
+    prefix = os.path.join(tmp, 'env')
+    inside = os.path.join(prefix, 'bin')
+    stale = os.path.join(tmp, 'usr-bin')
+    os.makedirs(inside)
+    os.makedirs(stale)
+
+    def script(folder, name, body):
+        path = os.path.join(folder, name)
+        with open(path, 'w') as f:
+            f.write('#!/bin/sh\n' + body + '\n')
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+        return path
+
+    script(inside, 'ld-ldf-reader', 'echo usage')
+    script(stale, 'ld-ldf-reader', 'echo "ld-ldf-reader: error while loading shared libraries: libavcodec.so.61: cannot open shared object file" >&2; exit 127')
+    script(stale, 'ld-chroma-decoder', 'echo usage')
+    script(inside, 'ld-process-vbi', 'echo usage')
+
+    saved_path = os.environ.get('PATH', '')
+    try:
+        os.environ['PATH'] = os.pathsep.join([stale, inside, saved_path])
+        r = tool_health.check_tool('ld-ldf-reader', prefix)
+        check("stale reader found first", r['path'] == os.path.join(stale, 'ld-ldf-reader'))
+        check("stale reader is unmanaged", not r['managed'])
+        check("stale reader cannot start", bool(r['problem']) and 'libavcodec.so.61' in r['problem'], str(r['problem']))
+        check("hidden environment copy is reported", r['shadows'] == os.path.join(inside, 'ld-ldf-reader'), str(r['shadows']))
+        check("reader_problem explains it", 'cannot start' in (tool_health.reader_problem(prefix) or ''))
+        lines, severity = tool_health.format_report(r)
+        check("report severity is fail", severity == 'fail')
+        w = tool_health.check_tool('ld-chroma-decoder', prefix)
+        check("working unmanaged copy is a warning", tool_health.format_report(w)[1] == 'warn' and not w['problem'])
+
+        os.environ['PATH'] = os.pathsep.join([inside, stale, saved_path])
+        ok = tool_health.check_tool('ld-ldf-reader', prefix)
+        check("environment copy first is healthy", ok['managed'] and not ok['problem'] and tool_health.reader_problem(prefix) is None)
+        check("healthy report severity ok", tool_health.format_report(ok)[1] == 'ok')
+        check("missing tool is reported not found", tool_health.check_tool('ld-no-such-tool', prefix)['path'] is None)
+    finally:
+        os.environ['PATH'] = saved_path
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         test_names()
@@ -220,6 +266,7 @@ def main():
         test_validation_log(tmp)
         test_backends()
         test_staging(tmp)
+        test_tool_health(tmp)
     print()
     if FAILED:
         print(f"{len(FAILED)} FAILED: {', '.join(FAILED)}")
