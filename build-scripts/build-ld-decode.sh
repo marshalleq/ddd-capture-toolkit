@@ -8,9 +8,9 @@
 # option required by tbc-video-export. vhs-decode >= 0.4.0 no longer ships
 # these tools (they moved to tbc-tools, under new tbc-* names).
 #
-# ld-decode's Python package and its C ld-ldf-reader are NOT installed: the
-# env's lddecode package and ld-ldf-reader come from vhs-decode and must not
-# be overwritten.
+# ld-decode's Python package and its C ld-ldf-reader are NOT installed here: the
+# env's lddecode package comes from vhs-decode and must not be overwritten. The C
+# ld-ldf-reader is built later, by build-ldf-reader.sh, after vhs-decode and FFmpeg.
 
 set -e
 

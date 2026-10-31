@@ -102,6 +102,31 @@ def _startup_problem(path, scrub_library_path=False):
     return None
 
 
+def _is_script(path):
+    """True if the program is a script (#! line) rather than a compiled binary."""
+    try:
+        with open(path, 'rb') as f:
+            return f.read(2) == b'#!'
+    except OSError:
+        return False
+
+
+def ldf_reader_argv(tool, input_path, start_samples=0):
+    """
+    Command line to run ld-ldf-reader, whichever flavour is installed.
+
+    The compiled reader (built by setup in performance mode) takes the start
+    offset as a second positional argument:    ld-ldf-reader FILE [START]
+    The Python reader that vhs-decode >= 0.4.0 installs takes an option:
+                                                ld-ldf-reader [-s START] FILE
+    A script means the Python one; a binary means the compiled one.
+    """
+    start = int(start_samples or 0)
+    if _is_script(tool):
+        return [tool] + (['-s', str(start)] if start else []) + [input_path]
+    return [tool, input_path] + ([str(start)] if start else [])
+
+
 def check_tool(name, prefix=None):
     """
     Report on one tool: {'name', 'path', 'managed', 'problem', 'shadows', 'notes'}.

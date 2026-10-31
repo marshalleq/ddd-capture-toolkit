@@ -3273,7 +3273,7 @@ class JobQueueManager:
 
         start = _t.time()
         proc = subprocess.Popen(
-            [tool, ldf_path],
+            tool_health.ldf_reader_argv(tool, ldf_path),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
@@ -3596,7 +3596,7 @@ class JobQueueManager:
 
         try:
             proc = subprocess.Popen(
-                [tool, '-s', str(seek_pos), ldf_path],
+                tool_health.ldf_reader_argv(tool, ldf_path, seek_pos),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )
@@ -3664,7 +3664,7 @@ class JobQueueManager:
         start = time.time()
         try:
             proc = subprocess.Popen(
-                [tool, ldf_path],
+                tool_health.ldf_reader_argv(tool, ldf_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )

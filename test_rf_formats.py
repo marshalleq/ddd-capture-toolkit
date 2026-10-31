@@ -261,6 +261,15 @@ def test_tool_health(tmp):
         check("starts only with LD_LIBRARY_PATH -> fragile", fr['fragile'] and not fr['problem'], str(fr))
         check("fragile is a warning", tool_health.format_report(fr)[1] == 'warn')
         del os.environ['LD_LIBRARY_PATH']
+        # command line for each flavour of ld-ldf-reader
+        py = script(inside, 'ld-ldf-reader-pystyle', 'echo py')
+        binary = os.path.join(inside, 'ld-ldf-reader-binary')
+        with open(binary, 'wb') as f:
+            f.write(b'\x7fELF' + b'\0' * 60)
+        check("python-style reader: -s option", tool_health.ldf_reader_argv(py, 'f.flac', 5) == [py, '-s', '5', 'f.flac'])
+        check("python-style reader: no offset", tool_health.ldf_reader_argv(py, 'f.flac') == [py, 'f.flac'])
+        check("compiled reader: positional offset", tool_health.ldf_reader_argv(binary, 'f.flac', 5) == [binary, 'f.flac', '5'])
+        check("compiled reader: no offset", tool_health.ldf_reader_argv(binary, 'f.flac') == [binary, 'f.flac'])
         check("missing tool is reported not found", tool_health.check_tool('ld-no-such-tool', prefix)['path'] is None)
     finally:
         os.environ['PATH'] = saved_path

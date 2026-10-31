@@ -611,6 +611,19 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
             log_warning "FFmpeg build script not found, using conda package"
         fi
 
+        # Build the C ld-ldf-reader last: after vhs-decode (so it replaces the Python
+        # script of the same name that vhs-decode installs) and after FFmpeg (so it is
+        # linked against the final libraries).
+        if [[ -x "build-scripts/build-ldf-reader.sh" ]]; then
+            log_info "Building ld-ldf-reader..."
+            if ! build-scripts/build-ldf-reader.sh $build_args; then
+                log_error "ld-ldf-reader build failed"
+                log_warning "The Python ld-ldf-reader from vhs-decode will be used instead"
+            else
+                log_success "ld-ldf-reader built successfully"
+            fi
+        fi
+
         log_success "Source compilation completed"
     fi
 fi
