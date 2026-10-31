@@ -1096,7 +1096,14 @@ class JobQueueManager:
                         reason = f"vhs-decode exited with code {return_code}"
                     else:
                         reason = "vhs-decode finished but wrote no decoded output"
-                    if any('without handling any frames' in line for line in (output_tail or [])):
+                    if any('Existing decode files found' in line for line in (output_tail or [])):
+                        # vhs-decode lists the files it refuses to overwrite after that line
+                        found = [os.path.basename(l.strip()) for l in output_tail
+                                 if l.strip().startswith(os.sep)]
+                        reason = ("vhs-decode will not decode over an earlier decode's files"
+                                  + (f" ({', '.join(found)})" if found else "")
+                                  + ". Delete them to decode again, or re-run the decode with overwrite")
+                    elif any('without handling any frames' in line for line in (output_tail or [])):
                         reason += (". It read no frames from the input: check the RF file and video "
                                    "standard, and that ld-ldf-reader works (run check_dependencies.py)")
                     elif output_tail:
