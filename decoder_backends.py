@@ -134,8 +134,8 @@ class TapeDecodeBackend(DecoderBackend):
     def input_problem(self, input_file):
         if not input_file.lower().endswith('.flac'):
             return (f"tape-decode reads FLAC captures (.flac / .ddd.flac); "
-                    f"{os.path.basename(input_file)} is not one. Capture with ddd-gui, "
-                    f"or set decoder_backend to vhs-decode")
+                    f"{os.path.basename(input_file)} is not one. Convert it with: "
+                    f"python3 convert_to_flac.py {input_file}   (or set decoder_backend to vhs-decode)")
         return None
 
     def profile(self, job_params):
