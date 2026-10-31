@@ -914,6 +914,8 @@ fi
 if [[ -x "$CONDA_ENV_PATH/bin/ld-chroma-decoder" ]]; then
     LD_DECODE_VER=$(conda run -n ddd-capture-toolkit ld-chroma-decoder --version 2>/dev/null | head -n1 || echo "installed")
     echo "  ld-decode tools:   $LD_DECODE_VER"
+elif [[ -x "tools/tbc-video-export.AppImage" ]]; then
+    echo "  ld-decode tools:   bundled inside the tbc-video-export AppImage (easy mode)"
 else
     echo "  ld-decode tools:   not installed"
 fi
