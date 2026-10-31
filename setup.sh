@@ -25,54 +25,71 @@ log_error() {
 }
 
 show_usage() {
-    echo "Usage: $0 [OPTIONS]"
-    echo ""
-    echo "DDD Capture Toolkit Setup - Cross-platform installation"
-    echo ""
-    echo "INSTALLATION MODES:"
-    echo "  --easy          Easy installation using pre-compiled binaries (default, 5 mins)"
-    echo "  --performance   Performance installation with source compilation (30-60 mins)"
-    echo "  --uninstall     Complete uninstallation of the toolkit"
-    echo ""
-    echo "OPTIONS:"
-    echo "  --platform X    Override platform detection (linux/macos/windows)"
-    echo "  --jobs N        Number of parallel build jobs for --performance mode"
-    echo "  --safe          Use safe optimizations only (no -march=native)"
-    echo "  --force         Skip confirmation prompts (for scripting)"
-    echo "  --no-update-check"
-    echo "                  Do not check whether a newer toolkit version is available"
-    echo "  --vhs-decode-version VERSION"
-    echo "                  Specify vhs-decode version (default: latest release tag)"
-    echo "                  Use 'latest' for bleeding edge, or a specific tag like 'v0.3.8'"
-    echo "  --help          Show this help message"
-    echo ""
-    echo "EXAMPLES:"
-    echo "  $0                    # Easy installation with conda packages"
-    echo "  $0 --easy            # Same as above (explicit)"
-    echo "  $0 --performance      # Performance installation with source compilation"
-    echo "  $0 --performance --jobs 4  # Performance with 4 parallel build jobs"
-    echo "  $0 --uninstall        # Remove the toolkit completely"
-    echo "  $0 --uninstall --force # Remove without confirmation"
-    echo ""
-    echo "INSTALLATION MODES:"
-    echo "  Easy Mode (--easy):"
-    echo "    • Uses pre-compiled conda packages"
-    echo "    • 5-minute setup time"
-    echo "    • Good performance for most users"
-    echo "    • Recommended for testing and evaluation"
-    echo ""
-    echo "  Performance Mode (--performance):"
-    echo "    • Compiles from source with CPU-specific optimizations"
-    echo "    • 30-60 minute setup time"
-    echo "    • 10-30% performance improvement typical"
-    echo "    • Recommended for production use"
-    echo ""
-    echo "  Uninstall Mode (--uninstall):"
-    echo "    • Completely removes the 'ddd-capture-toolkit' conda environment"
-    echo "    • Removes all installed tools and dependencies"
-    echo "    • Preserves user data and project files"
-    echo "    • Clean removal following isolation principles"
-    echo "    • No impact on system or other conda environments"
+    cat <<'USAGE'
+Usage: ./setup.sh [OPTIONS]
+
+DDD Capture Toolkit Setup - cross-platform installation
+
+MODES (choose one; --easy is the default):
+  --easy                Pre-compiled conda packages. About 5 minutes.
+  --performance         Compile the decode and export tools from source with
+                        CPU-specific optimisations. 30-60 minutes.
+  --uninstall           Remove the toolkit's conda environment.
+
+OPTIONS:
+  --platform X          Override platform detection (linux, macos or windows)
+  --jobs N              Parallel build jobs (performance mode; default: automatic)
+  --safe                Safe optimisations only, no -march=native (performance mode)
+  --force               Skip confirmation prompts (for scripting)
+  --no-update-check     Do not check whether a newer toolkit version is available
+  --vhs-decode-version VERSION
+                        vhs-decode release to use (performance mode). The default
+                        is the newest release tag. Use 'latest' for the newest
+                        commit, or a tag such as v0.4.0.
+  --help, -h            Show this help
+
+WHAT THE MODES DO:
+  Easy:
+    - Creates the 'ddd-capture-toolkit' conda environment from pre-compiled packages
+    - Installs vhs-decode and tbc-video-export with pip (on Linux also the
+      tbc-video-export AppImage, which bundles the export tools)
+    - Good performance for most users; recommended for trying the toolkit
+
+  Performance:
+    - Removes an existing 'ddd-capture-toolkit' environment and creates a fresh one
+    - Compiles, in this order: the ld-tools (from external/ld-decode), vhs-decode
+      (including its Rust extension), FFmpeg, and the ld-ldf-reader
+    - Needs git and a Rust toolchain (cargo), and checks for them before starting
+    - Typically 10-30% faster processing; recommended for production archival work
+
+  Uninstall:
+    - Removes the 'ddd-capture-toolkit' conda environment and everything in it
+    - Keeps your projects, captures, configuration and other conda environments
+
+BEFORE IT STARTS:
+  - If this copy of the toolkit is behind its git remote, setup stops and asks you
+    to run 'git pull' and then run setup again (--no-update-check skips this;
+    being offline only gives a warning).
+
+AT THE END:
+  - Tools found outside the environment (for example old copies in /usr/bin) are
+    listed with how each got there and the command that removes it. Setup never
+    removes them itself.
+  - The dependency check (check_dependencies.py) is run and its result shown.
+
+EXAMPLES:
+  ./setup.sh                                    Easy installation
+  ./setup.sh --performance                      Compiled installation
+  ./setup.sh --performance --jobs 4             ...using 4 build jobs
+  ./setup.sh --performance --safe               ...without -march=native
+  ./setup.sh --performance --vhs-decode-version v0.4.0
+                                                Build a specific vhs-decode release
+  ./setup.sh --performance --vhs-decode-version latest
+                                                Build the newest vhs-decode commit
+  ./setup.sh --uninstall                        Remove the toolkit (asks first)
+  ./setup.sh --uninstall --force                Remove it without asking
+  ./setup.sh --performance 2>&1 | tee setup.log Keep a log while watching the build
+USAGE
 }
 
 echo "=== DDD Capture Toolkit Setup ==="
