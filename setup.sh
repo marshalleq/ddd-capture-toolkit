@@ -39,6 +39,8 @@ show_usage() {
     echo "  --jobs N        Number of parallel build jobs for --performance mode"
     echo "  --safe          Use safe optimizations only (no -march=native)"
     echo "  --force         Skip confirmation prompts (for scripting)"
+    echo "  --no-update-check"
+    echo "                  Do not check whether a newer toolkit version is available"
     echo "  --vhs-decode-version VERSION"
     echo "                  Specify vhs-decode version (default: latest release tag)"
     echo "                  Use 'latest' for bleeding edge, or a specific tag like 'v0.3.8'"
@@ -81,6 +83,7 @@ OVERRIDE_PLATFORM=""
 BUILD_JOBS=""
 SAFE_MODE=false
 FORCE_MODE=false
+NO_UPDATE_CHECK=false
 VHS_DECODE_VERSION=""  # empty means auto-detect latest release tag
 
 while [[ $# -gt 0 ]]; do
@@ -119,6 +122,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force)
             FORCE_MODE=true
+            shift
+            ;;
+        --no-update-check)
+            NO_UPDATE_CHECK=true
             shift
             ;;
         --vhs-decode-version)
@@ -231,6 +238,55 @@ detect_conda_installation() {
     
     return 0
 }
+
+# Stop if this copy of the toolkit is behind its remote. Setup changes often, and
+# running an old one against a new toolkit is how stale environments get built.
+check_for_toolkit_update() {
+    [[ "$NO_UPDATE_CHECK" == "true" ]] && return 0
+    [[ -e ".git" ]] || return 0
+    command -v git >/dev/null 2>&1 || return 0
+    git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 || return 0   # no upstream branch to compare with
+
+    if ! git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 fetch --quiet 2>/dev/null; then
+        log_warning "Could not check for a newer toolkit version (offline?); continuing."
+        return 0
+    fi
+
+    local behind
+    behind=$(git rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)
+    if [[ "$behind" -gt 0 ]]; then
+        log_warning "A newer version of the toolkit is available ($behind new commit(s))."
+        echo ""
+        echo "  Run:   git pull"
+        echo "  Then run this setup again."
+        echo "  (To skip this check: ./setup.sh --no-update-check ...)"
+        exit 1
+    fi
+}
+
+# Performance mode compiles vhs-decode's Rust extension, so it needs a Rust
+# toolchain on the system. Stop now rather than 30 minutes in.
+check_performance_prerequisites() {
+    [[ "$INSTALL_MODE" == "performance" ]] || return 0
+    if ! command -v cargo >/dev/null 2>&1; then
+        log_error "Performance mode needs Rust (cargo) to build vhs-decode, and it was not found."
+        echo ""
+        echo "  Install it with your package manager, for example:"
+        echo "    Fedora / RHEL:    sudo dnf install rust cargo"
+        echo "    Debian / Ubuntu:  sudo apt install cargo rustc"
+        echo "    Arch:             sudo pacman -S rust"
+        echo "    macOS:            brew install rust"
+        echo "    Any system:       https://rustup.rs"
+        echo ""
+        echo "  Then run this setup again."
+        exit 1
+    fi
+}
+
+if [[ "$INSTALL_MODE" != "uninstall" ]]; then
+    check_for_toolkit_update
+    check_performance_prerequisites
+fi
 
 # Call conda detection
 detect_conda_installation
@@ -537,10 +593,12 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
         log_info "This will take 30-60 minutes depending on your system..."
         echo ""
         
-        # Make sure the source submodules are present at their recorded commits.
+        # Fetch the source code that is about to be compiled. ld-decode and vhs-decode
+        # live in git submodules; this only makes sure their source is on disk (at the
+        # commit this toolkit records). It compiles nothing: the builds below do that.
         # (build-vhs-decode.sh then moves vhs-decode to the release it was asked for.)
         if [[ -e ".git" ]]; then
-            log_info "Checking out build sources (git submodules)..."
+            log_info "Fetching the source code to compile (git submodules)..."
             git submodule update --init external/ld-decode external/vhs-decode \
                 || log_warning "Could not update the ld-decode / vhs-decode submodules; building what is checked out"
         fi
@@ -824,16 +882,8 @@ if [[ ${#STRAY_TOOLS[@]} -gt 0 ]]; then
         echo "    $p"
     done
     log_warning "These are not managed by setup.sh and can shadow the env's copies."
-    if [[ "$FORCE_MODE" != "true" ]] && [[ -t 0 ]]; then
-        read -p "Move them aside (not deleted; may ask for sudo) so they cannot shadow the env? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            build-scripts/retire-stray-tools.sh "${STRAY_TOOLS[@]}" \
-                || log_warning "Some tools could not be moved aside; see above"
-        fi
-    else
-        log_warning "To move them aside later: build-scripts/retire-stray-tools.sh <path> [<path> ...]"
-    fi
+    log_info "Remove them with the tool that installed them. How each one got here:"
+    build-scripts/explain-stray-tools.sh "${STRAY_TOOLS[@]}"
     echo ""
 fi
 
