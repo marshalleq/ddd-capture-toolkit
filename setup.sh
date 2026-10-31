@@ -77,6 +77,13 @@ show_usage() {
 
 echo "=== DDD Capture Toolkit Setup ==="
 
+# Start from a clean conda environment state. A shell that has another environment
+# activated (or several nested) leaves variables behind that send the builds to the
+# wrong place. (This used to be a separate wrapper, clean-setup.sh.)
+unset CONDA_DEFAULT_ENV CONDA_PREFIX CONDA_PREFIX_1 CONDA_PREFIX_2 CONDA_PREFIX_3 \
+      CONDA_SHLVL CONDA_PROMPT_MODIFIER CONDA_BUILD_SYSROOT \
+      CMAKE_PREFIX_PATH PKG_CONFIG_PATH LD_LIBRARY_PATH LIBRARY_PATH CMAKE_LIBRARY_PATH
+
 # Parse command line arguments
 INSTALL_MODE="easy"  # default mode
 OVERRIDE_PLATFORM=""
