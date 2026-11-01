@@ -36,6 +36,18 @@ def test_summary_ignores_disturbed_and_warmup_runs():
     assert 'FAILED: boom' in table and '1.00x' in table
 
 
+def test_ffmpeg_variants_and_scaling_table():
+    v = bench.parse_variant('ffmpeg@native', '/w')
+    assert (v.kind, v.label) == ('ffmpeg', 'ffmpeg native')
+    d = bench.parse_variant('tape-decode@native', '/w')
+    tasks = [bench.Task('t [2 cores]', 't', d, 'decode', 2), bench.Task('t [4 cores]', 't', d, 'decode', 4),
+             bench.Task('f export', 'f export', v, 'export')]
+    rows = [{'variant': 't [2 cores]', 'fps': 10.0}, {'variant': 't [4 cores]', 'fps': 18.5}]
+    table = bench.scaling_table(tasks, rows)
+    assert '| 2 cores | 4 cores |' in table and '10.0' in table and '18.5' in table
+    assert bench.scaling_table(tasks[:1], rows) == ''      # one core count: no scaling table
+
+
 def test_foreign_decoders_found_by_name_but_not_our_own_tree():
     table = {10: (1, 100, 'tape-decode decode --profile X'), 11: (10, 50, 'tape-decode worker'),
              12: (1, 100, '/usr/bin/vhs-decode --tf vhs'), 13: (1, 10, 'python bench.py --sample x'),

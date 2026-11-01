@@ -12,6 +12,13 @@ Variants (--variants, comma separated; default: tape-decode native and generic, 
 What happens to be installed in the toolkit environment is recorded in the results but never measured: name
 the build you want (native, generic, release).
 
+  ffmpeg@release           conda-forge's ffmpeg package, in a scratch environment (what easy mode has)
+  ffmpeg@native            ffmpeg built for this CPU by build-scripts/build-ffmpeg.sh
+  ffmpeg@generic           the same build without CPU-specific instructions
+
+An ffmpeg variant is timed on the export (tbc-video-export) and the final mux, using a sample decoded
+first by the first tape-decode or vhs-decode variant in the list.
+
   tape-decode@release      namazso's newest release binary for this CPU
   tape-decode@native[:REF] built from source for this CPU (REF = tag, branch or commit)
   tape-decode@generic[:REF] built from source without CPU-specific instructions
@@ -93,7 +100,9 @@ def pick_cores(count):
     if not allocator.available:
         return None, None
     cpus = allocator.allocate('benchmark', count)
-    return (cpus, allocator) if cpus else (None, None)
+    if not cpus:
+        raise RuntimeError(f"cannot pin {count} cores: this machine has {allocator.total_physical_cores} physical cores")
+    return cpus, allocator
 
 
 # ---------------------------------------------------------------- processes
@@ -148,11 +157,11 @@ def parse_variant(spec, work):
     spec, _, label = spec.partition('#')           # "...#my label" names it in the table
     if spec.startswith('exe='):
         path, _, kind = spec[4:].rpartition(':')
-        if kind not in ('tape-decode', 'vhs-decode') or not os.path.isfile(path):
-            raise ValueError(f"{spec}: expected exe=PATH:tape-decode or exe=PATH:vhs-decode with an existing PATH")
+        if kind not in ('tape-decode', 'vhs-decode', 'ffmpeg') or not os.path.isfile(path):
+            raise ValueError(f"{spec}: expected exe=PATH:KIND with an existing PATH; KIND is tape-decode, vhs-decode or ffmpeg")
         return Variant(spec, kind, label or f"{kind} ({path})", path)
     name, _, how = spec.partition('@')
-    if name not in ('tape-decode', 'vhs-decode'):
+    if name not in ('tape-decode', 'vhs-decode', 'ffmpeg'):
         raise ValueError(f"unknown variant '{spec}'")
     if not how:
         raise ValueError(f"'{spec}' does not say how it was built. Use {name}@native, {name}@generic or "
@@ -185,7 +194,21 @@ def build(variant, work, log):
             tail = (result.stderr or result.stdout).strip().splitlines()[-3:]
             raise RuntimeError(f"build failed ({' '.join(tail)[:300]}); see {folder}/build.log")
 
-    if name == 'tape-decode':
+    if name == 'ffmpeg':
+        if how == 'release':
+            conda = shutil.which('conda')
+            if not conda:
+                raise RuntimeError("conda is needed to fetch the ffmpeg package (activate the toolkit environment)")
+            sh([conda, 'create', '-y', '-p', prefix, '-c', 'conda-forge', 'ffmpeg'])
+        elif how in ('native', 'generic'):
+            cmd = ['bash', os.path.join(scripts, 'build-ffmpeg.sh'), '--prefix', prefix, '--work', os.path.join(folder, 'build')]
+            if how == 'generic':
+                cmd.append('--safe')
+            sh(cmd)
+        else:
+            raise RuntimeError(f"unknown ffmpeg build '{how}' (release, native or generic)")
+        variant.exe = os.path.join(prefix, 'bin', 'ffmpeg')
+    elif name == 'tape-decode':
         script = os.path.join(scripts, 'install-tape-decode.sh')
         if how == 'release':
             sh(['bash', script, '--mode', 'easy', '--prefix', prefix, '--dest', os.path.join(folder, 'download')])
@@ -304,13 +327,52 @@ def pack_lds(flac, out_path, log):
     return out_path
 
 
-# ---------------------------------------------------------------- one run
 
-def run_once(variant, sample, work, standard, cores, threads, rate_mhz, log):
+
+# ---------------------------------------------------------------- timed runs
+
+def timed(cmd, base, preexec=None, env=None, cwd=None):
+    """Run cmd, return what it cost: wall time, CPU time, peak RAM (sampled once a second) and any
+    other decode that ran during it. Output goes to base + '.stdout'."""
+    before = resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
+    started = time.perf_counter()
+    with open(base + '.stdout', 'w') as sink:
+        proc = subprocess.Popen(cmd, stdout=sink, stderr=subprocess.STDOUT, preexec_fn=preexec, env=env, cwd=cwd)
+    peak_kb, disturbed = 0, []
+    while proc.poll() is None:
+        table = process_table()
+        mine = descendants(table, proc.pid)
+        peak_kb = max(peak_kb, sum(table[p][1] for p in mine if p in table))
+        for pid in foreign_decoders(table, mine, base):
+            if pid not in disturbed:
+                disturbed.append(pid)
+        time.sleep(1.0)
+    wall = time.perf_counter() - started
+    cpu_s = None
+    if resource:
+        after = resource.getrusage(resource.RUSAGE_CHILDREN)
+        cpu_s = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
+    if proc.returncode != 0:
+        tail = re.sub(r'\x1b\[[0-9;]*m', '', open(base + '.stdout', errors='replace').read()).strip().splitlines()[-2:]
+        raise RuntimeError(f"exit code {proc.returncode}: {'; '.join(tail)[:300]}")
+    return {'wall_s': wall, 'cpu_s': cpu_s, 'peak_rss_mb': peak_kb / 1024, 'disturbed_by': disturbed}
+
+
+def count_frames(tbc_json, stdout):
+    try:
+        with open(tbc_json) as f:
+            return len(json.load(f)['fields']) // 2
+    except (OSError, KeyError, ValueError):
+        tail = re.sub(r'\x1b\[[0-9;]*m', '', open(stdout, errors='replace').read()).strip().splitlines()[-2:]
+        raise RuntimeError("the decode finished but wrote no usable .tbc.json: " + '; '.join(tail)[:300])
+
+
+def run_decode(variant, sample, work, standard, cores, threads, rate_mhz, keep_as=None):
+    """One decode of the sample with one build, pinned to `cores` cores on Linux."""
     decoder = decoder_backends.select_decoder(variant.kind)
     out_dir = os.path.join(work, 'out')
     os.makedirs(out_dir, exist_ok=True)
-    base = os.path.join(out_dir, re.sub(r'[^A-Za-z0-9._-]', '_', variant.spec))
+    base = keep_as or os.path.join(out_dir, re.sub(r'[^A-Za-z0-9._-]', '_', variant.spec))
     for suffix in ('.tbc', '_chroma.tbc', '.tbc.json', '.log'):
         if os.path.exists(base + suffix):
             os.remove(base + suffix)
@@ -322,61 +384,113 @@ def run_once(variant, sample, work, standard, cores, threads, rate_mhz, log):
                                       tokens, structural, sample, base, threads=threads)
     if problems + more:
         raise RuntimeError('; '.join(problems + more))
-
     cpus, allocator = pick_cores(cores) if cores else (None, None)
     preexec = None
     if cpus:
         import cpu_affinity
         preexec = cpu_affinity.make_preexec_fn(cpus)
-    before = resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
-    started = time.perf_counter()
-    with open(base + '.stdout', 'w') as sink:
-        proc = subprocess.Popen(cmd, stdout=sink, stderr=subprocess.STDOUT, preexec_fn=preexec)
-    peak_kb, disturbed = 0, []
-    while proc.poll() is None:
-        table = process_table()
-        mine = descendants(table, proc.pid)
-        peak_kb = max(peak_kb, sum(table[p][1] for p in mine if p in table))
-        for pid in foreign_decoders(table, mine, base):
-            if pid not in disturbed:
-                disturbed.append(pid)
-        time.sleep(1.0)
-    wall = time.perf_counter() - started
-    if allocator:
-        allocator.release('benchmark')
-    cpu_s = None
-    if resource:
-        after = resource.getrusage(resource.RUSAGE_CHILDREN)
-        cpu_s = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
-
-    if proc.returncode != 0:
-        tail = open(base + '.stdout', errors='replace').read().strip().splitlines()[-2:]
-        raise RuntimeError(f"exit code {proc.returncode}: {'; '.join(tail)[:300]}")
     try:
-        with open(base + '.tbc.json') as f:
-            frames = len(json.load(f)['fields']) // 2
-    except (OSError, KeyError, ValueError):
-        tail = re.sub(r'\x1b\[[0-9;]*m', '', open(base + '.stdout', errors='replace').read()).strip().splitlines()[-2:]
-        raise RuntimeError("the decode finished but wrote no usable .tbc.json: " + '; '.join(tail)[:300])
-    for suffix in ('.tbc', '_chroma.tbc'):
-        if os.path.exists(base + suffix):
-            os.remove(base + suffix)
-    return {'wall_s': wall, 'cpu_s': cpu_s, 'peak_rss_mb': peak_kb / 1024, 'frames': frames,
-            'fps': frames / wall, 'cores': cpus, 'disturbed_by': disturbed}
+        result = timed(cmd, base, preexec)
+    finally:
+        if allocator:
+            allocator.release('benchmark')
+    result['frames'] = count_frames(base + '.tbc.json', base + '.stdout')
+    result['fps'] = result['frames'] / result['wall_s']
+    result['cores'] = cpus
+    if not keep_as:
+        for suffix in ('.tbc', '_chroma.tbc'):
+            if os.path.exists(base + suffix):
+                os.remove(base + suffix)
+    return result
 
 
-# ---------------------------------------------------------------- main
+def ffmpeg_env(ffmpeg):
+    """The environment with this ffmpeg first on the path, so programs that call 'ffmpeg' use it."""
+    env = dict(os.environ)
+    env['PATH'] = os.path.dirname(ffmpeg) + os.pathsep + env.get('PATH', '')
+    return env
+
+
+def run_export(variant, reference, work, first_export):
+    """tbc-video-export on the decoded reference, with this ffmpeg. The options are the toolkit's own
+    (job_queue_manager.py, _execute_tbc_export_job): all threads, FFV1."""
+    exporter = shutil.which('tbc-video-export')
+    if not exporter:
+        raise RuntimeError("tbc-video-export not found (run ./setup.sh)")
+    folder = os.path.join(work, 'export_' + re.sub(r'[^A-Za-z0-9._-]', '_', variant.spec))
+    shutil.rmtree(folder, ignore_errors=True)
+    os.makedirs(folder)
+    for suffix in ('.tbc', '_chroma.tbc', '.tbc.json'):
+        os.link(reference + suffix, os.path.join(folder, 'ref' + suffix))
+    base = os.path.join(folder, 'export')
+    result = timed([exporter, '--threads', '0', '--profile', 'ffv1', '--show-process-output', '--overwrite',
+                    os.path.join(folder, 'ref.tbc')], base, env=ffmpeg_env(variant.exe), cwd=folder)
+    videos = [f for f in os.listdir(folder) if f.endswith('.mkv')]
+    if not videos:
+        raise RuntimeError("tbc-video-export finished but wrote no video")
+    video = os.path.join(folder, videos[0])
+    if first_export:
+        shutil.copy(video, os.path.join(work, 'ref_ffv1.mkv'))
+    result['frames'] = count_frames(os.path.join(folder, 'ref.tbc.json'), base + '.stdout')
+    result['fps'] = result['frames'] / result['wall_s']
+    shutil.rmtree(folder, ignore_errors=True)
+    return result
+
+
+def make_audio(ffmpeg, seconds, work):
+    """Stand-in for the aligned clockgen audio: stereo 24-bit at 78125 Hz."""
+    path = os.path.join(work, 'ref_audio.wav')
+    if not os.path.exists(path):
+        subprocess.run([ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                        f'anoisesrc=d={seconds:.3f}:sample_rate=78125:amplitude=0.1', '-ac', '2',
+                        '-c:a', 'pcm_s24le', path], check=True)
+    return path
+
+
+def run_mux(variant, work, frames, standard):
+    """The final mux with this ffmpeg: copy the video, resample the audio to 96 kHz with soxr and
+    encode it as FLAC. The options are the toolkit's own (_execute_final_mux_job)."""
+    video = os.path.join(work, 'ref_ffv1.mkv')
+    if not os.path.exists(video):
+        raise RuntimeError("no exported video to mux (the export step failed)")
+    audio = make_audio(variant.exe, frames / (25 if standard == 'pal' else 30000 / 1001), work)
+    out = os.path.join(work, 'mux_' + re.sub(r'[^A-Za-z0-9._-]', '_', variant.spec) + '.mkv')
+    cmd = [variant.exe, '-v', 'error', '-i', video, '-i', audio, '-c:v', 'copy',
+           '-af', 'aresample=resampler=soxr:precision=33:osf=s32', '-c:a', 'flac', '-sample_fmt', 's32',
+           '-map', '0:v:0', '-map', '1:a:0', '-y', out]
+    try:
+        result = timed(cmd, out, env=ffmpeg_env(variant.exe))
+    except RuntimeError:
+        # the usual reason, said plainly: easy mode's conda ffmpeg and some system builds lack libsoxr
+        if 'resampling engine is unavailable' in open(out + '.stdout', errors='replace').read():
+            raise RuntimeError("this ffmpeg was built without libsoxr, which the final mux needs")
+        raise
+    finally:
+        if os.path.exists(out):
+            os.remove(out)
+    result['frames'] = frames
+    result['fps'] = frames / result['wall_s']
+    return result
+
+
+# ---------------------------------------------------------------- tasks and tables
+
+class Task:
+    """One thing to time: a decode, an export or a mux, with one build."""
+    def __init__(self, key, label, variant, step, cores=None, run=None):
+        self.key, self.label, self.variant, self.step, self.cores, self.run = key, label, variant, step, cores, run
+
 
 def summarise(results, standard, baseline):
     rows = []
-    for spec, runs in results.items():
+    for key, runs in results.items():
         good = [r for r in runs if 'fps' in r and not r.get('disturbed_by') and not r.get('warmup')]
         failed = [r for r in runs if 'error' in r]
         if not good:
-            rows.append({'variant': spec, 'error': (failed[0]['error'] if failed else 'no clean runs')})
+            rows.append({'variant': key, 'error': (failed[0]['error'] if failed else 'no clean runs')})
             continue
         fps = statistics.median(r['fps'] for r in good)
-        rows.append({'variant': spec, 'fps': fps, 'min': min(r['fps'] for r in good),
+        rows.append({'variant': key, 'fps': fps, 'min': min(r['fps'] for r in good),
                      'max': max(r['fps'] for r in good), 'runs': len(good),
                      'cpu_s': statistics.median(r['cpu_s'] for r in good) if good[0]['cpu_s'] is not None else None,
                      'rss_mb': max(r['peak_rss_mb'] for r in good),
@@ -405,8 +519,27 @@ def format_table(rows, labels, baseline):
     return '\n'.join(lines)
 
 
+def scaling_table(tasks, rows):
+    """Frames per second by number of cores, one line per build, when more than one core count ran."""
+    by_key = {r['variant']: r for r in rows}
+    counts = sorted({t.cores for t in tasks if t.cores})
+    if len(counts) < 2:
+        return ''
+    lines = ["| Build | " + " | ".join(f"{c} cores" for c in counts) + " |", "|---|" + "---|" * len(counts)]
+    for name in dict.fromkeys(t.variant.label for t in tasks if t.step == 'decode' and t.cores):
+        cells = []
+        for c in counts:
+            t = next((t for t in tasks if t.variant.label == name and t.cores == c and t.step == 'decode'), None)
+            r = by_key.get(t.key) if t else None
+            cells.append(f"{r['fps']:.1f}" if r and 'fps' in r else '-')
+        lines.append(f"| {name} | " + " | ".join(cells) + " |")
+    return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------- main
+
 def main(argv=None):
-    p = argparse.ArgumentParser(description="Benchmark decoder builds on this machine",
+    p = argparse.ArgumentParser(description="Benchmark decoder and ffmpeg builds on this machine",
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split('Variants')[1])
     p.add_argument('--sample', required=True, help="a .ddd.flac capture to decode")
     p.add_argument('--seconds', type=float, help="cut this many seconds from the capture and use that (default: all of it)")
@@ -420,8 +553,11 @@ def main(argv=None):
                    help="what to measure (see below). Default: tape-decode native and generic builds, "
                         "plus the release binary on Linux x86-64")
     p.add_argument('--runs', type=int, default=3, help="timed runs per build (default 3), after one discarded warm-up")
-    p.add_argument('--cores', type=int, default=4, help="cores to pin one decode to on Linux (default 4)")
-    p.add_argument('--threads', type=int, default=3, help="the toolkit's decode thread setting (default 3: four cores)")
+    p.add_argument('--cores', default='4',
+                   help="cores to pin one decode to on Linux (default 4). A list, such as 2,4,8,16, measures each "
+                        "count and adds a scaling table")
+    p.add_argument('--threads', type=int, default=None,
+                   help="the toolkit's decode thread setting (default: one less than the cores, as the toolkit does)")
     p.add_argument('--standard', choices=('pal', 'ntsc'), default='pal')
     p.add_argument('--baseline', help="variant to compare the others with")
     p.add_argument('--lds', action='store_true', help="also run vhs-decode builds on an uncompressed .lds copy of the sample")
@@ -429,6 +565,10 @@ def main(argv=None):
     p.add_argument('--results', default=os.path.join(HERE, 'results'), help="where to write the results")
     p.add_argument('--keep-work', action='store_true', help="keep builds and logs afterwards")
     args = p.parse_args(argv)
+    try:
+        core_counts = [int(c) for c in args.cores.split(',') if c.strip()]
+    except ValueError:
+        sys.exit("--cores takes a number or a comma separated list of numbers")
 
     if os.name == 'nt':
         print("note: Windows is not tested; decodes run unpinned and there is no disturbance check")
@@ -466,28 +606,62 @@ def main(argv=None):
             sys.exit(str(e))
     if any('@' in v.spec and not v.exe for v in variants) and os.environ.get('CONDA_DEFAULT_ENV') != 'ddd-capture-toolkit':
         sys.exit("building variants needs the toolkit's conda environment: run  conda activate ddd-capture-toolkit  first")
-    runs_plan = []                 # (label key, variant, input file)
+
+    ready = []
     for v in variants:
         log(f"preparing {v.label}")
         try:
             build(v, work, log)
+            ready.append(v)
         except RuntimeError as e:
             v.error = str(e)
             log(f"  FAILED: {v.error}")
-            continue
-        runs_plan.append((v.spec, v, sample))
-        if lds_sample and v.kind == 'vhs-decode':
-            runs_plan.append((v.spec + ' [.lds]', v, lds_sample))
 
-    results = {key: [] for key, _, _ in runs_plan}
-    labels = {v.spec: v.label for v in variants}
-    for key, v, _ in runs_plan:
-        labels.setdefault(key, v.label + (' on .lds' if key.endswith('[.lds]') else ''))
+    decoders = [v for v in ready if v.kind != 'ffmpeg']
+    ffmpegs = [v for v in ready if v.kind == 'ffmpeg']
+    tasks = []
+    for v in decoders:
+        for cores in core_counts:
+            threads = args.threads if args.threads is not None else max(1, cores - 1)
+            for infile, suffix in [(sample, '')] + ([(lds_sample, ' on .lds')] if lds_sample and v.kind == 'vhs-decode' else []):
+                tag = (f" [{cores} cores]" if len(core_counts) > 1 else '') + suffix
+                tasks.append(Task(v.spec + tag, v.label + tag, v, 'decode', cores,
+                                  lambda v=v, f=infile, c=cores, t=threads: run_decode(v, f, work, args.standard, c, t, rate_mhz)))
+
+    reference = None
+    if ffmpegs:
+        if not decoders:
+            sys.exit("timing ffmpeg needs a decoded sample: include a tape-decode or vhs-decode variant as well")
+        first = decoders[0]
+        log(f"decoding the sample once with {first.label} for the export and mux steps")
+        cores = core_counts[0]
+        try:
+            ref = run_decode(first, sample, work, args.standard, cores, args.threads or max(1, cores - 1), rate_mhz,
+                             keep_as=os.path.join(work, 'ref'))
+            reference = os.path.join(work, 'ref')
+            ref_frames = ref['frames']
+        except RuntimeError as e:
+            log(f"  FAILED: {e}")
+        if reference:
+            for i, v in enumerate(ffmpegs):
+                tasks.append(Task(v.spec + ' export', v.label + ' export', v, 'export',
+                                  run=lambda v=v, i=i: run_export(v, reference, work, i == 0)))
+            for v in ffmpegs:
+                tasks.append(Task(v.spec + ' mux', v.label + ' mux', v, 'mux',
+                                  run=lambda v=v: run_mux(v, work, ref_frames, args.standard)))
+
+    results = {t.key: [] for t in tasks}
+    labels = {t.key: t.label for t in tasks}
     for v in variants:
         if v.error:
             results[v.spec] = [{'error': v.error}]
+            labels[v.spec] = v.label
+    if ffmpegs and not reference:
+        for v in ffmpegs:
+            results[v.spec + ' export'] = [{'error': 'the reference decode failed'}]
+            labels[v.spec + ' export'] = v.label + ' export'
 
-    def attempt(key, v, infile, warmup):
+    def attempt(task, warmup):
         waited = 0
         while foreign_decoders(process_table(), set()) and waited < 120 and os.name != 'nt':
             if waited == 0:
@@ -495,33 +669,34 @@ def main(argv=None):
             time.sleep(5)
             waited += 5
         try:
-            r = run_once(v, infile, work, args.standard, args.cores, args.threads, rate_mhz, log)
+            r = task.run()
         except RuntimeError as e:
             r = {'error': str(e)}
         r['warmup'] = warmup
         if r.get('disturbed_by'):
             r['note'] = f"another decode ran at the same time (pid {r['disturbed_by']}); not counted"
-        results[key].append(r)
+        results[task.key].append(r)
         shown = (f"{r['fps']:.2f} fps in {r['wall_s']:.1f}s" if 'fps' in r else f"FAILED: {r['error']}")
-        log(f"  {labels[key]:<45} {'warm-up' if warmup else 'run':<8} {shown}" + (f"  [{r['note']}]" if r.get('note') else ''))
+        log(f"  {task.label:<52} {'warm-up' if warmup else 'run':<8} {shown}" + (f"  [{r['note']}]" if r.get('note') else ''))
 
     log(f"\nwarm-up, then {args.runs} runs of each; sample {os.path.basename(sample)}")
-    for key, v, infile in runs_plan:
-        attempt(key, v, infile, True)
+    for task in tasks:
+        attempt(task, True)
     for _ in range(args.runs):
-        for key, v, infile in runs_plan:
-            attempt(key, v, infile, False)
+        for task in tasks:
+            attempt(task, False)
 
     rows = summarise(results, args.standard, args.baseline)
     table = format_table(rows, labels, args.baseline)
-    log("\n" + table)
+    scaling = scaling_table(tasks, rows)
+    log("\n" + table + (("\n\nFrames per second by cores:\n\n" + scaling) if scaling else ''))
 
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     out_dir = os.path.join(os.path.abspath(args.results), f"{machine.get('host')}-{stamp}")
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, 'results.json'), 'w') as f:
         json.dump({'machine': machine, 'sample': os.path.basename(sample), 'rate_mhz': rate_mhz, 'standard': args.standard,
-                   'cores': args.cores, 'threads': args.threads, 'labels': labels, 'runs': results, 'summary': rows},
+                   'cores': core_counts, 'threads': args.threads, 'labels': labels, 'runs': results, 'summary': rows},
                   f, indent=2)
     with open(os.path.join(out_dir, 'results.csv'), 'w', newline='') as f:
         w = csv.writer(f)
@@ -532,11 +707,16 @@ def main(argv=None):
                             r.get('frames', ''), r.get('fps', ''), bool(r.get('disturbed_by')), r.get('error', '')])
     with open(os.path.join(out_dir, 'summary.md'), 'w') as f:
         f.write(f"# {machine.get('cpu')} ({machine['os']} {machine['arch']}, {machine.get('ram_gb', '?')} GB)\n\n"
-                f"Sample: {os.path.basename(sample)} at {rate_mhz:g} MS/s, {args.standard.upper()}, {args.cores} cores"
-                f"{'' if sys.platform.startswith('linux') else ' (unpinned on this platform)'}.\n\n{table}\n")
+                f"Sample: {os.path.basename(sample)} at {rate_mhz:g} MS/s, {args.standard.upper()}, "
+                f"{'/'.join(str(c) for c in core_counts)} cores"
+                f"{'' if sys.platform.startswith('linux') else ' (unpinned on this platform)'}.\n\n{table}\n"
+                + (f"\nFrames per second by cores:\n\n{scaling}\n" if scaling else ''))
     log(f"\nresults written to {out_dir}")
     if not args.keep_work:
         shutil.rmtree(os.path.join(work, 'out'), ignore_errors=True)
+        for leftover in ('ref.tbc', 'ref_chroma.tbc', 'ref.tbc.json', 'ref_ffv1.mkv', 'ref_audio.wav'):
+            if os.path.exists(os.path.join(work, leftover)):
+                os.remove(os.path.join(work, leftover))
     return 1 if any('error' in r for r in rows) else 0
 
 
