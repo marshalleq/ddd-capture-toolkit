@@ -1,0 +1,90 @@
+{
+  "machine": {
+    "os": "Darwin",
+    "os_version": "27.0.0",
+    "arch": "arm64",
+    "host": "PCBuilds-Air",
+    "logical_cpus": 8,
+    "cpu": "Apple M2",
+    "ram_gb": 16,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": null
+    }
+  },
+  "sample": "kirby_unshielded_10min.ddd.flac",
+  "sample_info": {
+    "file": "kirby_unshielded_10min.ddd.flac",
+    "bytes": 20745221039,
+    "description": "Kirby instructional video, ten minutes: minutes 5 to 15 of the capture, recorded with the Duplicator's lid off (no top shielding)",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "871ee08f5c58104a"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "exe=/Users/marshalleq/bench/tape-decode-native:tape-decode": "tape-decode native"
+  },
+  "runs": {
+    "exe=/Users/marshalleq/bench/tape-decode-native:tape-decode": [
+      {
+        "wall_s": 685.2630174999999,
+        "cpu_s": 2399.020361,
+        "peak_rss_mb": 1090.6875,
+        "disturbed_by": [],
+        "frames": 14999,
+        "fps": 21.8879461126034,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 686.0193367500001,
+        "cpu_s": 2399.1313880000002,
+        "peak_rss_mb": 1076.859375,
+        "disturbed_by": [],
+        "frames": 14999,
+        "fps": 21.863815196605678,
+        "cores": null,
+        "warmup": false
+      },
+      {
+        "wall_s": 684.7975489580001,
+        "cpu_s": 2394.2073530000002,
+        "peak_rss_mb": 1096.84375,
+        "disturbed_by": [],
+        "frames": 14999,
+        "fps": 21.902823721876253,
+        "cores": null,
+        "warmup": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "exe=/Users/marshalleq/bench/tape-decode-native:tape-decode",
+      "fps": 21.883319459240965,
+      "min": 21.863815196605678,
+      "max": 21.902823721876253,
+      "runs": 2,
+      "cpu_s": 2396.6693705000002,
+      "rss_mb": 1096.84375,
+      "hour_min": 68.5453595280114
+    }
+  ]
+}

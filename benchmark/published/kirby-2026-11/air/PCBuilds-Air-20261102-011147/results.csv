@@ -1,0 +1,4 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+exe=/Users/marshalleq/bench/tape-decode-native:tape-decode,True,685.2630174999999,2399.020361,1090.6875,14999,21.8879461126034,False,
+exe=/Users/marshalleq/bench/tape-decode-native:tape-decode,False,686.0193367500001,2399.1313880000002,1076.859375,14999,21.863815196605678,False,
+exe=/Users/marshalleq/bench/tape-decode-native:tape-decode,False,684.7975489580001,2394.2073530000002,1096.84375,14999,21.902823721876253,False,

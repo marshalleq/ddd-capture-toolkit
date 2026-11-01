@@ -1,0 +1,191 @@
+{
+  "machine": {
+    "os": "Linux",
+    "os_version": "7.2.13-200.fc44.x86_64",
+    "arch": "x86_64",
+    "host": "obiwan",
+    "logical_cpus": 32,
+    "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+    "ram_gb": 123,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": "/home/marshalleq/anaconda3/envs/ddd-capture-toolkit/bin/vhs-decode"
+    }
+  },
+  "sample": "kirby_shielded_10min.ddd.flac",
+  "sample_info": {
+    "file": "kirby_shielded_10min.ddd.flac",
+    "bytes": 20740357296,
+    "description": "Kirby instructional video, ten minutes: minutes 30 to 40 of the capture, recorded with the Duplicator's lid on",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "f8c9f9c449920c80"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "tape-decode@native": "tape-decode native",
+    "ffmpeg@release export": "ffmpeg release export",
+    "ffmpeg@native export": "ffmpeg native export",
+    "ffmpeg@release mux": "ffmpeg release mux",
+    "ffmpeg@native mux": "ffmpeg native mux",
+    "ffmpeg@generic": "ffmpeg generic"
+  },
+  "runs": {
+    "tape-decode@native": [
+      {
+        "wall_s": 656.9344833739888,
+        "cpu_s": 2418.184919,
+        "peak_rss_mb": 731.66015625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 22.83028274443881,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": true
+      },
+      {
+        "wall_s": 651.7547995810019,
+        "cpu_s": 2406.522449,
+        "peak_rss_mb": 734.05859375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 23.011721600887125,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": false
+      },
+      {
+        "wall_s": 656.9162720869936,
+        "cpu_s": 2420.455953000001,
+        "peak_rss_mb": 713.30859375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 22.830915654367985,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": false
+      }
+    ],
+    "ffmpeg@release export": [
+      {
+        "error": "exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'",
+        "warmup": true
+      },
+      {
+        "error": "exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'",
+        "warmup": false
+      },
+      {
+        "error": "exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'",
+        "warmup": false
+      }
+    ],
+    "ffmpeg@native export": [
+      {
+        "error": "exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'",
+        "warmup": true
+      },
+      {
+        "error": "exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'",
+        "warmup": false
+      },
+      {
+        "error": "exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'",
+        "warmup": false
+      }
+    ],
+    "ffmpeg@release mux": [
+      {
+        "error": "no exported video to mux (the export step failed)",
+        "warmup": true
+      },
+      {
+        "error": "no exported video to mux (the export step failed)",
+        "warmup": false
+      },
+      {
+        "error": "no exported video to mux (the export step failed)",
+        "warmup": false
+      }
+    ],
+    "ffmpeg@native mux": [
+      {
+        "error": "no exported video to mux (the export step failed)",
+        "warmup": true
+      },
+      {
+        "error": "no exported video to mux (the export step failed)",
+        "warmup": false
+      },
+      {
+        "error": "no exported video to mux (the export step failed)",
+        "warmup": false
+      }
+    ],
+    "ffmpeg@generic": [
+      {
+        "error": "build failed (curl: (28) Failed to connect to ffmpeg.org:443 after 135933 ms: Could not connect to server \u001b[0;31m[ERROR]\u001b[0m Failed to download FFmpeg source \u001b[0;31m[ERROR]\u001b[0m FFmpeg build failed); see /mnt/nvme2tb/bench-work/ffmpeg_generic/build.log"
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "tape-decode@native",
+      "fps": 22.921318627627556,
+      "min": 22.830915654367985,
+      "max": 23.011721600887125,
+      "runs": 2,
+      "cpu_s": 2413.4892010000003,
+      "rss_mb": 734.05859375,
+      "hour_min": 65.44126122796521
+    },
+    {
+      "variant": "ffmpeg@release export",
+      "error": "exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'"
+    },
+    {
+      "variant": "ffmpeg@native export",
+      "error": "exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'"
+    },
+    {
+      "variant": "ffmpeg@release mux",
+      "error": "no exported video to mux (the export step failed)"
+    },
+    {
+      "variant": "ffmpeg@native mux",
+      "error": "no exported video to mux (the export step failed)"
+    },
+    {
+      "variant": "ffmpeg@generic",
+      "error": "build failed (curl: (28) Failed to connect to ffmpeg.org:443 after 135933 ms: Could not connect to server \u001b[0;31m[ERROR]\u001b[0m Failed to download FFmpeg source \u001b[0;31m[ERROR]\u001b[0m FFmpeg build failed); see /mnt/nvme2tb/bench-work/ffmpeg_generic/build.log"
+    }
+  ]
+}

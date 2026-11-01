@@ -79,7 +79,7 @@ build_ffmpeg() {
         local tarball="${build_base}/ffmpeg-${FFMPEG_VERSION}.tar.xz"
 
         if [[ ! -f "$tarball" ]]; then
-            curl -L -o "$tarball" "$FFMPEG_URL" || {
+            curl -fL --retry 5 --retry-delay 10 --retry-all-errors -o "$tarball" "$FFMPEG_URL" || {
                 log_error "Failed to download FFmpeg source"
                 return 1
             }

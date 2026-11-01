@@ -57,6 +57,15 @@ def test_foreign_decoders_found_by_name_but_not_our_own_tree():
     assert bench.foreign_decoders(table, mine) == [12]
 
 
+def test_commands_that_only_mention_a_decoder_are_not_decodes():
+    for args in ("bash -c ps -eo args | grep tape-decode", "grep -E vhs-decode|bench.py x", "ssh solo ps | grep vhs-decode",
+                 "sh /w/build-scripts/install-tape-decode.sh --mode performance", "less tape-decode.log"):
+        assert not bench.is_decoder_process(args), args
+    for args in ("tape-decode decode --profile X", "/usr/bin/vhs-decode --tf vhs", "python /v/bin/vhs-decode --tf vhs x",
+                 "/x/ld-ldf-reader a.ldf", "python3 decode.py vhs in out", "/x/vhs-decode-x86_64.AppImage --tf vhs"):
+        assert bench.is_decoder_process(args), args
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for t in tests:

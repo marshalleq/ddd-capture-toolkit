@@ -1,0 +1,105 @@
+{
+  "machine": {
+    "os": "Linux",
+    "os_version": "7.2.13-200.fc44.x86_64",
+    "arch": "x86_64",
+    "host": "obiwan",
+    "logical_cpus": 32,
+    "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+    "ram_gb": 123,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": "/home/marshalleq/anaconda3/envs/ddd-capture-toolkit/bin/vhs-decode"
+    }
+  },
+  "sample": "kirby_unshielded_10min.ddd.flac",
+  "sample_info": {
+    "file": "kirby_unshielded_10min.ddd.flac",
+    "bytes": 20745221039,
+    "description": "Kirby instructional video, ten minutes: minutes 5 to 15 of the capture, recorded with the Duplicator's lid off (no top shielding)",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "871ee08f5c58104a"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "tape-decode@native": "tape-decode native"
+  },
+  "runs": {
+    "tape-decode@native": [
+      {
+        "wall_s": 348.0038750060048,
+        "cpu_s": 1367.215602,
+        "peak_rss_mb": 680.6796875,
+        "disturbed_by": [],
+        "frames": 14999,
+        "fps": 43.10009478986748,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": true
+      },
+      {
+        "wall_s": 348.9979931859998,
+        "cpu_s": 1369.6684869999997,
+        "peak_rss_mb": 686.51171875,
+        "disturbed_by": [],
+        "frames": 14999,
+        "fps": 42.97732449139393,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": false
+      },
+      {
+        "wall_s": 346.94154402300774,
+        "cpu_s": 1365.8781439999998,
+        "peak_rss_mb": 636.09375,
+        "disturbed_by": [],
+        "frames": 14999,
+        "fps": 43.23206678011823,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "tape-decode@native",
+      "fps": 43.10469563575608,
+      "min": 42.97732449139393,
+      "max": 43.23206678011823,
+      "runs": 2,
+      "cpu_s": 1367.7733154999996,
+      "rss_mb": 686.51171875,
+      "hour_min": 34.79899296065843
+    }
+  ]
+}

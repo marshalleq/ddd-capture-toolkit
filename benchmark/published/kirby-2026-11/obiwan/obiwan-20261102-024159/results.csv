@@ -1,0 +1,9 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+vhs-decode@v0.4.0,True,1650.0326035649923,4193.7317330000005,1418.01171875,14998,9.089517363230241,False,
+vhs-decode@v0.4.0,False,1636.962056599994,4170.520416000001,1376.83984375,14998,9.162093855218107,False,
+vhs-decode@v0.4.0 on .lds,True,1531.2141667690012,3805.624981,1275.03515625,14998,9.794841456859768,False,
+vhs-decode@v0.4.0 on .lds,False,1528.3256121869927,3800.4092400000004,1238.8984375,14998,9.813353830103173,False,
+vhs-decode@efc3818f,True,,,,,,False,the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!
+vhs-decode@efc3818f,False,,,,,,False,the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!
+vhs-decode@efc3818f on .lds,True,1165.7402429819922,3098.1631420000003,1350.2734375,14998,12.865644889838192,False,
+vhs-decode@efc3818f on .lds,False,1149.4600562959968,3072.0644569999986,1210.1875,14998,13.047865315415427,False,

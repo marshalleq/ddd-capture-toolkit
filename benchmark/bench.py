@@ -129,9 +129,24 @@ def descendants(table, root):
     return found
 
 
-DECODER_WORDS = re.compile(r'(tape-decode|vhs-decode|decode\.py vhs|ld-ldf-reader)')
+DECODER_PROGRAMS = ('tape-decode', 'vhs-decode', 'ld-ldf-reader')
 # The helper that mounts a prebuilt AppImage carries the decoder's name but belongs to the run that started it
 NOT_A_DECODE = re.compile(r'(squashfuse|fusermount|\.mount_|AppImage .*-o )')
+
+
+def is_decoder_process(args):
+    """True when the program being run is a decoder. The name must be the program itself (or the script
+    handed to python), not just a word somewhere on the command line: `ps | grep tape-decode`, an ssh
+    session or an editor that mention the name are not decodes."""
+    tokens = args.split()
+    if not tokens:
+        return False
+    program = os.path.basename(tokens[0])
+    if program.startswith('python') and len(tokens) > 1 and not tokens[1].startswith('-'):
+        program = os.path.basename(tokens[1])
+        if program == 'decode.py':
+            return 'vhs' in tokens[2:]
+    return program.startswith(DECODER_PROGRAMS)
 
 
 def foreign_decoders(table, mine, marker=None):
@@ -140,7 +155,7 @@ def foreign_decoders(table, mine, marker=None):
     AppImage leaves a process of its own outside our child's tree, and that one is ours too."""
     me = os.getpid()
     return sorted(pid for pid, (_, _, args) in table.items()
-                  if pid not in mine and pid != me and DECODER_WORDS.search(args)
+                  if pid not in mine and pid != me and is_decoder_process(args)
                   and not NOT_A_DECODE.search(args) and 'bench.py' not in args
                   and not (marker and marker in args))
 

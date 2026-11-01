@@ -1,0 +1,191 @@
+{
+  "machine": {
+    "os": "Linux",
+    "os_version": "7.2.13-200.fc44.x86_64",
+    "arch": "x86_64",
+    "host": "obiwan",
+    "logical_cpus": 32,
+    "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+    "ram_gb": 123,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": "/home/marshalleq/anaconda3/envs/ddd-capture-toolkit/bin/vhs-decode"
+    }
+  },
+  "sample": "kirby_shielded_10min.ddd.flac",
+  "sample_info": {
+    "file": "kirby_shielded_10min.ddd.flac",
+    "bytes": 20740357296,
+    "description": "Kirby instructional video, ten minutes: minutes 30 to 40 of the capture, recorded with the Duplicator's lid on",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "f8c9f9c449920c80"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "vhs-decode@v0.4.0": "vhs-decode v0.4.0",
+    "vhs-decode@v0.4.0 on .lds": "vhs-decode v0.4.0 on .lds",
+    "vhs-decode@efc3818f": "vhs-decode efc3818f",
+    "vhs-decode@efc3818f on .lds": "vhs-decode efc3818f on .lds"
+  },
+  "runs": {
+    "vhs-decode@v0.4.0": [
+      {
+        "wall_s": 1650.0326035649923,
+        "cpu_s": 4193.7317330000005,
+        "peak_rss_mb": 1418.01171875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 9.089517363230241,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": true
+      },
+      {
+        "wall_s": 1636.962056599994,
+        "cpu_s": 4170.520416000001,
+        "peak_rss_mb": 1376.83984375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 9.162093855218107,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": false
+      }
+    ],
+    "vhs-decode@v0.4.0 on .lds": [
+      {
+        "wall_s": 1531.2141667690012,
+        "cpu_s": 3805.624981,
+        "peak_rss_mb": 1275.03515625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 9.794841456859768,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": true
+      },
+      {
+        "wall_s": 1528.3256121869927,
+        "cpu_s": 3800.4092400000004,
+        "peak_rss_mb": 1238.8984375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 9.813353830103173,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": false
+      }
+    ],
+    "vhs-decode@efc3818f": [
+      {
+        "error": "the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!",
+        "warmup": true
+      },
+      {
+        "error": "the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!",
+        "warmup": false
+      }
+    ],
+    "vhs-decode@efc3818f on .lds": [
+      {
+        "wall_s": 1165.7402429819922,
+        "cpu_s": 3098.1631420000003,
+        "peak_rss_mb": 1350.2734375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 12.865644889838192,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": true
+      },
+      {
+        "wall_s": 1149.4600562959968,
+        "cpu_s": 3072.0644569999986,
+        "peak_rss_mb": 1210.1875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 13.047865315415427,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "vhs-decode@v0.4.0",
+      "fps": 9.162093855218107,
+      "min": 9.162093855218107,
+      "max": 9.162093855218107,
+      "runs": 1,
+      "cpu_s": 4170.520416000001,
+      "rss_mb": 1376.83984375,
+      "hour_min": 163.7180347312969
+    },
+    {
+      "variant": "vhs-decode@v0.4.0 on .lds",
+      "fps": 9.813353830103173,
+      "min": 9.813353830103173,
+      "max": 9.813353830103173,
+      "runs": 1,
+      "cpu_s": 3800.4092400000004,
+      "rss_mb": 1238.8984375,
+      "hour_min": 152.85294161091403
+    },
+    {
+      "variant": "vhs-decode@efc3818f",
+      "error": "the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!"
+    },
+    {
+      "variant": "vhs-decode@efc3818f on .lds",
+      "fps": 13.047865315415427,
+      "min": 13.047865315415427,
+      "max": 13.047865315415427,
+      "runs": 1,
+      "cpu_s": 3072.0644569999986,
+      "rss_mb": 1210.1875,
+      "hour_min": 114.96133380744067
+    }
+  ]
+}

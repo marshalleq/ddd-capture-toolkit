@@ -1,0 +1,4 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode,True,542.642725792015,1893.331682,1111.265625,14999,27.640654314693315,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode,False,544.8207367909781,1900.1427370000001,1110.28125,14999,27.53015622779866,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode,False,542.9064984580036,1894.4090380000007,1115.046875,14999,27.62722502420045,False,

@@ -1,0 +1,13 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [2 cores],True,1327.9432175000256,2672.333771,5178.359375,14998,11.294157613331619,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [2 cores],False,1332.53840666599,2665.534683000001,5135.890625,14998,11.255210300110587,True,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [2 cores],False,1326.978418499988,2670.566814999997,5154.0,14998,11.302369195238073,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [4 cores],True,973.6955825409968,3419.8471889999996,5397.9375,14998,15.403171452067792,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [4 cores],False,980.8837074589974,3432.970372000002,5415.75,14998,15.290293727941181,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [4 cores],False,973.964502708026,3422.130222000001,5349.8125,14998,15.3989185009303,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [8 cores],True,908.2018263750069,3519.4807300000007,6040.5625,14998,16.51395049475176,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [8 cores],False,902.0964276669838,3503.2537980000025,5989.34375,14998,16.62571709632868,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [8 cores],False,900.8927430839976,3496.3811890000025,5987.0625,14998,16.647930749955673,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [10 cores],True,898.5386080419994,3555.5156120000006,6383.390625,14998,16.69154765946236,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [10 cores],False,899.147548375011,3563.230810000001,6290.515625,14998,16.680243445144473,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [10 cores],False,898.2415704999876,3559.4951110000025,6337.25,14998,16.69706735088165,False,

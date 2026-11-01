@@ -1,0 +1,135 @@
+{
+  "machine": {
+    "os": "Darwin",
+    "os_version": "27.0.0",
+    "arch": "arm64",
+    "host": "QMBP",
+    "logical_cpus": 10,
+    "cpu": "Apple M1 Pro",
+    "ram_gb": 32,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": "/Users/marshalleq/.local/bin/vhs-decode"
+    }
+  },
+  "sample": "kirby_shielded_10min.ddd.flac",
+  "sample_info": {
+    "file": "kirby_shielded_10min.ddd.flac",
+    "bytes": 20740357295,
+    "description": "Kirby instructional video, ten minutes: minutes 30 to 40 of the capture, recorded with the Duplicator's lid on",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "29884c8c98cb1cb9"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode": "tape-decode native",
+    "exe=/Volumes/4TB_NVME/bench/generic/bin/tape-decode:tape-decode": "tape-decode generic"
+  },
+  "runs": {
+    "exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode": [
+      {
+        "wall_s": 972.6860033749836,
+        "cpu_s": 3419.549993,
+        "peak_rss_mb": 5362.953125,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 15.419158852867824,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 973.6606489169935,
+        "cpu_s": 3422.1075450000008,
+        "peak_rss_mb": 5356.640625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 15.403724096976019,
+        "cores": null,
+        "warmup": false
+      },
+      {
+        "wall_s": 972.778668666986,
+        "cpu_s": 3419.1949109999987,
+        "peak_rss_mb": 5356.703125,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 15.417690049219516,
+        "cores": null,
+        "warmup": false
+      }
+    ],
+    "exe=/Volumes/4TB_NVME/bench/generic/bin/tape-decode:tape-decode": [
+      {
+        "wall_s": 1649.3307727909996,
+        "cpu_s": 5983.307288000001,
+        "peak_rss_mb": 1164.515625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 9.093385176231427,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 1647.5280937909847,
+        "cpu_s": 5979.4484010000015,
+        "peak_rss_mb": 1175.84375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 9.103334903072515,
+        "cores": null,
+        "warmup": false
+      },
+      {
+        "wall_s": 1642.050626250013,
+        "cpu_s": 5969.119439,
+        "peak_rss_mb": 1163.421875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 9.13370133675553,
+        "cores": null,
+        "warmup": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "exe=/Users/marshalleq/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode",
+      "fps": 15.410707073097768,
+      "min": 15.403724096976019,
+      "max": 15.417690049219516,
+      "runs": 2,
+      "cpu_s": 3420.6512279999997,
+      "rss_mb": 5356.703125,
+      "hour_min": 97.33492388668698,
+      "vs_baseline": 1.6900451225119764
+    },
+    {
+      "variant": "exe=/Volumes/4TB_NVME/bench/generic/bin/tape-decode:tape-decode",
+      "fps": 9.118518119914022,
+      "min": 9.103334903072515,
+      "max": 9.13370133675553,
+      "runs": 2,
+      "cpu_s": 5974.283920000001,
+      "rss_mb": 1175.84375,
+      "hour_min": 164.5004133647698,
+      "vs_baseline": 1.0
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+exe=/Users/marshalleq/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode,True,2446.7665409589827,7197.88485,2350.890625,14998,6.129722533365077,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode,False,2447.730045332981,7203.452191999999,2293.421875,14998,6.127309679674959,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode on .lds,True,2330.0651112500054,6363.07874,1605.515625,14998,6.43672999848234,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode on .lds,False,2329.2805725840153,6362.202317000001,1613.359375,14998,6.438897991306298,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode,True,,,,,,False,the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!
+exe=/Users/marshalleq/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode,False,,,,,,False,the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!
+exe=/Users/marshalleq/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode on .lds,True,1966.390877790982,5940.411574,1834.4375,14998,7.627171265587115,False,
+exe=/Users/marshalleq/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode on .lds,False,1974.7197605830152,5963.670456999996,1936.328125,14998,7.595001731066892,False,
