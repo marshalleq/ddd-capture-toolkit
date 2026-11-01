@@ -1,25 +1,26 @@
 # DDD Capture Toolkit — An archival workflow for VHS-Decode and Domesday Duplicator
 
-**Capture, decode, compress, export, validate, archive.** Built for archivists who want to keep the original RF masters of their VHS tapes and prove cryptographically that the compressed copies are true and correct.
+**Capture, decode, export, align, archive.** Built for archivists who want true archival masters of their tapes and work through large batches of them.
 
 ![DDD Capture Toolkit](media/Images/Capture%20Toolkit%20New3.png)
 
-The toolkit grew out of a fix for the Domesday Duplicator (DdD) audio-sync problem and has since become a general-purpose batch workflow system for the entire **VHS-Decode** pipeline. If you can produce a `.lds` or `.ldf` (with or without DdD hardware), it queues, prioritises, validates and archives the rest of the work for you — decode (vhs-decode), compress (FLAC-in-LDF), export to FFV1, audio align, final mux.
+The toolkit grew out of a fix for the Domesday Duplicator (DdD) audio-sync problem, and that is still a main reason to use it: recording the DdD's RF alongside Clockgen Lite audio so the two stay in sync needs it. It has since become a general-purpose batch workflow system for the **VHS-Decode** family of decoders. It captures, decodes, exports, aligns the audio and muxes the result, and it keeps the books on every file along the way. It is for archivists who want true archival masters of their tapes and who work through large batches of them.
 
-The validation pipeline is the heart of it. A three-tier compress check (always-on structural check, optional end-to-end FLAC integrity, manual full sample-count round-trip against the source `.lds`), plus per-file SHA-256 logging, means you can safely delete raw `.lds` masters once their `.ldf` has been proven a complete lossless compression. No more "is this archive copy actually intact?" anxiety.
+Capture and decode programs are **pluggable backends**. The toolkit controls each through the same set of options (the job queue, per-project flags, CPU scheduling, progress and checks), so a new version of a supported program generally works with no changes, and a new capture or decode program needs only one small backend. Today it supports the upstream Domesday Duplicator app (`ddd-gui`) for capture, and `tape-decode` (the Rust decoder) or `vhs-decode` for decoding, each compiled for your CPU or as a prebuilt binary. See [Architecture](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Architecture).
 
 > **For full information on any topic below, see the [project wiki](https://github.com/marshalleq/ddd-capture-toolkit/wiki).** This README is a quick overview only.
 
 Headline capabilities:
 
-- **Three-tier compress validation** — structural seek check, end-to-end FLAC integrity, and a sample-count round-trip against the source `.lds`. On PASS, writes a `.ldf.verified` sidecar — the gate before you delete an original RF master.
-- **Automatic content hashing** to a per-project `_validation.log`; the matrix surfaces `HASHING` / `VALIDATED` / `STALE` / `INVALID` per step so file changes are spotted immediately, not weeks later.
-- **Non-destructive archive staging** — one command (`stage N`) moves the backup set (`.ldf`, `.ldf.validated`, original `.flac`, `.json`, `_final.mkv`, capture and validation logs, and their `.sha256` sidecars) into a `<basename>.backup/` subfolder, ready to copy to backup storage. The regenerable leftovers (`.lds`, the decode outputs `.tbc` / `_chroma.tbc` / `.tbc.json` / `.log`, `_ffv1.mkv`, `_aligned.flac`) stay at the top level to delete. Reversible.
+- **Domesday Duplicator audio sync** — the original reason for the project, and still a main one: synchronised capture of the RF and the Clockgen Lite audio (Clockgen Lite is required), automatic offset measurement, and VCR speed compensation. CLI control of the DdD software (added as part of this project) makes the synchronisation possible at all.
+- **Pluggable capture and decode backends** — the capture program and the decoder are chosen in config, each controlled through the same set of options, so new versions of supported programs generally just work, and new programs need one small backend. Each is installed compiled for your CPU or as a prebuilt binary. See the Architecture page in the wiki.
 - **Batch and auto-queuing** of pipeline jobs with hardware-aware concurrency. Queue an overnight run, walk away.
 - **Per-project flags** — decode, export, audio, compress, and segment-test options are configurable independently for each project. Different tapes get different processing — B&W vs colour, wrong field order, sub-deemphasis on noisy sources, faster validation on test runs — without touching global config.
 - **CPU-aware scheduling** — concurrent VHS-Decode jobs are pinned to disjoint L3 cache groups (CCDs on AMD, P/E clusters on Intel) so they don't fight for cache. Other CPU-heavy jobs are dynamically kept off the decode cores.
 - **Live, exact progress** computed from kernel-side byte counters (Linux `/proc`, macOS `libproc`), not estimated from compression ratios.
-- **Domesday Duplicator audio sync** — the original feature: synchronised capture with Clockgen Lite, automatic offset measurement, and VCR speed compensation. CLI control of the DdD software (added as part of this project) makes the synchronisation possible at all.
+- **Three-tier compress validation** — structural seek check, end-to-end FLAC integrity, and a sample-count round-trip against the source `.lds`. On PASS, writes a `.ldf.verified` sidecar — the gate before you delete an original RF master.
+- **Automatic content hashing** to a per-project `_validation.log`; the matrix surfaces `HASHING` / `VALIDATED` / `STALE` / `INVALID` per step so file changes are spotted immediately, not weeks later.
+- **Non-destructive archive staging** — one command (`stage N`) moves the backup set (`.ldf`, `.ldf.validated`, original `.flac`, `.json`, `_final.mkv`, capture and validation logs, and their `.sha256` sidecars) into a `<basename>.backup/` subfolder, ready to copy to backup storage. The regenerable leftovers (`.lds`, the decode outputs `.tbc` / `_chroma.tbc` / `.tbc.json` / `.log`, `_ffv1.mkv`, `_aligned.flac`) stay at the top level to delete. Reversible.
 
 ## Built for bulk archival
 
