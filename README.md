@@ -93,6 +93,7 @@ Everything beyond the quick install — workflow, individual pipeline steps, tro
 | Quick start, install to first decode | [Quick Start](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Quick-Start) |
 | Choosing the decoder (tape-decode or vhs-decode) | [Decoders](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Decoders) |
 | Install + first-time setup | [Getting Started](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Getting-Started) |
+| How the parts fit together (diagrams) | [Architecture](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Architecture) |
 | What each pipeline step does | [Pipeline Overview](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Pipeline-Overview) |
 | The main interface | [Workflow Control Centre](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Workflow-Control-Centre) |
 | Per-project decode / export / audio / compress / segment flags | [Project Flags](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Project-Flags) |
