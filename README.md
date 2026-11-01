@@ -4,7 +4,7 @@
 
 ![DDD Capture Toolkit](media/Images/Capture%20Toolkit%20New3.png)
 
-The toolkit grew out of a fix for the Domesday Duplicator (DdD) audio-sync problem, and that is still a main reason to use it: recording the DdD's RF alongside Clockgen Lite audio so the two stay in sync needs it. It has since become a general-purpose batch workflow system for the **VHS-Decode** family of decoders. It captures, decodes, exports, aligns the audio and muxes the result, and it keeps the books on every file along the way. It is for archivists who want true archival masters of their tapes and who work through large batches of them.
+The toolkit grew out of a fix for the Domesday Duplicator (DdD) audio-sync problem, and that is still a main reason to use it: recording the DdD's RF alongside Clockgen Lite audio so the two stay in sync. It has since become a general-purpose batch workflow system for the **VHS-Decode** family of decoders. It captures, decodes, exports, aligns the audio and muxes the result, and it keeps the books on every file along the way. It is for archivists who want true archival masters of their tapes and who work through large batches of them.
 
 Capture and decode programs are **pluggable backends**. The toolkit controls each through the same set of options (the job queue, per-project flags, CPU scheduling, progress and checks), so a new version of a supported program generally works with no changes, and a new capture or decode program needs only one small backend. Today it supports the upstream Domesday Duplicator app (`ddd-gui`) for capture, and `tape-decode` (the Rust decoder) or `vhs-decode` for decoding, each compiled for your CPU or as a prebuilt binary. See [Architecture](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Architecture).
 
