@@ -1,0 +1,9 @@
+{
+  "description": "Kirby instructional video, ten minutes: minutes 30 to 40 of the capture, recorded with the Duplicator's lid on",
+  "standard": "pal",
+  "player": "Philips DVP3050V",
+  "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+  "recorded": "2026-11-01",
+  "capture": "Domesday Duplicator, 40 MS/s",
+  "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's."
+}
