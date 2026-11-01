@@ -1,0 +1,135 @@
+{
+  "machine": {
+    "os": "Darwin",
+    "os_version": "27.0.0",
+    "arch": "arm64",
+    "host": "PCBuilds-MacBook-Air",
+    "logical_cpus": 8,
+    "cpu": "Apple M2",
+    "ram_gb": 16,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": null
+    }
+  },
+  "sample": "kirby_shielded_10min.ddd.flac",
+  "sample_info": {
+    "file": "kirby_shielded_10min.ddd.flac",
+    "bytes": 20740357296,
+    "description": "Kirby instructional video, ten minutes: minutes 30 to 40 of the capture, recorded with the Duplicator's lid on",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "f8c9f9c449920c80"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "exe=/Users/quentinj/bench/tape-decode-native:tape-decode": "tape-decode native",
+    "exe=/Users/quentinj/bench/tape-decode-generic:tape-decode": "tape-decode generic"
+  },
+  "runs": {
+    "exe=/Users/quentinj/bench/tape-decode-native:tape-decode": [
+      {
+        "wall_s": 1252.253799959,
+        "cpu_s": 4402.626545,
+        "peak_rss_mb": 5323.546875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 11.97680534129028,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 1245.1635572499995,
+        "cpu_s": 4384.51767,
+        "peak_rss_mb": 5344.578125,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 12.045003977729454,
+        "cores": null,
+        "warmup": false
+      },
+      {
+        "wall_s": 1236.844807292,
+        "cpu_s": 4353.632390999998,
+        "peak_rss_mb": 5344.609375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 12.12601606246563,
+        "cores": null,
+        "warmup": false
+      }
+    ],
+    "exe=/Users/quentinj/bench/tape-decode-generic:tape-decode": [
+      {
+        "wall_s": 2041.3459018750002,
+        "cpu_s": 7423.546671000001,
+        "peak_rss_mb": 1124.0625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 7.347113483424911,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 2030.350697584,
+        "cpu_s": 7385.277539999999,
+        "peak_rss_mb": 1110.734375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 7.386901197830873,
+        "cores": null,
+        "warmup": false
+      },
+      {
+        "wall_s": 2032.8420115829995,
+        "cpu_s": 7394.797400000001,
+        "peak_rss_mb": 1128.921875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 7.3778483101698935,
+        "cores": null,
+        "warmup": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "exe=/Users/quentinj/bench/tape-decode-native:tape-decode",
+      "fps": 12.085510020097542,
+      "min": 12.045003977729454,
+      "max": 12.12601606246563,
+      "runs": 2,
+      "cpu_s": 4369.075030499999,
+      "rss_mb": 5344.609375,
+      "hour_min": 124.1155729055358,
+      "vs_baseline": 1.6370762014687226
+    },
+    {
+      "variant": "exe=/Users/quentinj/bench/tape-decode-generic:tape-decode",
+      "fps": 7.3823747540003835,
+      "min": 7.3778483101698935,
+      "max": 7.386901197830873,
+      "runs": 2,
+      "cpu_s": 7390.03747,
+      "rss_mb": 1128.921875,
+      "hour_min": 203.18665063530887,
+      "vs_baseline": 1.0
+    }
+  ]
+}

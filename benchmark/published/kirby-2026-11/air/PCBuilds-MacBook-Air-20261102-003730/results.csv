@@ -1,0 +1,7 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+exe=/Users/quentinj/bench/tape-decode-native:tape-decode,True,1252.253799959,4402.626545,5323.546875,14998,11.97680534129028,False,
+exe=/Users/quentinj/bench/tape-decode-native:tape-decode,False,1245.1635572499995,4384.51767,5344.578125,14998,12.045003977729454,False,
+exe=/Users/quentinj/bench/tape-decode-native:tape-decode,False,1236.844807292,4353.632390999998,5344.609375,14998,12.12601606246563,False,
+exe=/Users/quentinj/bench/tape-decode-generic:tape-decode,True,2041.3459018750002,7423.546671000001,1124.0625,14998,7.347113483424911,False,
+exe=/Users/quentinj/bench/tape-decode-generic:tape-decode,False,2030.350697584,7385.277539999999,1110.734375,14998,7.386901197830873,False,
+exe=/Users/quentinj/bench/tape-decode-generic:tape-decode,False,2032.8420115829995,7394.797400000001,1128.921875,14998,7.3778483101698935,False,

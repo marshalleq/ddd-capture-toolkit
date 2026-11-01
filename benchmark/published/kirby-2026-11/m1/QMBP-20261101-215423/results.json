@@ -1,0 +1,225 @@
+{
+  "machine": {
+    "os": "Darwin",
+    "os_version": "27.0.0",
+    "arch": "arm64",
+    "host": "QMBP",
+    "logical_cpus": 10,
+    "cpu": "Apple M1 Pro",
+    "ram_gb": 32,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": "/Users/quentinj/.local/bin/vhs-decode"
+    }
+  },
+  "sample": "kirby_shielded_10min.ddd.flac",
+  "sample_info": {
+    "file": "kirby_shielded_10min.ddd.flac",
+    "bytes": 20740357295,
+    "description": "Kirby instructional video, ten minutes: minutes 30 to 40 of the capture, recorded with the Duplicator's lid on",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "29884c8c98cb1cb9"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    2,
+    4,
+    8,
+    10
+  ],
+  "threads": null,
+  "labels": {
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [2 cores]": "tape-decode native [2 cores]",
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [4 cores]": "tape-decode native [4 cores]",
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [8 cores]": "tape-decode native [8 cores]",
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [10 cores]": "tape-decode native [10 cores]"
+  },
+  "runs": {
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [2 cores]": [
+      {
+        "wall_s": 1327.9432175000256,
+        "cpu_s": 2672.333771,
+        "peak_rss_mb": 5178.359375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 11.294157613331619,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 1332.53840666599,
+        "cpu_s": 2665.534683000001,
+        "peak_rss_mb": 5135.890625,
+        "disturbed_by": [
+          75481
+        ],
+        "frames": 14998,
+        "fps": 11.255210300110587,
+        "cores": null,
+        "warmup": false,
+        "note": "another decode ran at the same time (pid [75481]); not counted"
+      },
+      {
+        "wall_s": 1326.978418499988,
+        "cpu_s": 2670.566814999997,
+        "peak_rss_mb": 5154.0,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 11.302369195238073,
+        "cores": null,
+        "warmup": false
+      }
+    ],
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [4 cores]": [
+      {
+        "wall_s": 973.6955825409968,
+        "cpu_s": 3419.8471889999996,
+        "peak_rss_mb": 5397.9375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 15.403171452067792,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 980.8837074589974,
+        "cpu_s": 3432.970372000002,
+        "peak_rss_mb": 5415.75,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 15.290293727941181,
+        "cores": null,
+        "warmup": false
+      },
+      {
+        "wall_s": 973.964502708026,
+        "cpu_s": 3422.130222000001,
+        "peak_rss_mb": 5349.8125,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 15.3989185009303,
+        "cores": null,
+        "warmup": false
+      }
+    ],
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [8 cores]": [
+      {
+        "wall_s": 908.2018263750069,
+        "cpu_s": 3519.4807300000007,
+        "peak_rss_mb": 6040.5625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 16.51395049475176,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 902.0964276669838,
+        "cpu_s": 3503.2537980000025,
+        "peak_rss_mb": 5989.34375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 16.62571709632868,
+        "cores": null,
+        "warmup": false
+      },
+      {
+        "wall_s": 900.8927430839976,
+        "cpu_s": 3496.3811890000025,
+        "peak_rss_mb": 5987.0625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 16.647930749955673,
+        "cores": null,
+        "warmup": false
+      }
+    ],
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [10 cores]": [
+      {
+        "wall_s": 898.5386080419994,
+        "cpu_s": 3555.5156120000006,
+        "peak_rss_mb": 6383.390625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 16.69154765946236,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 899.147548375011,
+        "cpu_s": 3563.230810000001,
+        "peak_rss_mb": 6290.515625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 16.680243445144473,
+        "cores": null,
+        "warmup": false
+      },
+      {
+        "wall_s": 898.2415704999876,
+        "cpu_s": 3559.4951110000025,
+        "peak_rss_mb": 6337.25,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 16.69706735088165,
+        "cores": null,
+        "warmup": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [2 cores]",
+      "fps": 11.302369195238073,
+      "min": 11.302369195238073,
+      "max": 11.302369195238073,
+      "runs": 1,
+      "cpu_s": 2670.566814999997,
+      "rss_mb": 5154.0,
+      "hour_min": 132.7155372549661
+    },
+    {
+      "variant": "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [4 cores]",
+      "fps": 15.344606114435742,
+      "min": 15.290293727941181,
+      "max": 15.3989185009303,
+      "runs": 2,
+      "cpu_s": 3427.5502970000016,
+      "rss_mb": 5415.75,
+      "hour_min": 97.75421987462066
+    },
+    {
+      "variant": "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [8 cores]",
+      "fps": 16.636823923142174,
+      "min": 16.62571709632868,
+      "max": 16.647930749955673,
+      "runs": 2,
+      "cpu_s": 3499.8174935000025,
+      "rss_mb": 5989.34375,
+      "hour_min": 90.16143988357467
+    },
+    {
+      "variant": "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode [10 cores]",
+      "fps": 16.68865539801306,
+      "min": 16.680243445144473,
+      "max": 16.69706735088165,
+      "runs": 2,
+      "cpu_s": 3561.3629605000015,
+      "rss_mb": 6337.25,
+      "hour_min": 89.88141729971781
+    }
+  ]
+}

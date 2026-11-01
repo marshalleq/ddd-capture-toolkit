@@ -1,0 +1,161 @@
+{
+  "machine": {
+    "os": "Darwin",
+    "os_version": "27.0.0",
+    "arch": "arm64",
+    "host": "QMBP",
+    "logical_cpus": 10,
+    "cpu": "Apple M1 Pro",
+    "ram_gb": 32,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": "/Users/quentinj/.local/bin/vhs-decode"
+    }
+  },
+  "sample": "kirby_shielded_10min.ddd.flac",
+  "sample_info": {
+    "file": "kirby_shielded_10min.ddd.flac",
+    "bytes": 20740357295,
+    "description": "Kirby instructional video, ten minutes: minutes 30 to 40 of the capture, recorded with the Duplicator's lid on",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "29884c8c98cb1cb9"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "exe=/Users/quentinj/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode": "vhs-decode v0.4.0",
+    "exe=/Users/quentinj/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode on .lds": "vhs-decode v0.4.0 on .lds",
+    "exe=/Users/quentinj/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode": "vhs-decode March 2026",
+    "exe=/Users/quentinj/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode on .lds": "vhs-decode March 2026 on .lds"
+  },
+  "runs": {
+    "exe=/Users/quentinj/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode": [
+      {
+        "wall_s": 2446.7665409589827,
+        "cpu_s": 7197.88485,
+        "peak_rss_mb": 2350.890625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 6.129722533365077,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 2447.730045332981,
+        "cpu_s": 7203.452191999999,
+        "peak_rss_mb": 2293.421875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 6.127309679674959,
+        "cores": null,
+        "warmup": false
+      }
+    ],
+    "exe=/Users/quentinj/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode on .lds": [
+      {
+        "wall_s": 2330.0651112500054,
+        "cpu_s": 6363.07874,
+        "peak_rss_mb": 1605.515625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 6.43672999848234,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 2329.2805725840153,
+        "cpu_s": 6362.202317000001,
+        "peak_rss_mb": 1613.359375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 6.438897991306298,
+        "cores": null,
+        "warmup": false
+      }
+    ],
+    "exe=/Users/quentinj/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode": [
+      {
+        "error": "the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!",
+        "warmup": true
+      },
+      {
+        "error": "the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!",
+        "warmup": false
+      }
+    ],
+    "exe=/Users/quentinj/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode on .lds": [
+      {
+        "wall_s": 1966.390877790982,
+        "cpu_s": 5940.411574,
+        "peak_rss_mb": 1834.4375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 7.627171265587115,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 1974.7197605830152,
+        "cpu_s": 5963.670456999996,
+        "peak_rss_mb": 1936.328125,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 7.595001731066892,
+        "cores": null,
+        "warmup": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "exe=/Users/quentinj/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode",
+      "fps": 6.127309679674959,
+      "min": 6.127309679674959,
+      "max": 6.127309679674959,
+      "runs": 1,
+      "cpu_s": 7203.452191999999,
+      "rss_mb": 2293.421875,
+      "hour_min": 244.80564528600289
+    },
+    {
+      "variant": "exe=/Users/quentinj/projects/VHS/bench-mac/new-venv/bin/vhs-decode:vhs-decode on .lds",
+      "fps": 6.438897991306298,
+      "min": 6.438897991306298,
+      "max": 6.438897991306298,
+      "runs": 1,
+      "cpu_s": 6362.202317000001,
+      "rss_mb": 1613.359375,
+      "hour_min": 232.95911847419808
+    },
+    {
+      "variant": "exe=/Users/quentinj/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode",
+      "error": "the decode finished but wrote no usable .tbc.json: Completed without handling any frames.; Error! Something went wrong when decoding or building json!"
+    },
+    {
+      "variant": "exe=/Users/quentinj/projects/VHS/bench-mac/old-venv/bin/vhs-decode:vhs-decode on .lds",
+      "fps": 7.595001731066892,
+      "min": 7.595001731066892,
+      "max": 7.595001731066892,
+      "runs": 1,
+      "cpu_s": 5963.670456999996,
+      "rss_mb": 1936.328125,
+      "hour_min": 197.49830916619035
+    }
+  ]
+}

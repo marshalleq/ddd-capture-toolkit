@@ -46,38 +46,47 @@ Easy mode installs prebuilt programs and is working in five minutes. **Performan
 decoder for your exact CPU, and a tape you decode overnight finishes in about half the time.** You pay once,
 at install, and every decode after that is faster.
 
-Measured on one decode of a 26 second PAL capture, pinned to four cores of a Ryzen 9 9950X3D:
+Measured on a real 52 minute PAL capture (77,916 frames), four cores or threads per decode, `tape-decode` compiled
+for the CPU. Each figure is the speed of the whole decode:
 
-| Decoder | Easy mode | Performance mode | Time for one hour of tape |
-|---|---|---|---|
-| **tape-decode** (the default) | 19 frames/s | **35 frames/s** (1.8× faster) | 77 minutes → **43 minutes** |
-| vhs-decode | 8.0 frames/s | 8.6 frames/s (7% faster) | 3.1 hours → 2.9 hours |
+| Machine | Frames/s | Time for one hour of tape |
+|---|---|---|
+| Ryzen 9 9950X3D | **30.0** | **50 minutes** |
+| Apple M1 Pro | **19.9** | **75 minutes** |
+| Ryzen 7 5800X | **15.9** | **94 minutes** |
+| Apple M2 (Air) | **15.6** | **96 minutes** |
 
-The compiler's CPU-specific instructions matter a great deal for `tape-decode`: a generic build with none of
-them managed 7.6 frames/s on the same capture. Part of the gap in the table is also that performance mode
-builds the decoder's current source while easy mode takes its latest release, which is older. The figures
-are for the decode step only; the other steps were not measured. 
-
-All the builds we measured, on every machine we tried:
+Speed depends on the tape. The same machines decode the stretch of that capture from minute 5 to 15 about 1.6 to
+1.9 times faster than the stretch from minute 30 to 40. The table below uses minutes 30 to 40 (ten minutes, 15,000
+frames), the slower of the two, so treat it as a cautious figure for a hard tape:
 
 | Build (frames per second, higher is faster) | Ryzen 9 9950X3D | Ryzen 7 5800X | Apple M1 Pro | Apple M2 (Air) |
 |---|---|---|---|---|
-| **tape-decode**, compiled for the CPU (current source) | **35** | **25** | **28.5** | **30** |
-| tape-decode, easy-mode release (best x86-64 build for the CPU) | 19 | 13 | not built | not built |
-| tape-decode, generic x86-64 build | 7.6 | 5.9 | n/a | n/a |
-| vhs-decode v0.4.0, compiled | 8.6 | 4.6 | 5.2* | not tried |
-| vhs-decode v0.4.0, easy-mode AppImage | 8.0 | 4.5 | n/a | n/a |
-| vhs-decode March 2026, compiled | 12.3 | 6.7* | 7.1* | not tried |
+| **tape-decode**, compiled for the CPU | **22.9** | **12.8** | **15.4** | **12.1** |
+| tape-decode, easy-mode release (best x86-64 build for the CPU) | 9.9 | 6.4 | n/a | n/a |
+| tape-decode, generic build (no CPU-specific instructions) | 9.1 | 6.7 | 9.1 | 7.4 |
+| vhs-decode v0.4.0, compiled | 9.2 | 5.2 | 6.1 | not tried |
+| vhs-decode March 2026, compiled (reading `.lds`) | 13.0 | 7.2 | 7.6 | not tried |
 
-Each figure is a typical result of two to six decodes of the same 26 second PAL capture (668 frames, FLAC), using four cores or
-threads. On the two Ryzens the decode is pinned to four cores; the Macs cannot pin, so they get four
-threads with the rest of the chip free. An hour of PAL is 90,000 frames, so divide by the figure: 35 frames/s
-is 43 minutes, 8.6 is 2.9 hours, 4.6 is 5.4 hours. With eight threads `tape-decode` reaches about 43 on the
-9950X3D, 42 on the M1 Pro and 36 on the M2. Figures marked * were measured on a 10 second sample
-instead (the M1 Pro `vhs-decode` rows, and the March 2026 row on the 5800X), where start-up time lowers every
-result a little; the rest are the 26 second capture. On the M1 Pro the March 2026 build read an uncompressed
-`.lds` and v0.4.0 read FLAC. The Air has no Python, so it was only run with `tape-decode`. The M2 binary was built on the M1 Mac
-for the M2 chip (`target-cpu=apple-m2`).
+On this section, compiling `tape-decode` for your CPU is **2.0 to 2.3 times faster than easy mode** (an hour of
+tape in 65 minutes instead of 2.5 hours on the 9950X3D) and about **2.5 times faster than `vhs-decode`**. The generic
+build shows how much of that is the compiler's CPU-specific instructions: 1.6 to 2.5 times. Part of the easy-mode
+gap is also that performance mode builds the decoder's current source while easy mode takes its latest release, which is older.
+The figures are for the decode step only.
+
+Recording at 20 million samples a second instead of 40 decodes faster again: 39.6 frames/s against 22.9 on the
+9950X3D, 20.0 against 12.8 on the 5800X and 28.1 against 15.4 on the M1 Pro.
+
+An hour of PAL is 90,000 frames, so divide by the figure. The 10 minute `tape-decode` figures are the mean of two
+runs and `vhs-decode` was run once. The full capture was run twice on the 9950X3D; on the other three the first run
+was set aside because the tool wrongly thought another decode was running (the two runs agreed within 3%). The raw
+results are in [benchmark/published/kirby-2026-11](benchmark/published/kirby-2026-11). Linux decodes are pinned
+to four cores. The Macs cannot pin, so they get four threads with the rest of the chip free. The M2 binary was built on
+the M1 Mac for the M2 chip (`target-cpu=apple-m2`). Speed stops improving at about eight cores on every machine
+(the Air barely improves beyond two), and the toolkit gives each decode four.
+
+Earlier, on a single 26 second capture, `tape-decode` reached 35, 25, 28.5 and 30 frames/s on the same four machines. Short samples
+flatter the decoder, so use the table above.
 
 Full results and method: [Decoders](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Decoders).
 

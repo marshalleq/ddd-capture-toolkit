@@ -1,0 +1,17 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+tape-decode@native,True,656.9344833739888,2418.184919,731.66015625,14998,22.83028274443881,False,
+tape-decode@native,False,651.7547995810019,2406.522449,734.05859375,14998,23.011721600887125,False,
+tape-decode@native,False,656.9162720869936,2420.455953000001,713.30859375,14998,22.830915654367985,False,
+ffmpeg@release export,True,,,,,,False,exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'
+ffmpeg@release export,False,,,,,,False,exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'
+ffmpeg@release export,False,,,,,,False,exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'
+ffmpeg@native export,True,,,,,,False,exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'
+ffmpeg@native export,False,,,,,,False,exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'
+ffmpeg@native export,False,,,,,,False,exit code 1:     from tbc_video_export.__main__ import main; ModuleNotFoundError: No module named 'tbc_video_export'
+ffmpeg@release mux,True,,,,,,False,no exported video to mux (the export step failed)
+ffmpeg@release mux,False,,,,,,False,no exported video to mux (the export step failed)
+ffmpeg@release mux,False,,,,,,False,no exported video to mux (the export step failed)
+ffmpeg@native mux,True,,,,,,False,no exported video to mux (the export step failed)
+ffmpeg@native mux,False,,,,,,False,no exported video to mux (the export step failed)
+ffmpeg@native mux,False,,,,,,False,no exported video to mux (the export step failed)
+ffmpeg@generic,,,,,,,False,build failed (curl: (28) Failed to connect to ffmpeg.org:443 after 135933 ms: Could not connect to server [0;31m[ERROR][0m Failed to download FFmpeg source [0;31m[ERROR][0m FFmpeg build failed); see /mnt/nvme2tb/bench-work/ffmpeg_generic/build.log

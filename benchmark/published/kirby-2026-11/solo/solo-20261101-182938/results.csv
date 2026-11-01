@@ -1,0 +1,3 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+tape-decode@native,False,4841.656398747,16686.98358,770.015625,77916,16.092839636485632,True,
+tape-decode@native,False,4892.339169904008,16600.604947,777.1171875,77916,15.926123944822244,False,

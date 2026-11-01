@@ -1,0 +1,90 @@
+{
+  "machine": {
+    "os": "Darwin",
+    "os_version": "27.0.0",
+    "arch": "arm64",
+    "host": "QMBP",
+    "logical_cpus": 10,
+    "cpu": "Apple M1 Pro",
+    "ram_gb": 32,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": "/Users/quentinj/.local/bin/vhs-decode"
+    }
+  },
+  "sample": "sample_20msps.ddd.flac",
+  "sample_info": {
+    "file": "kirby_shielded_10min.ddd.flac",
+    "bytes": 20740357295,
+    "description": "Kirby instructional video, ten minutes: minutes 30 to 40 of the capture, recorded with the Duplicator's lid on",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "29884c8c98cb1cb9"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": 20.0
+  },
+  "rate_mhz": 20.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode": "tape-decode native"
+  },
+  "runs": {
+    "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode": [
+      {
+        "wall_s": 534.5691155410022,
+        "cpu_s": 1910.814023,
+        "peak_rss_mb": 2837.234375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 28.056241118272442,
+        "cores": null,
+        "warmup": true
+      },
+      {
+        "wall_s": 533.3925600829825,
+        "cpu_s": 1908.6232090000003,
+        "peak_rss_mb": 2838.140625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 28.118127477568652,
+        "cores": null,
+        "warmup": false
+      },
+      {
+        "wall_s": 535.4313686669921,
+        "cpu_s": 1915.9864080000002,
+        "peak_rss_mb": 2882.578125,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 28.01105963839766,
+        "cores": null,
+        "warmup": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode",
+      "fps": 28.06459355798316,
+      "min": 28.01105963839766,
+      "max": 28.118127477568652,
+      "runs": 2,
+      "cpu_s": 1912.3048085000003,
+      "rss_mb": 2882.578125,
+      "hour_min": 53.448128400680694
+    }
+  ]
+}

@@ -1,0 +1,254 @@
+{
+  "machine": {
+    "os": "Linux",
+    "os_version": "7.2.13-200.fc44.x86_64",
+    "arch": "x86_64",
+    "host": "solo",
+    "logical_cpus": 16,
+    "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+    "ram_gb": 31,
+    "installed": {
+      "tape-decode": "/home/quentinj/anaconda3/envs/ddd-capture-toolkit/bin/tape-decode",
+      "vhs-decode": "/home/quentinj/anaconda3/envs/ddd-capture-toolkit/bin/vhs-decode"
+    }
+  },
+  "sample": "kirby_shielded_10min.ddd.flac",
+  "sample_info": {
+    "file": "kirby_shielded_10min.ddd.flac",
+    "bytes": 20740357296,
+    "description": "Kirby instructional video, ten minutes: minutes 30 to 40 of the capture, recorded with the Duplicator's lid on",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s",
+    "notes": "Cut from Kirby_The_Ultimate_G_Series.ddd.flac (sha256 aa9d2242537722fd4e0b716eedaa2530f833233f24767218d883cba8a887e625) and re-encoded at FLAC level 8, so the decoded samples are identical to the original's.",
+    "duration_s": 600.0,
+    "fingerprint": "f8c9f9c449920c80"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "tape-decode@native": "tape-decode native",
+    "ffmpeg@release export": "ffmpeg release export",
+    "ffmpeg@generic export": "ffmpeg generic export",
+    "ffmpeg@release mux": "ffmpeg release mux",
+    "ffmpeg@generic mux": "ffmpeg generic mux",
+    "ffmpeg@native": "ffmpeg native"
+  },
+  "runs": {
+    "tape-decode@native": [
+      {
+        "wall_s": 1182.2193114929978,
+        "cpu_s": 4109.333895,
+        "peak_rss_mb": 742.91015625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 12.686309430235383,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": true
+      },
+      {
+        "wall_s": 1168.0349638999905,
+        "cpu_s": 4140.711727999998,
+        "peak_rss_mb": 732.0546875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 12.840369050188945,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": false
+      },
+      {
+        "wall_s": 1175.1937835260032,
+        "cpu_s": 4118.143834999999,
+        "peak_rss_mb": 730.5,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 12.762150557842993,
+        "cores": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "warmup": false
+      }
+    ],
+    "ffmpeg@release export": [
+      {
+        "wall_s": 178.32826925900008,
+        "cpu_s": 1750.6757500000003,
+        "peak_rss_mb": 10895.671875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 84.10332283445892,
+        "warmup": true
+      },
+      {
+        "wall_s": 145.10778582800413,
+        "cpu_s": 1699.1547810000002,
+        "peak_rss_mb": 11171.87109375,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 103.35765179255846,
+        "warmup": false
+      },
+      {
+        "wall_s": 159.44137874500302,
+        "cpu_s": 1715.8108510000022,
+        "peak_rss_mb": 10898.85546875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 94.06592013975572,
+        "warmup": false
+      }
+    ],
+    "ffmpeg@generic export": [
+      {
+        "wall_s": 170.53539053100394,
+        "cpu_s": 1713.1498419999998,
+        "peak_rss_mb": 10884.25390625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 87.94655439730154,
+        "warmup": true
+      },
+      {
+        "wall_s": 178.43102280099993,
+        "cpu_s": 1735.3924890000023,
+        "peak_rss_mb": 10916.76171875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 84.05489003292286,
+        "warmup": false
+      },
+      {
+        "wall_s": 137.2899533210002,
+        "cpu_s": 1701.5358069999988,
+        "peak_rss_mb": 10862.38671875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 109.24324495131042,
+        "warmup": false
+      }
+    ],
+    "ffmpeg@release mux": [
+      {
+        "error": "this ffmpeg was built without libsoxr, which the final mux needs",
+        "warmup": true
+      },
+      {
+        "error": "this ffmpeg was built without libsoxr, which the final mux needs",
+        "warmup": false
+      },
+      {
+        "error": "this ffmpeg was built without libsoxr, which the final mux needs",
+        "warmup": false
+      }
+    ],
+    "ffmpeg@generic mux": [
+      {
+        "wall_s": 54.81737158499891,
+        "cpu_s": 10.127909000000159,
+        "peak_rss_mb": 77.640625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 273.5994004518139,
+        "warmup": true
+      },
+      {
+        "wall_s": 16.253602607001085,
+        "cpu_s": 9.59210099999791,
+        "peak_rss_mb": 75.06640625,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 922.749273661936,
+        "warmup": false
+      },
+      {
+        "wall_s": 26.394402514997637,
+        "cpu_s": 9.76728200000116,
+        "peak_rss_mb": 77.8046875,
+        "disturbed_by": [],
+        "frames": 14998,
+        "fps": 568.226539376216,
+        "warmup": false
+      }
+    ],
+    "ffmpeg@native": [
+      {
+        "error": "build failed (curl: (35) Recv failure: Connection reset by peer \u001b[0;31m[ERROR]\u001b[0m Failed to download FFmpeg source \u001b[0;31m[ERROR]\u001b[0m FFmpeg build failed); see /mnt/1TB/bench-work/ffmpeg_native/build.log"
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "tape-decode@native",
+      "fps": 12.80125980401597,
+      "min": 12.762150557842993,
+      "max": 12.840369050188945,
+      "runs": 2,
+      "cpu_s": 4129.427781499999,
+      "rss_mb": 732.0546875,
+      "hour_min": 117.1759672848312
+    },
+    {
+      "variant": "ffmpeg@release export",
+      "fps": 98.7117859661571,
+      "min": 94.06592013975572,
+      "max": 103.35765179255846,
+      "runs": 2,
+      "cpu_s": 1707.482816000001,
+      "rss_mb": 11171.87109375,
+      "hour_min": 15.195753833430473
+    },
+    {
+      "variant": "ffmpeg@generic export",
+      "fps": 96.64906749211664,
+      "min": 84.05489003292286,
+      "max": 109.24324495131042,
+      "runs": 2,
+      "cpu_s": 1718.4641480000005,
+      "rss_mb": 10916.76171875,
+      "hour_min": 15.520066969320219
+    },
+    {
+      "variant": "ffmpeg@release mux",
+      "error": "this ffmpeg was built without libsoxr, which the final mux needs"
+    },
+    {
+      "variant": "ffmpeg@generic mux",
+      "fps": 745.487906519076,
+      "min": 568.226539376216,
+      "max": 922.749273661936,
+      "runs": 2,
+      "cpu_s": 9.679691499999535,
+      "rss_mb": 77.8046875,
+      "hour_min": 2.012105074921986
+    },
+    {
+      "variant": "ffmpeg@native",
+      "error": "build failed (curl: (35) Recv failure: Connection reset by peer \u001b[0;31m[ERROR]\u001b[0m Failed to download FFmpeg source \u001b[0;31m[ERROR]\u001b[0m FFmpeg build failed); see /mnt/1TB/bench-work/ffmpeg_native/build.log"
+    }
+  ]
+}

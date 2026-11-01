@@ -1,0 +1,4 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode,True,534.5691155410022,1910.814023,2837.234375,14998,28.056241118272442,False,
+exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode,False,533.3925600829825,1908.6232090000003,2838.140625,14998,28.118127477568652,False,
+exe=/Users/quentinj/projects/VHS/bench-mac/td-nz/target/release/tape-decode:tape-decode,False,535.4313686669921,1915.9864080000002,2882.578125,14998,28.01105963839766,False,

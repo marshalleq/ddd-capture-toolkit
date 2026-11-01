@@ -1,0 +1,17 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+tape-decode@native,True,1182.2193114929978,4109.333895,742.91015625,14998,12.686309430235383,False,
+tape-decode@native,False,1168.0349638999905,4140.711727999998,732.0546875,14998,12.840369050188945,False,
+tape-decode@native,False,1175.1937835260032,4118.143834999999,730.5,14998,12.762150557842993,False,
+ffmpeg@release export,True,178.32826925900008,1750.6757500000003,10895.671875,14998,84.10332283445892,False,
+ffmpeg@release export,False,145.10778582800413,1699.1547810000002,11171.87109375,14998,103.35765179255846,False,
+ffmpeg@release export,False,159.44137874500302,1715.8108510000022,10898.85546875,14998,94.06592013975572,False,
+ffmpeg@generic export,True,170.53539053100394,1713.1498419999998,10884.25390625,14998,87.94655439730154,False,
+ffmpeg@generic export,False,178.43102280099993,1735.3924890000023,10916.76171875,14998,84.05489003292286,False,
+ffmpeg@generic export,False,137.2899533210002,1701.5358069999988,10862.38671875,14998,109.24324495131042,False,
+ffmpeg@release mux,True,,,,,,False,"this ffmpeg was built without libsoxr, which the final mux needs"
+ffmpeg@release mux,False,,,,,,False,"this ffmpeg was built without libsoxr, which the final mux needs"
+ffmpeg@release mux,False,,,,,,False,"this ffmpeg was built without libsoxr, which the final mux needs"
+ffmpeg@generic mux,True,54.81737158499891,10.127909000000159,77.640625,14998,273.5994004518139,False,
+ffmpeg@generic mux,False,16.253602607001085,9.59210099999791,75.06640625,14998,922.749273661936,False,
+ffmpeg@generic mux,False,26.394402514997637,9.76728200000116,77.8046875,14998,568.226539376216,False,
+ffmpeg@native,,,,,,,False,build failed (curl: (35) Recv failure: Connection reset by peer [0;31m[ERROR][0m Failed to download FFmpeg source [0;31m[ERROR][0m FFmpeg build failed); see /mnt/1TB/bench-work/ffmpeg_native/build.log

@@ -1,0 +1,83 @@
+{
+  "machine": {
+    "os": "Darwin",
+    "os_version": "27.0.0",
+    "arch": "arm64",
+    "host": "PCBuilds-Air",
+    "logical_cpus": 8,
+    "cpu": "Apple M2",
+    "ram_gb": 16,
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": null
+    }
+  },
+  "sample": "Kirby_The_Ultimate_G_Series.ddd.flac",
+  "sample_info": {
+    "file": "Kirby_The_Ultimate_G_Series.ddd.flac",
+    "bytes": 106922712715,
+    "description": "Kirby instructional video, a static, repetitive picture",
+    "standard": "pal",
+    "player": "Philips DVP3050V",
+    "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+    "recorded": "2026-11-01",
+    "capture": "Domesday Duplicator, 40 MS/s, 52 minutes, no dropped words",
+    "notes": "The first 20 minutes were recorded with the Duplicator's lid off, so without its top shielding; the rest with the lid on. Zero device overflow events.",
+    "duration_s": 3116.7,
+    "fingerprint": "ca469e136f3797f6"
+  },
+  "processing": {
+    "seconds": null,
+    "start": 5,
+    "repeat_to": null,
+    "resample_to": null
+  },
+  "rate_mhz": 40.0,
+  "standard": "pal",
+  "cores": [
+    4
+  ],
+  "threads": null,
+  "labels": {
+    "exe=/Users/quentinj/bench/tape-decode-native:tape-decode": "tape-decode native"
+  },
+  "runs": {
+    "exe=/Users/quentinj/bench/tape-decode-native:tape-decode": [
+      {
+        "wall_s": 4837.571284333,
+        "cpu_s": 17103.248934999996,
+        "peak_rss_mb": 5671.40625,
+        "disturbed_by": [
+          11456
+        ],
+        "frames": 77916,
+        "fps": 16.10642932587669,
+        "cores": null,
+        "warmup": false,
+        "note": "another decode ran at the same time (pid [11456]); not counted"
+      },
+      {
+        "wall_s": 4979.3809734999995,
+        "cpu_s": 17582.415955000004,
+        "peak_rss_mb": 6453.90625,
+        "disturbed_by": [],
+        "frames": 77916,
+        "fps": 15.647728184419872,
+        "cores": null,
+        "warmup": false
+      }
+    ]
+  },
+  "summary": [
+    {
+      "variant": "exe=/Users/quentinj/bench/tape-decode-native:tape-decode",
+      "fps": 15.647728184419872,
+      "min": 15.647728184419872,
+      "max": 15.647728184419872,
+      "runs": 1,
+      "cpu_s": 17582.415955000004,
+      "rss_mb": 6453.90625,
+      "hour_min": 95.86056086362235
+    }
+  ]
+}

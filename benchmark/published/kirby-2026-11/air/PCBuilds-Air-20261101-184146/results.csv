@@ -1,0 +1,3 @@
+variant,warmup,wall_s,cpu_s,peak_rss_mb,frames,fps,disturbed,error
+exe=/Users/quentinj/bench/tape-decode-native:tape-decode,False,4837.571284333,17103.248934999996,5671.40625,77916,16.10642932587669,True,
+exe=/Users/quentinj/bench/tape-decode-native:tape-decode,False,4979.3809734999995,17582.415955000004,6453.90625,77916,15.647728184419872,False,
