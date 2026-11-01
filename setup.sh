@@ -601,6 +601,8 @@ if command -v conda &> /dev/null; then
             fi
         else
             # No prebuilt command-line bundle is installed on this platform; PyPI is what is left.
+            log_error "On $OS easy mode has no tape-decode, the toolkit's default decoder (there is no prebuilt one)."
+            log_error "Run ./setup.sh --performance to build it, or set \"decoder_backend\": \"vhs-decode\" in config/config.json."
             log_warning "On $OS easy mode installs vhs-decode from PyPI, which is 0.3.8.1 (the current release is v0.4.0)."
             log_warning "That version can crash under NumPy 2. ./setup.sh --performance builds the current release instead."
             conda run -n ddd-capture-toolkit pip install --upgrade vhs-decode || {
@@ -835,7 +837,7 @@ if [[ "$INSTALL_MODE" == "performance" ]]; then
         fi
 
         # The Rust decoder (namazso/tape-decode-rs), compiled for this CPU
-        if [[ "$(uname -s)" == "Linux" && -x "build-scripts/install-tape-decode.sh" ]]; then
+        if [[ -x "build-scripts/install-tape-decode.sh" ]]; then
             tape_env_path=$(conda env list | awk '$1=="ddd-capture-toolkit" {print $NF}' | head -n1)
             tape_args="--mode performance --prefix $tape_env_path"
             [[ "$build_args" == *--safe* ]] && tape_args="$tape_args --safe"

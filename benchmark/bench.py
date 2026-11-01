@@ -249,6 +249,53 @@ def build(variant, work, log):
 
 # ---------------------------------------------------------------- samples
 
+SAMPLES_DIR = os.path.join(HERE, 'samples')
+
+
+def resolve_sample(arg):
+    """A path to a capture, or the name of one dropped into benchmark/samples/."""
+    if os.path.isfile(arg):
+        return os.path.abspath(arg)
+    for candidate in (arg, arg + '.ddd.flac'):
+        path = os.path.join(SAMPLES_DIR, candidate)
+        if os.path.isfile(path):
+            return path
+    available = list_samples()
+    sys.exit(f"sample not found: {arg}\n" + ("samples in benchmark/samples/: " + ', '.join(available) if available
+             else "benchmark/samples/ is empty: drop a .ddd.flac there (see benchmark/samples/README.md)"))
+
+
+def list_samples():
+    if not os.path.isdir(SAMPLES_DIR):
+        return []
+    return sorted(f for f in os.listdir(SAMPLES_DIR) if f.endswith(('.ddd.flac', '.ddd.s16')))
+
+
+def describe_sample(path):
+    """What identifies a sample in published results: its sidecar notes (<name>.sample.json beside it),
+    size, length, and a fingerprint (hash of the first 64 MiB plus the size) so two people can tell
+    whether they measured the same file."""
+    import hashlib
+    import rf_formats
+    info = {'file': os.path.basename(path), 'bytes': os.path.getsize(path)}
+    sidecar = rf_formats.rf_base_path(path) + '.sample.json'
+    if os.path.isfile(sidecar):
+        try:
+            with open(sidecar) as f:
+                info.update(json.load(f))
+        except (OSError, ValueError) as e:
+            sys.exit(f"cannot read {sidecar}: {e}")
+    duration = rf_formats.capture_duration_seconds(path)
+    if duration:
+        info['duration_s'] = round(duration, 1)
+    digest = hashlib.sha256()
+    with open(path, 'rb') as f:
+        digest.update(f.read(64 << 20))
+    digest.update(str(info['bytes']).encode())
+    info['fingerprint'] = digest.hexdigest()[:16]
+    return info
+
+
 def make_sample(source, seconds, start, out_dir, log):
     """Cut `seconds` of capture from a .ddd.flac. (A FLAC capture labels its rate 40000, so a real
     second is 1000 label seconds.)"""
@@ -541,7 +588,8 @@ def scaling_table(tasks, rows):
 def main(argv=None):
     p = argparse.ArgumentParser(description="Benchmark decoder and ffmpeg builds on this machine",
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split('Variants')[1])
-    p.add_argument('--sample', required=True, help="a .ddd.flac capture to decode")
+    p.add_argument('--sample', help="a .ddd.flac capture, or the name of one in benchmark/samples/")
+    p.add_argument('--list-samples', action='store_true', help="show the samples in benchmark/samples/ and exit")
     p.add_argument('--seconds', type=float, help="cut this many seconds from the capture and use that (default: all of it)")
     p.add_argument('--start', type=float, default=5, help="where the cut starts, in seconds (default 5)")
     p.add_argument('--resample-to', type=float, metavar='MHZ',
@@ -558,13 +606,20 @@ def main(argv=None):
                         "count and adds a scaling table")
     p.add_argument('--threads', type=int, default=None,
                    help="the toolkit's decode thread setting (default: one less than the cores, as the toolkit does)")
-    p.add_argument('--standard', choices=('pal', 'ntsc'), default='pal')
+    p.add_argument('--standard', choices=('pal', 'ntsc'), default=None,
+                   help="video standard (default: the sample's notes say, else pal)")
     p.add_argument('--baseline', help="variant to compare the others with")
     p.add_argument('--lds', action='store_true', help="also run vhs-decode builds on an uncompressed .lds copy of the sample")
     p.add_argument('--work', default=os.path.join(HERE, 'work'), help="scratch folder (builds, outputs)")
     p.add_argument('--results', default=os.path.join(HERE, 'results'), help="where to write the results")
     p.add_argument('--keep-work', action='store_true', help="keep builds and logs afterwards")
     args = p.parse_args(argv)
+    if args.list_samples:
+        found = list_samples()
+        print('\n'.join(found) if found else "benchmark/samples/ is empty")
+        return 0
+    if not args.sample:
+        p.error("--sample is required (a path, or a name from --list-samples)")
     try:
         core_counts = [int(c) for c in args.cores.split(',') if c.strip()]
     except ValueError:
@@ -579,9 +634,15 @@ def main(argv=None):
     log(f"{machine.get('host')}: {machine.get('cpu')}, {machine.get('logical_cpus')} threads, "
         f"{machine.get('ram_gb', '?')} GB, {machine['os']} {machine['arch']}")
 
-    sample = os.path.abspath(args.sample)
-    if not os.path.isfile(sample):
-        sys.exit(f"sample not found: {sample}")
+    sample = resolve_sample(args.sample)
+    sample_info = describe_sample(sample)
+    if not args.standard:
+        args.standard = sample_info.get('standard', 'pal')
+    log(f"sample: {sample_info['file']} ({sample_info.get('duration_s', '?')} s, {sample_info['bytes'] / 1e9:.1f} GB, "
+        f"{args.standard.upper()}, fingerprint {sample_info['fingerprint']})"
+        + (f", {sample_info['description']}" if sample_info.get('description') else ''))
+    if sample_info['bytes'] > 0.5 * shutil.disk_usage(work).free and (args.seconds or args.repeat_to or args.resample_to or args.lds):
+        log("  warning: less than twice the sample's size is free in the work folder; copies made from it may not fit")
     if args.seconds:
         sample = make_sample(sample, args.seconds, args.start, work, log)
     if args.repeat_to:
@@ -695,7 +756,10 @@ def main(argv=None):
     out_dir = os.path.join(os.path.abspath(args.results), f"{machine.get('host')}-{stamp}")
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, 'results.json'), 'w') as f:
-        json.dump({'machine': machine, 'sample': os.path.basename(sample), 'rate_mhz': rate_mhz, 'standard': args.standard,
+        json.dump({'machine': machine, 'sample': os.path.basename(sample), 'sample_info': sample_info,
+                   'processing': {'seconds': args.seconds, 'start': args.start, 'repeat_to': args.repeat_to,
+                                  'resample_to': args.resample_to},
+                   'rate_mhz': rate_mhz, 'standard': args.standard,
                    'cores': core_counts, 'threads': args.threads, 'labels': labels, 'runs': results, 'summary': rows},
                   f, indent=2)
     with open(os.path.join(out_dir, 'results.csv'), 'w', newline='') as f:
@@ -707,7 +771,11 @@ def main(argv=None):
                             r.get('frames', ''), r.get('fps', ''), bool(r.get('disturbed_by')), r.get('error', '')])
     with open(os.path.join(out_dir, 'summary.md'), 'w') as f:
         f.write(f"# {machine.get('cpu')} ({machine['os']} {machine['arch']}, {machine.get('ram_gb', '?')} GB)\n\n"
-                f"Sample: {os.path.basename(sample)} at {rate_mhz:g} MS/s, {args.standard.upper()}, "
+                f"Sample: {sample_info['file']}"
+                f"{' (' + sample_info['description'] + ')' if sample_info.get('description') else ''}, "
+                f"fingerprint {sample_info['fingerprint']}"
+                f"{', player ' + sample_info['player'] if sample_info.get('player') else ''}; "
+                f"used as {os.path.basename(sample)} at {rate_mhz:g} MS/s, {args.standard.upper()}, "
                 f"{'/'.join(str(c) for c in core_counts)} cores"
                 f"{'' if sys.platform.startswith('linux') else ' (unpinned on this platform)'}.\n\n{table}\n"
                 + (f"\nFrames per second by cores:\n\n{scaling}\n" if scaling else ''))

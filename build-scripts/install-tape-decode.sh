@@ -1,13 +1,13 @@
 #!/bin/bash
-# install-tape-decode.sh - install namazso/tape-decode-rs, the Rust decoder (Linux)
+# install-tape-decode.sh - install namazso/tape-decode-rs, the Rust decoder (Linux and macOS)
 # Part of DDD Capture Toolkit build system
 #
 # tape-decode is a Rust port of vhs-decode. The toolkit can use it as its decoder
 # ("decoder_backend": "tape-decode" in config/config.json, see decoder_backends.py).
 #
-#   --mode easy         download the newest release binary for this CPU
-#                       (x86-64-v1 .. v4, the highest level the CPU supports)
-#   --mode performance  clone the source and compile it for this CPU (needs cargo)
+#   --mode easy         download the newest release binary for this CPU (Linux x86-64 only:
+#                       x86-64-v1 .. v4, the highest level the CPU supports)
+#   --mode performance  clone the source and compile it for this CPU (needs cargo; Linux and macOS)
 #
 # Either way a 'tape-decode' command ends up in the conda environment's bin/.
 #
@@ -50,9 +50,15 @@ done
 if [[ "$MODE" != "easy" && "$MODE" != "performance" ]]; then
     log_error "--mode easy or --mode performance is required"; exit 1
 fi
-if [[ "$(uname -s)" != "Linux" ]]; then
-    log_error "tape-decode is installed on Linux only by this script."; exit 1
-fi
+case "$(uname -s)" in
+    Linux) ;;
+    Darwin)
+        if [[ "$MODE" == "easy" ]]; then
+            log_error "There is no prebuilt tape-decode for macOS. Use ./setup.sh --performance, which builds it for your Mac."
+            exit 1
+        fi ;;
+    *) log_error "tape-decode is installed on Linux and macOS by this script."; exit 1 ;;
+esac
 if [[ -z "$PREFIX" || ! -d "$PREFIX/bin" ]]; then
     log_error "No environment to install into (use --prefix, or activate the conda environment)"; exit 1
 fi
@@ -120,7 +126,7 @@ log_info "Building tape-decode $(git -C "$SRC" describe --tags --always) ($(git 
 # environment's library path cleared (the same precaution build-vhs-decode.sh takes)
 FLAGS=""
 $SAFE || FLAGS="-C target-cpu=native"
-( cd "$SRC" && env -u LD_LIBRARY_PATH RUSTFLAGS="$FLAGS" cargo build --release -p tape-decode-cli ) \
+( cd "$SRC" && env -u LD_LIBRARY_PATH -u DYLD_LIBRARY_PATH RUSTFLAGS="$FLAGS" cargo build --release -p tape-decode-cli ) \
     || { log_error "tape-decode build failed"; exit 1; }
 install -m 755 "${SRC}/target/release/tape-decode" "${PREFIX}/bin/tape-decode"
 log_success "tape-decode built and installed: ${PREFIX}/bin/tape-decode"

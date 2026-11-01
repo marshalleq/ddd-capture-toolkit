@@ -83,7 +83,7 @@ Full results and method: [Decoders](https://github.com/marshalleq/ddd-capture-to
 
 > **Use the conda environment — do not `pip install -r requirements.txt` against a system Python.** The toolkit pins Python 3.12 and installs everything (including `tbc-video-export`, which has no wheels for Python ≥ 3.14) into the isolated `ddd-capture-toolkit` conda env. Installing into a bare python.org interpreter will fail to resolve dependencies. **On Windows** this means installing [Git for Windows](https://git-scm.com/downloads/win) (for the Git Bash shell `setup.sh` needs) and [Miniconda](https://docs.conda.io/en/latest/miniconda.html) first, then running `./setup.sh` from Git Bash — see [SETUP.md](SETUP.md).
 
-Linux is the first-class platform. macOS and Windows have the groundwork in place but need testers — see [Getting Started](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Getting-Started) in the wiki for platform-specific notes.
+Linux and macOS are both first-class platforms. On macOS the decoders (`tape-decode` and `vhs-decode`), the export and the benchmark have been run on an Apple M1 Pro and an M2; **capturing on a Mac has not been tested yet**, and `./setup.sh --performance` has not been run end to end on one (easy mode has no prebuilt `tape-decode` for macOS). Windows has the groundwork in place but needs testers. See [Getting Started](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Getting-Started) in the wiki for platform-specific notes.
 
 ## More information
 
