@@ -100,3 +100,5 @@ docs/audio-capture-comparison.md
 
 # Decoder benchmark scratch (builds, outputs)
 benchmark/work/
+benchmark/samples/*.flac
+benchmark/samples/*.s16
