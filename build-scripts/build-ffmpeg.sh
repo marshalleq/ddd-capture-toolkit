@@ -26,6 +26,8 @@ show_usage() {
     echo "  --safe      Use safe optimizations (no -march=native)"
     echo "  --jobs N    Number of parallel build jobs (default: auto-detect)"
     echo "  --clean     Clean build directory before building"
+    echo "  --prefix D  Install into D instead of the toolkit environment (used by benchmark/)"
+    echo "  --work D    Build in D instead of <toolkit>/build (used with --prefix)"
     echo "  --help      Show this help message"
 }
 
@@ -36,8 +38,11 @@ build_ffmpeg() {
 
     log_info "Building FFmpeg from source with native optimizations..."
 
+    # Where it goes: the toolkit environment, unless told otherwise
+    local prefix="${INSTALL_PREFIX:-$CONDA_PREFIX}"
+
     # Check if we should skip (already have optimized build)
-    if command -v ffmpeg >/dev/null 2>&1; then
+    if [[ -z "$INSTALL_PREFIX" ]] && command -v ffmpeg >/dev/null 2>&1; then
         local current_config=$(ffmpeg -buildconf 2>&1 || true)
         if echo "$current_config" | grep -q "march=native"; then
             log_success "FFmpeg already built with native optimizations, skipping"
@@ -56,7 +61,7 @@ build_ffmpeg() {
     done
 
     # Create build directory in project root (not in any submodule)
-    local build_base="${PROJECT_ROOT}/build"
+    local build_base="${WORK_DIR:-${PROJECT_ROOT}/build}"
     local build_dir="${build_base}/ffmpeg-${FFMPEG_VERSION}"
     local source_dir="${build_base}/ffmpeg-source"
 
@@ -103,7 +108,9 @@ build_ffmpeg() {
 
     # Add conda library paths
     extra_cflags="$extra_cflags -I${CONDA_PREFIX}/include"
-    extra_ldflags="-L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib"
+    # The new ffmpeg's own libraries (libavcodec ...) land in "$prefix/lib" and must be found first,
+    # so a copy installed away from the environment never runs against the environment's ffmpeg libraries.
+    extra_ldflags="-L${CONDA_PREFIX}/lib -Wl,-rpath,${prefix}/lib -Wl,-rpath,${CONDA_PREFIX}/lib"
 
     log_info "CFLAGS: $extra_cflags"
     log_info "LDFLAGS: $extra_ldflags"
@@ -120,7 +127,7 @@ build_ffmpeg() {
     export PKG_CONFIG_PATH="${CONDA_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
     ./configure \
-        --prefix="${CONDA_PREFIX}" \
+        --prefix="$prefix" \
         --extra-cflags="$extra_cflags" \
         --extra-ldflags="$extra_ldflags" \
         --enable-gpl \
@@ -149,7 +156,7 @@ build_ffmpeg() {
             # this minimal configure fails too, the build aborts rather
             # than producing an ffmpeg that silently lacks soxr.
             ./configure \
-                --prefix="${CONDA_PREFIX}" \
+                --prefix="$prefix" \
                 --extra-cflags="$extra_cflags" \
                 --extra-ldflags="$extra_ldflags" \
                 --enable-gpl \
@@ -183,12 +190,12 @@ build_ffmpeg() {
     }
 
     # Verify installation
-    if [[ -x "${CONDA_PREFIX}/bin/ffmpeg" ]]; then
-        log_success "FFmpeg successfully installed to ${CONDA_PREFIX}/bin/"
+    if [[ -x "${prefix}/bin/ffmpeg" ]]; then
+        log_success "FFmpeg successfully installed to ${prefix}/bin/"
 
         # Verify native optimizations
         log_info "Verifying FFmpeg build configuration..."
-        local new_config=$("${CONDA_PREFIX}/bin/ffmpeg" -buildconf 2>&1 || true)
+        local new_config=$("${prefix}/bin/ffmpeg" -buildconf 2>&1 || true)
         if echo "$new_config" | grep -q "march=native"; then
             log_success "FFmpeg built with native CPU optimizations"
         elif [[ "$safe_mode" == "true" ]]; then
@@ -198,7 +205,7 @@ build_ffmpeg() {
         fi
 
         # Show version
-        "${CONDA_PREFIX}/bin/ffmpeg" -version | head -3
+        "${prefix}/bin/ffmpeg" -version | head -3
     else
         log_error "FFmpeg installation verification failed"
         return 1
@@ -211,6 +218,8 @@ build_ffmpeg() {
 SAFE_MODE=false
 BUILD_JOBS=""
 CLEAN_BUILD=false
+INSTALL_PREFIX=""
+WORK_DIR=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -229,6 +238,14 @@ while [[ $# -gt 0 ]]; do
         --clean)
             CLEAN_BUILD=true
             shift
+            ;;
+        --prefix)
+            INSTALL_PREFIX="$2"
+            shift 2
+            ;;
+        --work)
+            WORK_DIR="$2"
+            shift 2
             ;;
         --help|-h)
             show_usage

@@ -2,8 +2,9 @@
 
 Full documentation, including what native, generic and release builds are, is on the wiki: https://github.com/marshalleq/ddd-capture-toolkit/wiki/Benchmarking
 
-Measures how fast each decoder build decodes the same capture on your machine, and writes a table you can
-compare with other machines. Works on Linux and macOS. Windows is untested.
+Measures how fast each decoder build decodes the same capture on your machine, with any number of cores, and can also
+time the export and the final mux with different ffmpeg builds. It writes a table you can compare with other
+machines. Works on Linux and macOS. Windows is untested.
 
 ```bash
 conda activate ddd-capture-toolkit
