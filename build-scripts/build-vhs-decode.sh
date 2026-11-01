@@ -19,6 +19,9 @@ show_usage() {
     echo "  --safe      Use safe optimizations (no -march=native)"
     echo "  --jobs N    Number of parallel build jobs (default: auto-detect)"
     echo "  --clean     Clean build directory before building"
+    echo "  --source D  Build the source tree in D as it is (no version checkout), instead of external/vhs-decode"
+    echo "  --venv D    Install into a new virtual environment in D instead of the toolkit environment"
+    echo "              (used by benchmark/ to build other versions without touching the real install)"
     echo "  --version V Specify vhs-decode version to build (default: latest release tag)"
     echo "              Use 'latest' for bleeding edge (latest commit)"
     echo "              Use a specific tag like 'v0.3.8' or 'tools_prerelease'"
@@ -142,7 +145,7 @@ build_vhs_decode() {
     log_info "Building VHS-Decode from source..."
 
     # Navigate to source directory
-    local vhs_decode_dir="${PROJECT_ROOT}/external/vhs-decode"
+    local vhs_decode_dir="${SOURCE_DIR:-${PROJECT_ROOT}/external/vhs-decode}"
     if [[ ! -d "$vhs_decode_dir" ]]; then
         log_error "VHS-Decode source directory not found: $vhs_decode_dir"
         log_error "Make sure git submodules are properly initialized"
@@ -152,8 +155,13 @@ build_vhs_decode() {
     cd "$vhs_decode_dir"
     log_info "Building in: $(pwd)"
 
+    # A given source tree is built exactly as it is
+    if [[ -n "$SOURCE_DIR" ]]; then
+        target_version=""
+    fi
+
     # Determine which version to build
-    if [[ -z "$target_version" ]]; then
+    if [[ -z "$target_version" && -z "$SOURCE_DIR" ]]; then
         # Auto-detect latest release tag
         log_info "No version specified, detecting latest release tag..."
         target_version=$(get_latest_release_tag "$vhs_decode_dir")
@@ -210,6 +218,16 @@ build_vhs_decode() {
             export RUSTFLAGS="-C target-cpu=native -C opt-level=3 ${RUSTFLAGS:-}"
         fi
         log_info "RUSTFLAGS: $RUSTFLAGS"
+    fi
+
+    # Into a virtual environment of its own, if asked: from here on pip and python are its own
+    if [[ -n "$VENV_DIR" ]]; then
+        log_info "Creating virtual environment: $VENV_DIR"
+        rm -rf "$VENV_DIR"
+        python -m venv "$VENV_DIR" || { log_error "Could not create $VENV_DIR"; return 1; }
+        export PATH="$VENV_DIR/bin:$PATH"
+        hash -r
+        pip install --upgrade pip >/dev/null
     fi
 
     # Build dependencies. The install below runs with --no-build-isolation, so every
@@ -285,6 +303,8 @@ SAFE_MODE=false
 BUILD_JOBS=""
 CLEAN_BUILD=false
 TARGET_VERSION=""
+SOURCE_DIR=""
+VENV_DIR=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -303,6 +323,14 @@ while [[ $# -gt 0 ]]; do
         --clean)
             CLEAN_BUILD=true
             shift
+            ;;
+        --source)
+            SOURCE_DIR="$(cd "$2" && pwd)" || { log_error "--source: no such directory: $2"; exit 1; }
+            shift 2
+            ;;
+        --venv)
+            VENV_DIR="$2"
+            shift 2
             ;;
         --version)
             if [[ -z "$2" ]] || [[ "$2" =~ ^- ]]; then
