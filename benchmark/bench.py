@@ -118,14 +118,19 @@ def descendants(table, root):
 
 
 DECODER_WORDS = re.compile(r'(tape-decode|vhs-decode|decode\.py vhs|ld-ldf-reader)')
+# The helper that mounts a prebuilt AppImage carries the decoder's name but belongs to the run that started it
+NOT_A_DECODE = re.compile(r'(squashfuse|fusermount|\.mount_|AppImage .*-o )')
 
 
-def foreign_decoders(table, mine):
-    """Decode processes that are not ours (anything else decoding makes a result meaningless)."""
+def foreign_decoders(table, mine, marker=None):
+    """Decode processes that are not ours (anything else decoding makes a result meaningless).
+    `marker` is a string only our own decode has on its command line (its output path): a prebuilt
+    AppImage leaves a process of its own outside our child's tree, and that one is ours too."""
     me = os.getpid()
     return sorted(pid for pid, (_, _, args) in table.items()
                   if pid not in mine and pid != me and DECODER_WORDS.search(args)
-                  and 'bench.py' not in args)
+                  and not NOT_A_DECODE.search(args) and 'bench.py' not in args
+                  and not (marker and marker in args))
 
 
 # ---------------------------------------------------------------- variants
@@ -327,7 +332,7 @@ def run_once(variant, sample, work, standard, cores, threads, rate_mhz, log):
         table = process_table()
         mine = descendants(table, proc.pid)
         peak_kb = max(peak_kb, sum(table[p][1] for p in mine if p in table))
-        for pid in foreign_decoders(table, mine):
+        for pid in foreign_decoders(table, mine, base):
             if pid not in disturbed:
                 disturbed.append(pid)
         time.sleep(1.0)
@@ -341,12 +346,13 @@ def run_once(variant, sample, work, standard, cores, threads, rate_mhz, log):
 
     if proc.returncode != 0:
         tail = open(base + '.stdout', errors='replace').read().strip().splitlines()[-2:]
-        raise RuntimeError(f"exit code {proc.returncode}: {' | '.join(tail)[:300]}")
+        raise RuntimeError(f"exit code {proc.returncode}: {'; '.join(tail)[:300]}")
     try:
         with open(base + '.tbc.json') as f:
             frames = len(json.load(f)['fields']) // 2
     except (OSError, KeyError, ValueError):
-        raise RuntimeError("the decode finished but wrote no usable .tbc.json")
+        tail = re.sub(r'\x1b\[[0-9;]*m', '', open(base + '.stdout', errors='replace').read()).strip().splitlines()[-2:]
+        raise RuntimeError("the decode finished but wrote no usable .tbc.json: " + '; '.join(tail)[:300])
     for suffix in ('.tbc', '_chroma.tbc'):
         if os.path.exists(base + suffix):
             os.remove(base + suffix)
@@ -383,7 +389,8 @@ def format_table(rows, labels, baseline):
              "|---|---|---|---|---|---|---|" + ("---|" if baseline else "")]
     for r in rows:
         if 'error' in r:
-            lines.append(f"| {labels[r['variant']]} | FAILED: {r['error']} | | | | | |" + (" |" if baseline else ""))
+            reason = re.sub(r'\x1b\[[0-9;]*m', '', r['error']).replace('|', '/')
+            lines.append(f"| {labels[r['variant']]} | FAILED: {reason} | | | | | |" + (" |" if baseline else ""))
             continue
         hour = f"{r['hour_min']:.0f} min" if r['hour_min'] < 150 else f"{r['hour_min'] / 60:.1f} h"
         cpu = f"{r['cpu_s']:.0f}" if r['cpu_s'] is not None else "-"
@@ -444,6 +451,8 @@ def main(argv=None):
             variants.append(parse_variant(spec, work))
         except ValueError as e:
             sys.exit(str(e))
+    if any('@' in v.spec and not v.exe for v in variants) and os.environ.get('CONDA_DEFAULT_ENV') != 'ddd-capture-toolkit':
+        sys.exit("building variants needs the toolkit's conda environment: run  conda activate ddd-capture-toolkit  first")
     runs_plan = []                 # (label key, variant, input file)
     for v in variants:
         log(f"preparing {v.label}")
