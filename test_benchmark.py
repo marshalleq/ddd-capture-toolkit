@@ -14,7 +14,7 @@ def test_variant_parsing():
     assert (v.kind, v.label) == ('tape-decode', 'tape-decode native:v1.0')
     v = bench.parse_variant('vhs-decode@v0.4.0#v0.4.0 compiled', '/w')
     assert (v.kind, v.label) == ('vhs-decode', 'v0.4.0 compiled')
-    for bad in ('nonsense', 'exe=/no/such/file:tape-decode', 'exe=' + sys.executable + ':other'):
+    for bad in ('nonsense', 'tape-decode', 'vhs-decode', 'exe=/no/such/file:tape-decode', 'exe=' + sys.executable + ':other'):
         try:
             bench.parse_variant(bad, '/w')
         except ValueError:

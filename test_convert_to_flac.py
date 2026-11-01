@@ -52,6 +52,7 @@ def test_lds_to_flac_round_trip():
         assert hashlib.sha256(back).digest() == hashlib.sha256(want).digest()
         # the native file reports its own length from the header tag
         assert abs(rf_formats.capture_duration_seconds(target) - 400_000 / 40e6) < 1e-9
+        assert rf_formats.capture_sample_rate_hz(target) == 40_000_000
         # an existing result is never replaced without --overwrite
         try:
             convert_to_flac.convert(lds, out=lambda *a, **k: None)

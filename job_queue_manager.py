@@ -907,8 +907,17 @@ class JobQueueManager:
             except (TypeError, ValueError):
                 threads = 3
             out_base = job.output_file.replace('.tbc', '')
+            # The capture's own sample rate (a recording made at 20 MS/s must be decoded as 20)
+            import rf_formats
+            rate_hz = rf_formats.capture_sample_rate_hz(job.input_file)
+            if not rate_hz:
+                job.error_message = (f"{os.path.basename(job.input_file)} does not say what sample rate it was "
+                                     "recorded at (no DDD_SAMPLE_RATE_HZ tag and no .ddd.yaml)")
+                self.logger.error(job.error_message)
+                return False
+            decode_params = dict(job.parameters, sample_rate_mhz=rate_hz / 1e6)
             cmd, problems = decoder.build_command(
-                decoder_exe, job.parameters, cli_flags, structural, job.input_file, out_base,
+                decoder_exe, decode_params, cli_flags, structural, job.input_file, out_base,
                 segment=segment, threads=threads)
             problems = flag_problems + problems
             if problems:

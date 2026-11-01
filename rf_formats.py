@@ -197,6 +197,32 @@ def _duration_from_flac(path):
         return None
 
 
+def capture_sample_rate_hz(rf_path):
+    """
+    The rate the capture was recorded at, in samples per second.
+
+    .ddd.flac: the DDD_SAMPLE_RATE_HZ tag (the FLAC header's own rate field is only a label, 40000
+    for 40 MHz), else the label x 1000. .ddd.yaml's sample_rate_hz for the other native format.
+    The original .lds/.ldf formats are always 40 MHz. Returns None if a native capture does not say.
+    """
+    if not is_native(rf_path):
+        return NATIVE_SAMPLE_RATE_HZ
+    if is_native_flac(rf_path):
+        header = _read_flac_header(rf_path)
+        if header:
+            tag = header['tags'].get('DDD_SAMPLE_RATE_HZ')
+            if tag and tag.isdigit():
+                return int(tag)
+            if header['streaminfo'] and header['streaminfo'][0]:
+                return header['streaminfo'][0] * 1000
+    try:
+        with open(rf_base_path(rf_path) + '.ddd.yaml', 'r', encoding='utf-8') as f:
+            match = re.search(r'"?sample_rate_hz"?\s*:\s*([0-9]+)', f.read())
+    except OSError:
+        return None
+    return int(match.group(1)) if match else None
+
+
 def _duration_from_legacy_json(json_path):
     import json
     try:
