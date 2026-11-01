@@ -1,0 +1,9 @@
+{
+  "description": "Kirby instructional video, a static, repetitive picture",
+  "standard": "pal",
+  "player": "Philips DVP3050V",
+  "tape": "VHS, SP, PAL (possibly converted from NTSC; the tape carries a 1-800 number)",
+  "recorded": "2026-11-01",
+  "capture": "Domesday Duplicator, 40 MS/s, 52 minutes, no dropped words",
+  "notes": "The first 20 minutes were recorded with the Duplicator's lid off, so without its top shielding; the rest with the lid on. Zero device overflow events."
+}

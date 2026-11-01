@@ -271,15 +271,22 @@ def list_samples():
     return sorted(f for f in os.listdir(SAMPLES_DIR) if f.endswith(('.ddd.flac', '.ddd.s16')))
 
 
-def describe_sample(path):
+def describe_sample(path, notes=None):
     """What identifies a sample in published results: its sidecar notes (<name>.sample.json beside it),
     size, length, and a fingerprint (hash of the first 64 MiB plus the size) so two people can tell
     whether they measured the same file."""
     import hashlib
     import rf_formats
     info = {'file': os.path.basename(path), 'bytes': os.path.getsize(path)}
-    sidecar = rf_formats.rf_base_path(path) + '.sample.json'
-    if os.path.isfile(sidecar):
+    # Notes: the file named by --sample-notes, else <name>.sample.json beside the capture, else the one
+    # kept with the toolkit in benchmark/samples/ (so a capture on a big disk keeps its notes in git)
+    base_name = os.path.basename(rf_formats.rf_base_path(path))
+    candidates = [notes] if notes else [rf_formats.rf_base_path(path) + '.sample.json',
+                                       os.path.join(SAMPLES_DIR, base_name + '.sample.json')]
+    sidecar = next((c for c in candidates if c and os.path.isfile(c)), None)
+    if notes and not sidecar:
+        sys.exit(f"--sample-notes: no such file: {notes}")
+    if sidecar:
         try:
             with open(sidecar) as f:
                 info.update(json.load(f))
@@ -589,6 +596,10 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="Benchmark decoder and ffmpeg builds on this machine",
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split('Variants')[1])
     p.add_argument('--sample', help="a .ddd.flac capture, or the name of one in benchmark/samples/")
+    p.add_argument('--sample-notes', metavar='FILE', help="the sample's notes (default: <name>.sample.json beside it, "
+                   "or in benchmark/samples/)")
+    p.add_argument('--no-warmup', action='store_true',
+                   help="skip the discarded warm-up run (for runs so long that repeating one is a waste)")
     p.add_argument('--list-samples', action='store_true', help="show the samples in benchmark/samples/ and exit")
     p.add_argument('--seconds', type=float, help="cut this many seconds from the capture and use that (default: all of it)")
     p.add_argument('--start', type=float, default=5, help="where the cut starts, in seconds (default 5)")
@@ -635,7 +646,7 @@ def main(argv=None):
         f"{machine.get('ram_gb', '?')} GB, {machine['os']} {machine['arch']}")
 
     sample = resolve_sample(args.sample)
-    sample_info = describe_sample(sample)
+    sample_info = describe_sample(sample, args.sample_notes)
     if not args.standard:
         args.standard = sample_info.get('standard', 'pal')
     log(f"sample: {sample_info['file']} ({sample_info.get('duration_s', '?')} s, {sample_info['bytes'] / 1e9:.1f} GB, "
@@ -741,8 +752,9 @@ def main(argv=None):
         log(f"  {task.label:<52} {'warm-up' if warmup else 'run':<8} {shown}" + (f"  [{r['note']}]" if r.get('note') else ''))
 
     log(f"\nwarm-up, then {args.runs} runs of each; sample {os.path.basename(sample)}")
-    for task in tasks:
-        attempt(task, True)
+    if not args.no_warmup:
+        for task in tasks:
+            attempt(task, True)
     for _ in range(args.runs):
         for task in tasks:
             attempt(task, False)
