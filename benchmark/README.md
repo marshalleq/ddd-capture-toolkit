@@ -7,7 +7,7 @@ compare with other machines. Works on Linux and macOS. Windows is untested.
 
 ```bash
 conda activate ddd-capture-toolkit
-python3 benchmark/bench.py --sample Capture.ddd.flac --seconds 20 --variants tape-decode,vhs-decode
+python3 benchmark/bench.py --sample Capture.ddd.flac --seconds 20 --variants tape-decode@native,tape-decode@generic
 ```
 
 It is not part of `setup.sh` and nothing here changes your installation. Builds are made by the toolkit's own
@@ -20,7 +20,6 @@ setup would install and cannot drift away from it.
 
 | Variant | Meaning |
 |---|---|
-| `tape-decode`, `vhs-decode` | What is installed in the toolkit environment now |
 | `tape-decode@release` | namazso's newest release binary for this CPU (Linux x86-64) |
 | `tape-decode@native` | Built from source for this CPU. `@native:REF` builds a tag, branch or commit |
 | `tape-decode@generic` | The same source built without CPU-specific instructions |

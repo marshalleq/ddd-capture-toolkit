@@ -949,8 +949,14 @@ def run_vhs_decode_with_params(rf_filename, tbc_filename, video_standard, tape_s
         return False
     from project_flags import decode_arguments
     tokens, structural, flag_problems = decode_arguments(None, decoder.key, additional_params or '')
+    import rf_formats
+    rate_hz = rf_formats.capture_sample_rate_hz(rf_filename)
+    if not rate_hz:
+        print(f"ERROR: {os.path.basename(rf_filename)} does not say what sample rate it was recorded at")
+        return False
     cmd, problems = decoder.build_command(
-        decoder_path, {'video_standard': video_standard, 'tape_speed': tape_speed},
+        decoder_path, {'video_standard': video_standard, 'tape_speed': tape_speed,
+                       'sample_rate_mhz': rate_hz / 1e6},
         tokens, structural, rf_filename, out_base)
     problems = flag_problems + problems
     if problems:

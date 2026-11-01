@@ -85,6 +85,19 @@ def test_unsupported_and_forced_settings():
         DECODE_FLAGS['chroma_trap']['engines'].update(fake)
 
 
+def test_sample_rate_is_passed_to_the_decoder():
+    td = select_decoder('tape-decode')
+    cmd, _ = td.build_command('/x/td', {'sample_rate_mhz': 20.0}, [], set(), 'in.flac', '/o/out')
+    assert cmd[cmd.index('--frequency') + 1] == '20'
+    cmd, _ = td.build_command('/x/td', {}, [], set(), 'in.flac', '/o/out')
+    assert cmd[cmd.index('--frequency') + 1] == '40'
+    vd = select_decoder('vhs-decode')
+    cmd, _ = vd.build_command('/x/vd', {'sample_rate_mhz': 20.0}, [], set(), 'in.flac', '/o/out')
+    assert cmd[cmd.index('-f') + 1] == '20'
+    cmd, _ = vd.build_command('/x/vd', {'sample_rate_mhz': 40.0}, [], set(), 'in.flac', '/o/out')
+    assert '-f' not in cmd
+
+
 def test_tape_decode_skip_chroma():
     d = select_decoder('tape-decode')
     tokens, structural, _ = decode_arguments(None, 'tape-decode', '--skip_chroma --nodd')

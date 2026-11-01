@@ -8,10 +8,10 @@ Run it inside the toolkit's conda environment. It measures builds side by side, 
 other, on the same sample, and prints a table with frames per second and the time an hour of
 tape would take.
 
-Variants (--variants, comma separated; default: tape-decode,vhs-decode):
+Variants (--variants, comma separated; default: tape-decode native and generic, plus release on x86-64 Linux).
+What happens to be installed in the toolkit environment is recorded in the results but never measured: name
+the build you want (native, generic, release).
 
-  tape-decode              the tape-decode installed in the toolkit environment
-  vhs-decode               the vhs-decode installed in the toolkit environment
   tape-decode@release      namazso's newest release binary for this CPU
   tape-decode@native[:REF] built from source for this CPU (REF = tag, branch or commit)
   tape-decode@generic[:REF] built from source without CPU-specific instructions
@@ -77,6 +77,9 @@ def machine_info():
         info['ram_gb'] = round(int(_run(['sysctl', '-n', 'hw.memsize']) or 0) / 2**30)
     else:
         info['cpu'] = platform.processor()
+    # What the toolkit environment has now. Recorded so a result says what the machine runs;
+    # it is not measured unless you name the same build in --variants.
+    info['installed'] = {name: shutil.which(name) for name in ('tape-decode', 'vhs-decode')}
     return info
 
 
@@ -152,7 +155,8 @@ def parse_variant(spec, work):
     if name not in ('tape-decode', 'vhs-decode'):
         raise ValueError(f"unknown variant '{spec}'")
     if not how:
-        return Variant(spec, name, label or f"{name} (installed)", shutil.which(name))
+        raise ValueError(f"'{spec}' does not say how it was built. Use {name}@native, {name}@generic or "
+                         f"{name}@release (or exe=PATH:{name} for a program you already have)")
     return Variant(spec, name, label or f"{name} {how}")
 
 
@@ -243,7 +247,8 @@ def resample(sample, rate_mhz, out_dir, log):
     target = os.path.join(out_dir, f"sample_{rate_mhz:g}msps.ddd.flac")
     log(f"  resampling to {rate_mhz:g} MS/s")
     subprocess.run([ffmpeg, '-v', 'error', '-y', '-i', sample, '-ar', str(round(rate_mhz * 1000)),
-                    '-sample_fmt', 's16', '-c:a', 'flac', '-compression_level', '8', target], check=True)
+                    '-sample_fmt', 's16', '-c:a', 'flac', '-compression_level', '8',
+                    '-metadata', f'DDD_SAMPLE_RATE_HZ={round(rate_mhz * 1e6)}', target], check=True)
     return target
 
 
@@ -411,7 +416,9 @@ def main(argv=None):
     p.add_argument('--repeat-to', type=float, metavar='SECONDS',
                    help="repeat the sample until it is about this long (600 = ten minutes). A boring capture repeated "
                         "gives a long run that measures speed without needing a long tape")
-    p.add_argument('--variants', default='tape-decode,vhs-decode', help="what to measure (see below)")
+    p.add_argument('--variants', default=None,
+                   help="what to measure (see below). Default: tape-decode native and generic builds, "
+                        "plus the release binary on Linux x86-64")
     p.add_argument('--runs', type=int, default=3, help="timed runs per build (default 3), after one discarded warm-up")
     p.add_argument('--cores', type=int, default=4, help="cores to pin one decode to on Linux (default 4)")
     p.add_argument('--threads', type=int, default=3, help="the toolkit's decode thread setting (default 3: four cores)")
@@ -439,14 +446,20 @@ def main(argv=None):
         sample = make_sample(sample, args.seconds, args.start, work, log)
     if args.repeat_to:
         sample = repeat_sample(sample, args.repeat_to, work, log)
-    rate_mhz = 40
     if args.resample_to:
         sample = resample(sample, args.resample_to, work, log)
-        rate_mhz = args.resample_to
+    import rf_formats
+    rate_hz = rf_formats.capture_sample_rate_hz(sample)
+    if not rate_hz:
+        sys.exit("the sample does not say what sample rate it was recorded at (needs a .ddd.flac)")
+    rate_mhz = rate_hz / 1e6
     lds_sample = pack_lds(sample, os.path.join(work, 'sample.lds'), log) if args.lds else None
 
     variants = []
-    for spec in [s.strip() for s in args.variants.split(',') if s.strip()]:
+    default = ['tape-decode@native', 'tape-decode@generic']
+    if sys.platform.startswith('linux') and machine['arch'] in ('x86_64', 'AMD64'):
+        default.append('tape-decode@release')
+    for spec in [s.strip() for s in (args.variants or ','.join(default)).split(',') if s.strip()]:
         try:
             variants.append(parse_variant(spec, work))
         except ValueError as e:
