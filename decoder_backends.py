@@ -95,6 +95,8 @@ class VhsDecodeBackend(DecoderBackend):
         cmd = [exe, '--tf', 'vhs', '-t', str(threads),
                '--ts', job_params.get('tape_speed', 'SP')]
         cmd.append('--pal' if job_params.get('video_standard', 'pal').lower() == 'pal' else '--ntsc')
+        if job_params.get('sample_rate_mhz', 40) != 40:
+            cmd.extend(['-f', str(job_params['sample_rate_mhz'])])
         cmd.extend(tokens)
         if segment:
             start, length = segment
@@ -151,7 +153,7 @@ class TapeDecodeBackend(DecoderBackend):
             problems.append("tape-decode cannot decode just a segment (no start/length option); "
                             "turn segment mode off for this project or set decoder_backend to vhs-decode")
         cmd = [exe, 'decode', '--profile', self.profile(job_params),
-               '--frequency', str(self.SAMPLE_RATE_MHZ), '--input-format', 'flac']
+               '--frequency', str(job_params.get('sample_rate_mhz', self.SAMPLE_RATE_MHZ)), '--input-format', 'flac']
         cmd.extend(tokens)
         cmd.extend(['--luma-out', output_base + '.tbc'])
         if 'skip_chroma' not in structural:
