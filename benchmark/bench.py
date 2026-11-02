@@ -36,6 +36,8 @@ on Linux. macOS cannot pin, so a decode there runs unpinned.
 import argparse
 import csv
 import datetime
+import getpass
+import hashlib
 import json
 import os
 import platform
@@ -70,23 +72,85 @@ def _run(cmd):
         return ''
 
 
-def machine_info():
+def _git(folder, *args):
+    out = _run(['git', '-C', folder] + list(args))
+    return out.strip() if out else None
+
+
+def toolkit_info():
+    """Which version of the toolkit this is, so a result can be traced to the code that produced it."""
+    describe = _git(ROOT, 'describe', '--always', '--dirty', '--tags') or 'unknown (not a git checkout)'
+    return {'version': describe, 'commit': _git(ROOT, 'rev-parse', 'HEAD'),
+            'commit_date': _git(ROOT, 'log', '-1', '--format=%cI'), 'branch': _git(ROOT, 'rev-parse', '--abbrev-ref', 'HEAD')}
+
+
+def machine_info(submitter=None):
     info = {'os': platform.system(), 'os_version': platform.release(), 'arch': platform.machine(),
-            'host': platform.node().split('.')[0], 'logical_cpus': os.cpu_count()}
+            'host': platform.node().split('.')[0], 'logical_cpus': os.cpu_count(),
+            'python': platform.python_version(), 'toolkit': toolkit_info(),
+            'submitted_by': submitter or getpass.getuser(),
+            'when': datetime.datetime.now().astimezone().isoformat(timespec='seconds')}
     if sys.platform.startswith('linux'):
         with open('/proc/cpuinfo') as f:
-            m = re.search(r'model name\s*:\s*(.+)', f.read())
+            cpuinfo = f.read()
+        m = re.search(r'model name\s*:\s*(.+)', cpuinfo)
         info['cpu'] = m.group(1).strip() if m else platform.processor()
         with open('/proc/meminfo') as f:
-            info['ram_gb'] = round(int(re.search(r'MemTotal:\s+(\d+)', f.read()).group(1)) / 1048576)
+            kb = int(re.search(r'MemTotal:\s+(\d+)', f.read()).group(1))
+        info['ram_gb'] = round(kb / 1048576)
+        info['ram_bytes'] = kb * 1024
+        cores = {(re.search(r'physical id\s*:\s*(\d+)', blk) or [None, '0'])[1] + ':' + m2.group(1)
+                 for blk in cpuinfo.split('\n\n') for m2 in [re.search(r'core id\s*:\s*(\d+)', blk)] if m2}
+        info['physical_cores'] = len(cores) or None
+        try:
+            with open('/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq') as f:
+                info['cpu_max_mhz'] = round(int(f.read()) / 1000)
+        except (OSError, ValueError):
+            pass
+        try:
+            with open('/etc/os-release') as f:
+                m = re.search(r'PRETTY_NAME="?([^"\n]+)', f.read())
+            info['os_name'] = m.group(1) if m else None
+        except OSError:
+            pass
     elif sys.platform == 'darwin':
         info['cpu'] = _run(['sysctl', '-n', 'machdep.cpu.brand_string'])
-        info['ram_gb'] = round(int(_run(['sysctl', '-n', 'hw.memsize']) or 0) / 2**30)
+        mem = int(_run(['sysctl', '-n', 'hw.memsize']) or 0)
+        info['ram_gb'] = round(mem / 2**30)
+        info['ram_bytes'] = mem
+        info['physical_cores'] = int(_run(['sysctl', '-n', 'hw.physicalcpu']) or 0) or None
+        info['model'] = _run(['sysctl', '-n', 'hw.model'])
+        hz = _run(['sysctl', '-n', 'hw.cpufrequency_max'])     # Intel Macs only; Apple silicon does not report one
+        if hz and hz.isdigit():
+            info['cpu_max_mhz'] = round(int(hz) / 1e6)
+        info['os_name'] = 'macOS ' + (_run(['sw_vers', '-productVersion']) or '')
     else:
         info['cpu'] = platform.processor()
+    if info.get('cpu_max_mhz'):
+        info['cpu_max_ghz'] = round(info['cpu_max_mhz'] / 1000, 2)
     # What the toolkit environment has now. Recorded so a result says what the machine runs;
     # it is not measured unless you name the same build in --variants.
     info['installed'] = {name: shutil.which(name) for name in ('tape-decode', 'vhs-decode')}
+    return info
+
+
+def program_info(path):
+    """What was actually measured: the program's checksum and, where it was built here, the source commit."""
+    if not path or not os.path.isfile(path):
+        return None
+    digest = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            digest.update(chunk)
+    info = {'path': path, 'bytes': os.path.getsize(path), 'sha256': digest.hexdigest()}
+    folder = os.path.dirname(os.path.realpath(path))
+    for _ in range(4):
+        candidate = os.path.join(folder, 'src')
+        if os.path.isdir(os.path.join(candidate, '.git')):
+            info['source'] = {'describe': _git(candidate, 'describe', '--tags', '--always'),
+                              'commit': _git(candidate, 'rev-parse', 'HEAD'), 'date': _git(candidate, 'log', '-1', '--format=%cI')}
+            break
+        folder = os.path.dirname(folder)
     return info
 
 
@@ -639,6 +703,7 @@ def main(argv=None):
     p.add_argument('--work', default=os.path.join(HERE, 'work'), help="scratch folder (builds, outputs)")
     p.add_argument('--results', default=os.path.join(HERE, 'results'), help="where to write the results")
     p.add_argument('--keep-work', action='store_true', help="keep builds and logs afterwards")
+    p.add_argument('--submitter', help="who is submitting this result (default: the login name)")
     args = p.parse_args(argv)
     if args.list_samples:
         found = list_samples()
@@ -656,9 +721,12 @@ def main(argv=None):
     log = lambda m: print(m, flush=True)
     work = os.path.abspath(args.work)
     os.makedirs(work, exist_ok=True)
-    machine = machine_info()
-    log(f"{machine.get('host')}: {machine.get('cpu')}, {machine.get('logical_cpus')} threads, "
-        f"{machine.get('ram_gb', '?')} GB, {machine['os']} {machine['arch']}")
+    machine = machine_info(args.submitter)
+    log(f"{machine.get('host')}: {machine.get('cpu')}"
+        + (f" ({machine['cpu_max_ghz']} GHz max)" if machine.get('cpu_max_ghz') else '')
+        + f", {machine.get('physical_cores', '?')} cores / {machine.get('logical_cpus')} threads, "
+        f"{machine.get('ram_gb', '?')} GB, {machine.get('os_name') or machine['os']} {machine['arch']}; "
+        f"toolkit {machine['toolkit']['version']}, submitted by {machine['submitted_by']}")
 
     sample = resolve_sample(args.sample)
     sample_info = describe_sample(sample, args.sample_notes)
@@ -787,7 +855,9 @@ def main(argv=None):
                    'processing': {'seconds': args.seconds, 'start': args.start, 'repeat_to': args.repeat_to,
                                   'resample_to': args.resample_to},
                    'rate_mhz': rate_mhz, 'standard': args.standard,
-                   'cores': core_counts, 'threads': args.threads, 'labels': labels, 'runs': results, 'summary': rows},
+                   'cores': core_counts, 'threads': args.threads, 'labels': labels,
+                   'programs': {v.spec: program_info(v.exe) for v in ready if v.exe},
+                   'runs': results, 'summary': rows},
                   f, indent=2)
     with open(os.path.join(out_dir, 'results.csv'), 'w', newline='') as f:
         w = csv.writer(f)
@@ -797,7 +867,11 @@ def main(argv=None):
                 w.writerow([key, r.get('warmup', ''), r.get('wall_s', ''), r.get('cpu_s', ''), r.get('peak_rss_mb', ''),
                             r.get('frames', ''), r.get('fps', ''), bool(r.get('disturbed_by')), r.get('error', '')])
     with open(os.path.join(out_dir, 'summary.md'), 'w') as f:
-        f.write(f"# {machine.get('cpu')} ({machine['os']} {machine['arch']}, {machine.get('ram_gb', '?')} GB)\n\n"
+        f.write(f"# {machine.get('cpu')} ({machine.get('os_name') or machine['os']} {machine['arch']}, "
+                f"{machine.get('physical_cores', '?')} cores / {machine.get('logical_cpus')} threads"
+                f"{', ' + str(machine['cpu_max_ghz']) + ' GHz max' if machine.get('cpu_max_ghz') else ''}, "
+                f"{machine.get('ram_gb', '?')} GB)\n\n"
+                f"Run on {machine['when']} by {machine['submitted_by']} with toolkit {machine['toolkit']['version']}.\n\n"
                 f"Sample: {sample_info['file']}"
                 f"{' (' + sample_info['description'] + ')' if sample_info.get('description') else ''}, "
                 f"fingerprint {sample_info['fingerprint']}"

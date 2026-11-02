@@ -1,0 +1,80 @@
+{
+  "machine": {
+    "os": "Darwin",
+    "os_version": "27.0.0",
+    "arch": "arm64",
+    "host": "PCBuilds-Air",
+    "logical_cpus": 8,
+    "python": "3.9.6",
+    "toolkit": {
+      "version": "unknown (not a git checkout)",
+      "commit": null,
+      "commit_date": null,
+      "branch": null
+    },
+    "submitted_by": "quentinj",
+    "when": "2026-11-02T14:36:16+13:00",
+    "cpu": "Apple M2",
+    "ram_gb": 16,
+    "ram_bytes": 17179869184,
+    "physical_cores": 8,
+    "model": "Mac14,2",
+    "os_name": "macOS 27.0.1",
+    "installed": {
+      "tape-decode": null,
+      "vhs-decode": null
+    }
+  },
+  "args": {
+    "exe": "/Users/quentinj/bench/tape-decode-native",
+    "sample": "/Users/quentinj/bench/samples/kirby_shielded_10min.ddd.flac",
+    "probe": "/Users/quentinj/bench/samples/kirby_probe_45s.ddd.flac",
+    "threads": 3,
+    "interval": 10,
+    "idle_minutes": 20.0,
+    "past_minutes": 20.0,
+    "max_minutes": 90.0,
+    "cooldown_minutes": 60.0,
+    "probe_every": 5.0,
+    "work": "/Users/quentinj/bench/thermal-work",
+    "results": "/Users/quentinj/bench/thermal",
+    "submitter": null
+  },
+  "baseline": {
+    "idle_minutes": 20.0,
+    "load1_at_start": 2.37,
+    "load1_at_end": 0.99,
+    "p_mhz_idle": 670,
+    "pressure": "Nominal",
+    "temp_c": "",
+    "probe_fps": 29.79
+  },
+  "first_pressure_change": {
+    "minute_in_load": 2.2,
+    "level": "Moderate"
+  },
+  "onset_minute_in_load": 3.7,
+  "onset_evidence": "CPU clock under 90% of 2974 MHz for two minutes",
+  "reference_fps": 24.38,
+  "load_minutes": 25.7,
+  "sample_runs_completed": 1,
+  "hot_probe_fps": 23.05,
+  "recovery_minutes": 6.4,
+  "probes": [
+    {
+      "minute": 20.65,
+      "label": "cool",
+      "fps": 29.79
+    },
+    {
+      "minute": 47.16,
+      "label": "straight after the load",
+      "fps": 23.05
+    },
+    {
+      "minute": 52.77,
+      "label": "6 min after the load",
+      "fps": 30.66
+    }
+  ]
+}

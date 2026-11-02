@@ -55,3 +55,10 @@ Written to `benchmark/results/<host>-<date>/`: `results.csv` (every run), `resul
 details) and `summary.md` (the table). Peak RAM is sampled once a second, so it is a floor.
 
 Share a `summary.md` together with the machine and the exact command you ran.
+
+## Thermal test
+
+`benchmark/thermal.py` finds out whether a machine slows down under a long decode, when, and how long it takes to recover
+(built for fanless machines, works on any). See its `--help`. On macOS it needs `sudo -n powermetrics` to work without a
+password. Results record the machine, CPU, memory, toolkit version and who submitted them, as `bench.py` does.
+
