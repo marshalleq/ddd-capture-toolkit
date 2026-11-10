@@ -225,7 +225,7 @@ def main(argv=None):
     p.add_argument('--probe-every', type=float, default=5, help="minutes between probes while recovering (default 5)")
     p.add_argument('--work', default=os.path.join(HERE, 'work'))
     p.add_argument('--results', default=os.path.join(HERE, 'results'))
-    p.add_argument('--submitter')
+    p.add_argument('--submitter', help="name to record as the submitter (default: none)")
     args = p.parse_args(argv)
 
     log = lambda m: print(time.strftime('%H:%M:%S ') + m, flush=True)
@@ -259,7 +259,12 @@ def main(argv=None):
         log(f"probe ({label}): {fps:.2f} fps")
         return fps
 
-    result = {'machine': machine, 'args': vars(args)}
+    # Settings only: programs and samples by file name, no paths (results are published).
+    settings = {k: v for k, v in vars(args).items() if k not in ('work', 'results', 'submitter')}
+    for k in ('exe', 'sample', 'probe'):
+        if settings.get(k):
+            settings[k] = os.path.basename(settings[k])
+    result = {'machine': machine, 'args': settings}
     try:
         # 1. cool baseline
         log(f"idle for {args.idle_minutes:g} minutes (leave the machine alone)")
@@ -364,7 +369,7 @@ def main(argv=None):
         sample_file.close()
         result['probes'] = probes
         with open(os.path.join(out_dir, 'thermal.json'), 'w') as f:
-            json.dump(result, f, indent=2, default=str)
+            json.dump(bench.redact(result), f, indent=2, default=str)
         with open(os.path.join(out_dir, 'probes.csv'), 'w', newline='') as f:
             w = csv.writer(f)
             w.writerow(['minute', 'label', 'fps'])
@@ -378,7 +383,7 @@ def main(argv=None):
 def write_summary(out_dir, r, rows):
     m = r['machine']
     lines = [f"# Thermal test: {m['cpu']} ({m.get('os_name') or m['os']}, {m.get('ram_gb', '?')} GB)", '',
-             f"Run on {m['when']} by {m['submitted_by']} with toolkit {m['toolkit']['version']}.", '']
+             f"Run on {m['when']}{bench.submitted_by(m)} with toolkit {m['toolkit']['version']}.", '']
     b = r.get('baseline')
     if b:
         lines += [f"**Cool baseline.** Idle for {b['idle_minutes']:g} minutes first (load average {b['load1_at_start']} "
@@ -412,7 +417,7 @@ def write_summary(out_dir, r, rows):
         lines.append('')
     lines += ['| Minute | Probe | fps |', '|---|---|---|'] + [f"| {e['minute']} | {e['label']} | {e['fps']} |" for e in r.get('probes', [])]
     with open(os.path.join(out_dir, 'summary.md'), 'w') as f:
-        f.write('\n'.join(lines) + '\n')
+        f.write(bench.redact('\n'.join(lines) + '\n'))
 
 
 if __name__ == '__main__':

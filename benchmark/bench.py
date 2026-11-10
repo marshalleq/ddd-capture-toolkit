@@ -36,7 +36,6 @@ on Linux. macOS cannot pin, so a decode there runs unpinned.
 import argparse
 import csv
 import datetime
-import getpass
 import hashlib
 import json
 import os
@@ -88,7 +87,7 @@ def machine_info(submitter=None):
     info = {'os': platform.system(), 'os_version': platform.release(), 'arch': platform.machine(),
             'host': platform.node().split('.')[0], 'logical_cpus': os.cpu_count(),
             'python': platform.python_version(), 'toolkit': toolkit_info(),
-            'submitted_by': submitter or getpass.getuser(),
+            'submitted_by': submitter,
             'when': datetime.datetime.now().astimezone().isoformat(timespec='seconds')}
     if sys.platform.startswith('linux'):
         with open('/proc/cpuinfo') as f:
@@ -130,8 +129,26 @@ def machine_info(submitter=None):
         info['cpu_max_ghz'] = round(info['cpu_max_mhz'] / 1000, 2)
     # What the toolkit environment has now. Recorded so a result says what the machine runs;
     # it is not measured unless you name the same build in --variants.
-    info['installed'] = {name: shutil.which(name) for name in ('tape-decode', 'vhs-decode')}
+    info['installed'] = {name: shutil.which(name) is not None for name in ('tape-decode', 'vhs-decode')}
     return info
+
+
+def redact(value):
+    """Results are published, so they carry no login name: anything under the home folder is
+    written as ~/... (in keys and values alike), the rest is left as it is."""
+    home = os.path.expanduser('~').rstrip(os.sep)
+    if isinstance(value, str):
+        return value.replace(home + os.sep, '~' + os.sep) if home else value
+    if isinstance(value, dict):
+        return {redact(k): redact(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact(v) for v in value]
+    return value
+
+
+def submitted_by(machine):
+    """' by NAME' for a summary line, or nothing when no --submitter was given."""
+    return f" by {machine['submitted_by']}" if machine.get('submitted_by') else ''
 
 
 def program_info(path):
@@ -142,7 +159,7 @@ def program_info(path):
     with open(path, 'rb') as f:
         for chunk in iter(lambda: f.read(1 << 20), b''):
             digest.update(chunk)
-    info = {'path': path, 'bytes': os.path.getsize(path), 'sha256': digest.hexdigest()}
+    info = {'bytes': os.path.getsize(path), 'sha256': digest.hexdigest()}
     folder = os.path.dirname(os.path.realpath(path))
     for _ in range(4):
         candidate = os.path.join(folder, 'src')
@@ -703,7 +720,7 @@ def main(argv=None):
     p.add_argument('--work', default=os.path.join(HERE, 'work'), help="scratch folder (builds, outputs)")
     p.add_argument('--results', default=os.path.join(HERE, 'results'), help="where to write the results")
     p.add_argument('--keep-work', action='store_true', help="keep builds and logs afterwards")
-    p.add_argument('--submitter', help="who is submitting this result (default: the login name)")
+    p.add_argument('--submitter', help="name to record as the submitter (default: none)")
     args = p.parse_args(argv)
     if args.list_samples:
         found = list_samples()
@@ -726,7 +743,7 @@ def main(argv=None):
         + (f" ({machine['cpu_max_ghz']} GHz max)" if machine.get('cpu_max_ghz') else '')
         + f", {machine.get('physical_cores', '?')} cores / {machine.get('logical_cpus')} threads, "
         f"{machine.get('ram_gb', '?')} GB, {machine.get('os_name') or machine['os']} {machine['arch']}; "
-        f"toolkit {machine['toolkit']['version']}, submitted by {machine['submitted_by']}")
+        f"toolkit {machine['toolkit']['version']}{', submitted' + submitted_by(machine) if machine['submitted_by'] else ''}")
 
     sample = resolve_sample(args.sample)
     sample_info = describe_sample(sample, args.sample_notes)
@@ -851,27 +868,27 @@ def main(argv=None):
     out_dir = os.path.join(os.path.abspath(args.results), f"{machine.get('host')}-{stamp}")
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, 'results.json'), 'w') as f:
-        json.dump({'machine': machine, 'sample': os.path.basename(sample), 'sample_info': sample_info,
+        json.dump(redact({'machine': machine, 'sample': os.path.basename(sample), 'sample_info': sample_info,
                    'processing': {'seconds': args.seconds, 'start': args.start, 'repeat_to': args.repeat_to,
                                   'resample_to': args.resample_to},
                    'rate_mhz': rate_mhz, 'standard': args.standard,
                    'cores': core_counts, 'threads': args.threads, 'labels': labels,
                    'programs': {v.spec: program_info(v.exe) for v in ready if v.exe},
-                   'runs': results, 'summary': rows},
+                   'runs': results, 'summary': rows}),
                   f, indent=2)
     with open(os.path.join(out_dir, 'results.csv'), 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['variant', 'warmup', 'wall_s', 'cpu_s', 'peak_rss_mb', 'frames', 'fps', 'disturbed', 'error'])
         for key, runs in results.items():
             for r in runs:
-                w.writerow([key, r.get('warmup', ''), r.get('wall_s', ''), r.get('cpu_s', ''), r.get('peak_rss_mb', ''),
+                w.writerow([redact(key), r.get('warmup', ''), r.get('wall_s', ''), r.get('cpu_s', ''), r.get('peak_rss_mb', ''),
                             r.get('frames', ''), r.get('fps', ''), bool(r.get('disturbed_by')), r.get('error', '')])
     with open(os.path.join(out_dir, 'summary.md'), 'w') as f:
-        f.write(f"# {machine.get('cpu')} ({machine.get('os_name') or machine['os']} {machine['arch']}, "
+        f.write(redact(f"# {machine.get('cpu')} ({machine.get('os_name') or machine['os']} {machine['arch']}, "
                 f"{machine.get('physical_cores', '?')} cores / {machine.get('logical_cpus')} threads"
                 f"{', ' + str(machine['cpu_max_ghz']) + ' GHz max' if machine.get('cpu_max_ghz') else ''}, "
                 f"{machine.get('ram_gb', '?')} GB)\n\n"
-                f"Run on {machine['when']} by {machine['submitted_by']} with toolkit {machine['toolkit']['version']}.\n\n"
+                f"Run on {machine['when']}{submitted_by(machine)} with toolkit {machine['toolkit']['version']}.\n\n"
                 f"Sample: {sample_info['file']}"
                 f"{' (' + sample_info['description'] + ')' if sample_info.get('description') else ''}, "
                 f"fingerprint {sample_info['fingerprint']}"
@@ -879,7 +896,7 @@ def main(argv=None):
                 f"used as {os.path.basename(sample)} at {rate_mhz:g} MS/s, {args.standard.upper()}, "
                 f"{'/'.join(str(c) for c in core_counts)} cores"
                 f"{'' if sys.platform.startswith('linux') else ' (unpinned on this platform)'}.\n\n{table}\n"
-                + (f"\nFrames per second by cores:\n\n{scaling}\n" if scaling else ''))
+                + (f"\nFrames per second by cores:\n\n{scaling}\n" if scaling else '')))
     log(f"\nresults written to {out_dir}")
     if not args.keep_work:
         shutil.rmtree(os.path.join(work, 'out'), ignore_errors=True)
