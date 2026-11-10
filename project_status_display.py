@@ -102,8 +102,13 @@ class ProjectStatusDisplay:
         
         # Add project rows
         for idx, project in enumerate(projects):
-            workflow_status = self.analyzer.analyze_project_workflow(project)
-            
+            # Reuse the status refresh_data() already computed. Re-analysing
+            # here ran on every render (~30 Hz) and scans the whole job
+            # history per step, so idle CPU grew with each job run.
+            workflow_status = getattr(project, 'workflow_status', None)
+            if workflow_status is None:
+                workflow_status = self.analyzer.analyze_project_workflow(project)
+
             # Get status for each step
             steps = [
                 WorkflowStep.CAPTURE,
@@ -377,8 +382,13 @@ class ProjectStatusDisplay:
         
         # Add project rows with enhanced status cells
         for idx, project in enumerate(projects):
-            workflow_status = self.analyzer.analyze_project_workflow(project)
-            
+            # Reuse the status refresh_data() already computed. Re-analysing
+            # here ran on every render (~30 Hz) and scans the whole job
+            # history per step, so idle CPU grew with each job run.
+            workflow_status = getattr(project, 'workflow_status', None)
+            if workflow_status is None:
+                workflow_status = self.analyzer.analyze_project_workflow(project)
+
             # Get status for each step
             steps = [
                 WorkflowStep.CAPTURE,

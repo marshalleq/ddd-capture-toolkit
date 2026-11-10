@@ -6,6 +6,7 @@ Integrates with the job queue system to prevent duplicates and show real-time pr
 """
 
 import os
+import functools
 import rf_formats
 from enum import Enum
 from dataclasses import dataclass, field
@@ -777,6 +778,7 @@ class WorkflowAnalyzer:
         return project_base == input_basename or project_base == output_basename
 
     @staticmethod
+    @functools.lru_cache(maxsize=4096)
     def _normalize_to_project_base(file_path: str) -> str:
         """Reduce a file path to the project basename used by project_discovery.
 

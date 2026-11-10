@@ -268,9 +268,11 @@ class WorkflowControlCentre:
             slow main-loop tick can no longer freeze the blink for several
             hundred ms.
 
-          * **Rich Live runs at 30 Hz** so the worst-case visible lag between
-            a state change and the redraw is ~33 ms — close to the limit of
-            human perception for character echo.
+          * **Redraws happen only when something changed**: a data refresh,
+            a keystroke, or a cursor blink flip. Each one forces an immediate
+            refresh, so echo stays instant while an idle screen costs almost
+            nothing. Rebuilding the layout every 33 ms kept a CPU core busy
+            for as long as the control centre was open.
         """
         try:
             import termios
@@ -366,9 +368,11 @@ class WorkflowControlCentre:
                     self.current_input += key
                 return False
 
-            with Live(self.create_enhanced_layout(), refresh_per_second=30) as live:
+            with Live(self.create_enhanced_layout(), refresh_per_second=4) as live:
+                last_blink = None
                 while self.running:
                     now = time.time()
+                    changed = False
 
                     # Refresh project / job state on its own cadence, not
                     # every tick — refresh_data() can take a long time when
@@ -377,11 +381,14 @@ class WorkflowControlCentre:
                     if self.auto_refresh and (now - last_refresh) >= refresh_interval:
                         self.refresh_data()
                         last_refresh = now
+                        changed = True
 
                     # Blink state is computed at render time inside
-                    # create_command_input_panel — see that method for the
-                    # wall-clock-driven cadence. No need to update it here.
-                    live.update(self.create_enhanced_layout())
+                    # create_command_input_panel; rebuild when it flips.
+                    blink = int(now * 2) % 2
+                    if changed or blink != last_blink:
+                        live.update(self.create_enhanced_layout(), refresh=True)
+                        last_blink = blink
 
                     # Drain ALL queued input this tick. _drain_stdin_to_keys
                     # blocks up to tick_timeout for the first character so
@@ -397,9 +404,8 @@ class WorkflowControlCentre:
                         if bail:
                             continue
                         # One immediate re-render so the user sees their
-                        # typing reflected in the input bar without
-                        # waiting up to ~65 ms for the next tick.
-                        live.update(self.create_enhanced_layout())
+                        # typing reflected in the input bar straight away.
+                        live.update(self.create_enhanced_layout(), refresh=True)
 
         except (KeyboardInterrupt, EOFError):
             self.running = False
