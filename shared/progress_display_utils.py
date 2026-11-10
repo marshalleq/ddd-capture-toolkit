@@ -12,6 +12,9 @@ import sys
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, List
 
+# See workflow_control_centre.WORKFLOW_DEBUG.
+WORKFLOW_DEBUG = os.environ.get('DDD_WORKFLOW_DEBUG') == '1'
+
 try:
     from rich.text import Text
     from rich.measure import Measurement
@@ -206,6 +209,8 @@ class ProgressDisplayUtils:
         """
         # Debug logging to file
         def debug_log(message: str):
+            if not WORKFLOW_DEBUG:
+                return
             from datetime import datetime
             timestamp = datetime.now().strftime('%H:%M:%S')
             try:
@@ -524,6 +529,8 @@ def extract_specific_job_progress_info(job_manager, project_name: str, step_type
     
     # Debug logging
     def debug_log(message: str):
+        if not WORKFLOW_DEBUG:
+            return
         timestamp = datetime.now().strftime('%H:%M:%S')
         try:
             with open('workflow_debug.log', 'a', encoding='utf-8') as f:

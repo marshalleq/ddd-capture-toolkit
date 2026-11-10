@@ -14,6 +14,11 @@ import select
 from enum import Enum
 from typing import Dict, List, Optional, Any
 
+# workflow_debug.log is written only when DDD_WORKFLOW_DEBUG=1. Left on, it
+# logged every job in the history on every refresh: hundreds of file
+# opens per second and a log that grew by megabytes per session.
+WORKFLOW_DEBUG = os.environ.get('DDD_WORKFLOW_DEBUG') == '1'
+
 try:
     from rich.console import Console
     from rich.table import Table
@@ -84,7 +89,7 @@ class WorkflowControlCentre:
     """
     def __init__(self):
         # Initialize debug logging
-        self.debug_log_file = 'workflow_debug.log'
+        self.debug_log_file = 'workflow_debug.log' if WORKFLOW_DEBUG else None
         self._init_debug_logging()
         """Initialize the workflow control centre"""
         # Initialize components from existing modules
@@ -182,6 +187,8 @@ class WorkflowControlCentre:
     
     def _init_debug_logging(self):
         """Initialize debug logging to file"""
+        if not self.debug_log_file:
+            return
         try:
             # Clear the log file at startup
             with open(self.debug_log_file, 'w') as f:
@@ -256,34 +263,23 @@ class WorkflowControlCentre:
 
           * **Data refresh is decoupled from the render loop.** The expensive
             refresh_data() call (project discovery + job queue queries)
-            now runs on its own ~500 ms cadence, while the tick wakeup is
-            kept fast (~65 ms) for responsive input handling and a steady
-            cursor blink. Render cost stops dragging on input throughput.
+            now runs on its own cadence (~500 ms with jobs active, 2 s idle).
+            Keystrokes wake select() immediately, so input stays responsive
+            whatever the tick length. Render cost stops dragging on input
+            throughput.
 
-          * **Cursor blink is wall-clock driven and computed at render time**,
-            not toggled per-iteration. `create_command_input_panel` reads
-            `int(time.time() * 2) % 2` directly, so every render — whether
-            triggered by the main loop, by Rich's own auto-refresh thread,
-            or by a keystroke — picks up the current 2 Hz blink state. A
-            slow main-loop tick can no longer freeze the blink for several
-            hundred ms.
-
-          * **Redraws happen only when something changed**: a data refresh,
-            a keystroke, or a cursor blink flip. Each one forces an immediate
-            refresh, so echo stays instant while an idle screen costs almost
-            nothing. Rebuilding the layout every 33 ms kept a CPU core busy
-            for as long as the control centre was open.
+          * **Redraws happen only when something changed**: a data refresh
+            or a keystroke. Each one forces an immediate refresh and Rich's
+            own auto-refresh is off, so echo stays instant while an idle
+            screen costs almost nothing. Rebuilding the layout every 33 ms
+            kept a CPU core busy for as long as the control centre was open.
         """
         try:
             import termios
             import tty
 
-            # Initialize command input buffer. `input_cursor_blink` is kept
-            # as an attribute for back-compat (other call sites may read it),
-            # but the actual rendered blink state is recomputed from
-            # time.time() inside create_command_input_panel.
+            # Initialize command input buffer.
             self.current_input = ""
-            self.input_cursor_blink = True
 
             # Save original terminal settings
             old_settings = termios.tcgetattr(sys.stdin)
@@ -291,19 +287,23 @@ class WorkflowControlCentre:
 
             # Cadences:
             #   tick_timeout — how long select() blocks each iteration when
-            #     idle. Drives input responsiveness when no key is queued.
+            #     idle. A keystroke ends the wait early, so this only sets how
+            #     promptly a due refresh starts.
             #   refresh_interval — how often refresh_data() is allowed to run.
             #     Independent of tick_timeout. The expensive scan only fires
-            #     this often even if the tick loop spins much faster.
-            tick_timeout = 0.033          # ~30 Hz tick (matches Live rate)
-            refresh_interval = 0.5
+            #     this often even if the tick loop spins much faster. Fast
+            #     while jobs are running or queued (live progress), slower
+            #     when idle, where only files appearing on disk can change.
+            tick_timeout = 0.1
+            active_refresh_interval = 0.5
+            idle_refresh_interval = 2.0
             last_refresh = 0.0
 
             def _drain_stdin_to_keys():
                 """Read every character currently available on stdin, returning
-                them in order. The first read uses tick_timeout (so an idle
-                loop doesn't busy-spin); subsequent reads are non-blocking and
-                stop as soon as the kernel input buffer is empty. This is the
+                them in order. The wait uses tick_timeout (so an idle loop
+                doesn't busy-spin); one read then takes everything queued in
+                the kernel input buffer. This is the
                 fix for the "press one key, two come up together" symptom — a
                 fast typist queues several characters during a slow render
                 tick and we now consume them all instead of one per tick.
@@ -311,19 +311,18 @@ class WorkflowControlCentre:
                 ready, _, _ = select.select([sys.stdin], [], [], tick_timeout)
                 if not ready:
                     return []
-                chars = [sys.stdin.read(1)]
-                while True:
-                    more, _, _ = select.select([sys.stdin], [], [], 0)
-                    if not more:
-                        break
-                    chars.append(sys.stdin.read(1))
-                return chars
+                # Read the fd directly: sys.stdin.read(1) pulls every queued
+                # byte into Python's buffer, where select() can't see it, so
+                # all but the first character waited for the next keypress.
+                data = os.read(sys.stdin.fileno(), 1024)
+                return list(data.decode('utf-8', errors='replace'))
 
             def _handle_key(key, live):
                 """Process one keystroke. Returns True if the caller should
                 bail out of the rest of this tick (e.g. self.running became
                 False, or a live.stop()/live.start() cycle was performed and
                 a fresh render is already in flight)."""
+                nonlocal last_refresh
                 if key == '\r' or key == '\n':  # Enter
                     if self.current_input.strip():
                         cmd = self.current_input.strip().lower()
@@ -354,6 +353,8 @@ class WorkflowControlCentre:
                             return True
                         else:
                             self.handle_command(cmd)
+                            # Show the effect now, not at the next idle refresh.
+                            last_refresh = 0.0
                     else:
                         self.current_input = ""
                 elif key == '\x7f' or key == '\x08':  # Backspace
@@ -368,27 +369,23 @@ class WorkflowControlCentre:
                     self.current_input += key
                 return False
 
-            with Live(self.create_enhanced_layout(), refresh_per_second=4) as live:
-                last_blink = None
+            with Live(self.create_enhanced_layout(), auto_refresh=False) as live:
                 while self.running:
                     now = time.time()
-                    changed = False
 
                     # Refresh project / job state on its own cadence, not
                     # every tick — refresh_data() can take a long time when
                     # many jobs are running, and dragging it through the
                     # input loop is what was throttling keystrokes before.
+                    jobs_active = any(
+                        any(s in str(job.get('status', '')).lower() for s in ('running', 'queued'))
+                        for job in self.current_jobs
+                    )
+                    refresh_interval = active_refresh_interval if jobs_active else idle_refresh_interval
                     if self.auto_refresh and (now - last_refresh) >= refresh_interval:
                         self.refresh_data()
                         last_refresh = now
-                        changed = True
-
-                    # Blink state is computed at render time inside
-                    # create_command_input_panel; rebuild when it flips.
-                    blink = int(now * 2) % 2
-                    if changed or blink != last_blink:
                         live.update(self.create_enhanced_layout(), refresh=True)
-                        last_blink = blink
 
                     # Drain ALL queued input this tick. _drain_stdin_to_keys
                     # blocks up to tick_timeout for the first character so
@@ -791,14 +788,10 @@ class WorkflowControlCentre:
         input_table.add_column("Examples", style="dim", width=20)
         
         # Show current input buffer (if any) or prompt.
-        # Blink state is computed at render time from wall-clock time so it
-        # stays in lockstep with Rich's auto-refresh thread (which can fire
-        # between main-loop ticks); previously the blink was only updated
-        # when the main loop ticked, which caused visible cadence hiccups
-        # whenever a tick was delayed by a heavy refresh_data call.
+        # Solid cursor: a blinking one forced a full-screen redraw twice a
+        # second, which was most of the control centre's idle CPU.
         current_input = getattr(self, 'current_input', '')
-        cursor_blink = int(time.time() * 2) % 2 == 0   # 2 Hz, wall-clock driven
-        cursor = "█" if cursor_blink else " "
+        cursor = "█"
         display_input = f"{current_input}{cursor}"
         
         input_table.add_row(

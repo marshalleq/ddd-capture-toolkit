@@ -10,6 +10,9 @@ import time
 from typing import List, Dict, Optional, Set
 from dataclasses import dataclass
 
+# See workflow_control_centre.WORKFLOW_DEBUG.
+WORKFLOW_DEBUG = os.environ.get('DDD_WORKFLOW_DEBUG') == '1'
+
 try:
     from rich.console import Console, Group
     from rich.table import Table
@@ -69,6 +72,8 @@ class ProjectStatusDisplay:
     
     def _debug_log(self, message: str):
         """Log debug message to workflow debug log file"""
+        if not WORKFLOW_DEBUG:
+            return
         from datetime import datetime
         timestamp = datetime.now().strftime('%H:%M:%S')
         try:
