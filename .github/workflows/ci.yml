@@ -65,31 +65,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./setup.sh --easy --no-update-check
 
-      - name: Dependency check inside the environment
-        run: conda run --no-capture-output -n ddd-capture-toolkit python check_dependencies.py
-
-      # check_dependencies.py only reports some programs; on Linux easy mode
-      # every one of these must be installed and start.
-      - name: Installed programs start
-        run: |
-          for cmd in "vhs-decode --help" "tape-decode --help" "tbc-video-export --version" \
-                     "ld-chroma-decoder --version" "ld-dropout-correct --version" "ld-process-vbi --version" \
-                     "ld-lds-converter --version" "ld-ldf-reader --help"; do
-            echo "== $cmd"
-            # shellcheck disable=SC2086
-            conda run -n ddd-capture-toolkit $cmd > /tmp/out 2>&1 || { cat /tmp/out; echo "::error::'$cmd' did not run"; exit 1; }
-            head -2 /tmp/out
-          done
-          # ld-analyse is a graphical viewer and cannot start without a display.
-          conda run -n ddd-capture-toolkit sh -c 'command -v ld-analyse' || { echo "::error::ld-analyse is not installed"; exit 1; }
-
-      - name: Tests inside the environment
-        run: |
-          for t in test_*.py; do
-            echo "::group::$t"
-            conda run --no-capture-output -n ddd-capture-toolkit python "$t"
-            echo "::endgroup::"
-          done
+      - name: Check the installed toolkit
+        run: .github/scripts/check-installed.sh
 
       - name: Audit installed Python packages
         run: |
