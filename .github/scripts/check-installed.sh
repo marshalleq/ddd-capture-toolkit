@@ -23,7 +23,7 @@ echo "::endgroup::"
 echo "::group::Installed programs start"
 for cmd in "vhs-decode --help" "tape-decode --help" "tbc-video-export --version" \
            "ld-chroma-decoder --version" "ld-dropout-correct --version" "ld-process-vbi --version" \
-           "ld-lds-converter --version" "ld-ldf-reader --help"; do
+           "ld-lds-converter --version"; do
     echo "== $cmd"
     out=$(mktemp)
     # shellcheck disable=SC2086
@@ -32,6 +32,20 @@ for cmd in "vhs-decode --help" "tape-decode --help" "tbc-video-export --version"
     fi
     head -2 "$out"; rm -f "$out"
 done
+# The ld-* helpers the decode and export stages run (tool_health.LD_TOOLS) must
+# each be the environment's own copy and able to start. tool_health knows both
+# ld-ldf-reader flavours (the compiled C reader prints its usage and exits
+# non-zero on --help, the Python one does not), so ask it rather than run them.
+in_env python -c '
+import sys, tool_health
+bad = []
+for report in tool_health.check_ld_tools():
+    lines, severity = tool_health.format_report(report)
+    print("\n".join(lines))
+    if severity != "ok":
+        bad.append(report["name"])
+sys.exit(f"not OK: {bad}" if bad else 0)
+' || { echo "::error::an ld-* helper is missing, outside the environment or cannot start"; exit 1; }
 # ld-analyse is a graphical viewer and cannot start without a display.
 in_env sh -c 'command -v ld-analyse' || { echo "::error::ld-analyse is not installed"; exit 1; }
 echo "::endgroup::"
