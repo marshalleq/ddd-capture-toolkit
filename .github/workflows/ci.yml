@@ -1,0 +1,75 @@
+name: CI
+
+run-name: ${{ github.event_name == 'pull_request' && format('Check - {0}', github.event.pull_request.title) || format('CI - {0}', github.event_name) }}
+
+# One job, named "test", is the required check for pull requests. It lints
+# the workflow and shell files, checks every Python file compiles without
+# warnings, then installs the toolkit the way a user does (./setup.sh --easy,
+# into a fresh conda environment) and runs the dependency check and the tests
+# inside it.
+#
+# Nothing in the toolkit pins its conda or pip packages, so each install
+# takes the newest releases. The weekly scheduled run is what notices when a
+# new upstream release breaks the install or the toolkit: GitHub emails the
+# owner when it fails. It also audits the installed Python packages; on the
+# scheduled run, a known vulnerability with a fix available fails the job.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Lint workflow files
+        run: docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 -color
+
+      - name: Lint shell scripts (errors)
+        run: |
+          mapfile -t scripts < <(git ls-files '*.sh' setup.sh start.sh | grep -v '^external/' | sort -u)
+          docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:v0.11.0 -S error "${scripts[@]}"
+
+      - name: Python files compile without warnings
+        run: |
+          mapfile -t files < <(git ls-files '*.py' | grep -v '^external/')
+          python3 -W error -m compileall -q "${files[@]}"
+
+      - name: Put the runner's conda on PATH
+        run: echo "$CONDA/bin" >> "$GITHUB_PATH"
+
+      - name: Install the toolkit (easy mode)
+        run: ./setup.sh --easy --no-update-check
+
+      - name: Dependency check inside the environment
+        run: conda run --no-capture-output -n ddd-capture-toolkit python check_dependencies.py
+
+      - name: Tests inside the environment
+        run: |
+          for t in test_*.py; do
+            echo "::group::$t"
+            conda run --no-capture-output -n ddd-capture-toolkit python "$t"
+            echo "::endgroup::"
+          done
+
+      - name: Audit installed Python packages
+        run: |
+          site=$(conda run -n ddd-capture-toolkit python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+          # pip-audit exits 1 both for "found vulnerabilities" and for errors;
+          # the report script tells them apart by reading its JSON output.
+          pipx run --spec pip-audit==2.10.1 pip-audit --path "$site" --format json --output "$RUNNER_TEMP/pip-audit.json" --progress-spinner off || true
+          python3 -I .github/scripts/pip-audit-report.py "$RUNNER_TEMP/pip-audit.json" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          FAIL_ON_FIXED: ${{ github.event_name == 'schedule' }}

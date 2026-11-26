@@ -94,6 +94,19 @@ Full results and method: [Decoders](https://github.com/marshalleq/ddd-capture-to
 
 Linux and macOS are both first-class platforms. On macOS the decoders (`tape-decode` and `vhs-decode`), the export and the benchmark have been run on an Apple M1 Pro and an M2; **capturing on a Mac has not been tested yet**, and `./setup.sh --performance` has not been run end to end on one (easy mode has no prebuilt `tape-decode` for macOS). Windows has the groundwork in place but needs testers. See [Getting Started](https://github.com/marshalleq/ddd-capture-toolkit/wiki/Getting-Started) in the wiki for platform-specific notes.
 
+## Security and updates
+
+What runs by itself:
+
+- **Every pull request, every push to `main`, and every Monday** the `test` check lints the workflow and shell files, checks every Python file compiles without warnings, then installs the toolkit the way you do (`./setup.sh --easy` into a fresh conda environment) and runs `check_dependencies.py` and the tests inside it. The toolkit installs the newest conda and pip packages and decoder releases each time, so the Monday run is what notices when a new upstream release breaks it; GitHub emails you when it fails. It also audits the installed Python packages with pip-audit, and on the Monday run fails if one has a known vulnerability with a fix available.
+- **Every day** the advisory watch checks what Dependabot cannot see: security advisories that vhs-decode, ld-decode, tbc-video-export, tape-decode-rs and the Domesday Duplicator fork publish in their own repositories, a newer FFmpeg point release for performance mode, a newer tbc-video-export AppImage, submodules behind their upstream, and licence changes. While anything applies it keeps one issue open, titled "Advisory watch: findings that apply to the toolkit".
+- **Dependabot** updates the GitHub Actions and any pinned pip or conda version, weekly. Patch and minor updates merge themselves once `test` passes; major updates wait for review. The Python version (`python=3.12`) is excluded: changing it is a deliberate decision.
+- **GitHub** scans the code (CodeQL default setup) and blocks pushes that contain credentials.
+
+An installed environment does not update itself: re-run `./setup.sh` to pick up newer packages and decoder releases.
+
+Package overrides: none.
+
 ## More information
 
 Everything beyond the quick install — workflow, individual pipeline steps, troubleshooting, the scheduler, validation, configuration — is in the **[project wiki](https://github.com/marshalleq/ddd-capture-toolkit/wiki)**. Highlights:
