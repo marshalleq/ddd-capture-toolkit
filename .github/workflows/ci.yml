@@ -47,6 +47,11 @@ jobs:
           mapfile -t files < <(git ls-files '*.py' | grep -v '^external/')
           python3 -W error -m compileall -q "${files[@]}"
 
+      # The system packages setup.sh lists for Debian/Ubuntu, plus the system
+      # ffmpeg easy mode needs (conda's ffmpeg has no libsoxr).
+      - name: Install the system packages a user installs first
+        run: sudo apt-get update && sudo apt-get install -y sox pv dvdauthor genisoimage ffmpeg
+
       - name: Put the runner's conda on PATH
         run: echo "$CONDA/bin" >> "$GITHUB_PATH"
 
