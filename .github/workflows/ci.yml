@@ -55,7 +55,11 @@ jobs:
       - name: Put the runner's conda on PATH
         run: echo "$CONDA/bin" >> "$GITHUB_PATH"
 
+      # GITHUB_TOKEN lifts GitHub's anonymous API limit for install-tbc-tools.sh;
+      # runners share addresses, so without it the lookup can be refused.
       - name: Install the toolkit (easy mode)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./setup.sh --easy --no-update-check
 
       - name: Dependency check inside the environment
