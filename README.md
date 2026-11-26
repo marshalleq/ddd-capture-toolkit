@@ -30,6 +30,10 @@ It runs entirely in a terminal (no X server, no desktop required), so a dedicate
 
 ## Quick install
 
+First install the system packages setup needs (`./setup.sh --help` lists them for each system).
+On Debian or Ubuntu: `sudo apt install sox pv dvdauthor genisoimage ffmpeg` (easy mode needs the system
+`ffmpeg`, because conda's has no libsoxr). Then:
+
 ```bash
 git clone --recurse-submodules https://github.com/marshalleq/ddd-capture-toolkit.git
 cd ddd-capture-toolkit
