@@ -1,0 +1,60 @@
+name: Performance-mode build
+
+run-name: Performance build - ${{ github.event_name == 'pull_request' && github.event.pull_request.title || github.event_name }}
+
+# Installs the toolkit with ./setup.sh --performance, which compiles from
+# source: the ld-tools from the external/ld-decode submodule commit, vhs-decode
+# at its newest release, tape-decode, FFmpeg at FFMPEG_VERSION in
+# build-scripts/build-ffmpeg.sh, and ld-ldf-reader. Then it runs the same
+# checks as the easy-mode CI (check-installed.sh), plus a check that the
+# compiled FFmpeg is the pinned version with libsoxr.
+#
+# It takes 30-60 minutes, so it is not the required check. It runs every
+# week (GitHub emails the owner if it fails), on pull requests that change
+# what performance mode builds, and by hand.
+
+on:
+  schedule:
+    - cron: '41 3 * * 1'
+  pull_request:
+    paths:
+      - setup.sh
+      - build-scripts/**
+      - environment*.yml
+      - requirements.txt
+      - .gitmodules
+      - external/**
+      - .github/workflows/performance-build.yml
+      - .github/scripts/check-installed.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    name: performance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      # As the README's install does: git clone --recurse-submodules
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # The system packages setup.sh lists for Debian/Ubuntu. Rust (cargo),
+      # which performance mode needs, is already on GitHub's runners.
+      - name: Install the system packages a user installs first
+        run: sudo apt-get update && sudo apt-get install -y sox pv dvdauthor genisoimage
+
+      - name: Put the runner's conda on PATH
+        run: echo "$CONDA/bin" >> "$GITHUB_PATH"
+
+      - name: Install the toolkit (performance mode)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./setup.sh --performance --force --no-update-check
+
+      - name: Check the installed toolkit
+        run: .github/scripts/check-installed.sh "$(sed -n 's/^FFMPEG_VERSION="\(.*\)"$/\1/p' build-scripts/build-ffmpeg.sh)"
