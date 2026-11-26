@@ -14,7 +14,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/common/conda-setup.sh"
 
 # FFmpeg version to build
-FFMPEG_VERSION="7.1"
+FFMPEG_VERSION="7.1.5"
 FFMPEG_URL="https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
 
 show_usage() {
