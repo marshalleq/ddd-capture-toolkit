@@ -1,0 +1,5 @@
+# Upstream security advisories (GHSA IDs) that have been reviewed for the
+# toolkit. One per line: the ID, then a short note on what was decided.
+# The daily advisory watch reports any advisory published by an upstream
+# project (see EXPECTED_LICENCES in .github/scripts/check-upstream.py) that is
+# not listed here. None had been published when this file was created.

@@ -294,7 +294,9 @@ def check_system_commands():
         print(f"      pv (pipeviewer for progress) - not available (optional)")
     
     all_good = True
-    
+    # Reported, but their absence does not fail the check.
+    optional_commands = {'mono'}
+
     for cmd, description in commands.items():
         try:
             result = subprocess.run([cmd, '--version'], 
@@ -312,16 +314,16 @@ def check_system_commands():
                 print(f"    {description} - {version_line} OK")
             else:
                 print(f"    {description} - command failed (exit code {result.returncode})")
-                all_good = False
+                all_good = all_good and cmd in optional_commands
         except subprocess.TimeoutExpired:
             print(f"    {description} - command timeout")
-            all_good = False
+            all_good = all_good and cmd in optional_commands
         except FileNotFoundError:
             print(f"    {description} - not found in PATH")
-            all_good = False
+            all_good = all_good and cmd in optional_commands
         except Exception as e:
             print(f"    {description} - error: {e}")
-            all_good = False
+            all_good = all_good and cmd in optional_commands
     
     return all_good and ld_health_ok
 

@@ -1,0 +1,51 @@
+name: Advisory watch
+
+run-name: Advisory watch - ${{ github.event_name }}
+
+# Dependabot only sees pinned conda/pip packages and GitHub Actions. Every
+# day this checks the decoders and FFmpeg the toolkit installs or compiles
+# (see .github/scripts/check-upstream.py): advisories published in the
+# upstream repositories, a newer FFmpeg point release, a newer
+# tbc-video-export AppImage, submodules behind upstream, and licence changes.
+# It keeps one open issue up to date while something applies and closes it
+# when nothing does. If a check cannot run, the job fails (so GitHub emails)
+# instead of reporting "all clear".
+
+on:
+  schedule:
+    - cron: '29 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    name: watch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Run the checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTPUT_FILE: ${{ runner.temp }}/findings.md
+        run: python3 -I .github/scripts/check-upstream.py
+
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="Advisory watch: findings that apply to the toolkit"
+          existing="$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")"
+          if [ -s "$RUNNER_TEMP/findings.md" ]; then
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --body-file "$RUNNER_TEMP/findings.md"
+            else
+              gh issue create --title "$title" --body-file "$RUNNER_TEMP/findings.md"
+            fi
+          elif [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "The daily check ran and nothing applies any more."
+          fi

@@ -1,0 +1,40 @@
+# Weekly version updates. Minor and patch bumps are grouped into one PR per
+# ecosystem; major bumps arrive as separate PRs and are never auto-merged.
+# Security updates are raised separately by GitHub as soon as an advisory lands.
+#
+# Most of the toolkit's dependencies are deliberately unpinned: every
+# ./setup.sh run installs the newest conda and pip packages and the newest
+# vhs-decode, tbc-tools and tape-decode releases. Dependabot only has
+# something to bump where a version is written down. The weekly CI install
+# (ci.yml) and the daily advisory watch (advisory-watch.yml) cover the rest.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: conda
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      conda-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # python=3.12 is a deliberate choice. Dependabot would call 3.12 -> 3.13
+      # a "minor" update and auto-merge it; a Python upgrade is the owner's
+      # decision.
+      - dependency-name: python
+        update-types: [version-update:semver-minor, version-update:semver-major]

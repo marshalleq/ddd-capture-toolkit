@@ -52,8 +52,8 @@ class ProcessKiller:
         'ld-chroma-decoder',
         'ld-chroma-encoder',
         'ld-ldf-reader',
-        'ffmpeg.*\.tbc',  # ffmpeg processes working on TBC files
-        'ffmpeg.*_ffv1\.mkv',  # ffmpeg processes creating FFV1 files
+        r'ffmpeg.*\.tbc',  # ffmpeg processes working on TBC files
+        r'ffmpeg.*_ffv1\.mkv',  # ffmpeg processes creating FFV1 files
         'python.*vhs.*decode',  # Python VHS decode scripts
         'python.*tbc.*export',  # Python TBC export scripts
     ]

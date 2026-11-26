@@ -67,13 +67,38 @@ fi
 PY="$(command -v python3 || command -v python || true)"
 [[ -x "${PREFIX}/bin/python" ]] && PY="${PREFIX}/bin/python"
 if [[ -z "$PY" ]]; then log_error "Python is needed to read the release"; exit 1; fi
-ASSET="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" \
-    | "$PY" -c "
+# This lookup uses GitHub's API, which allows 60 requests an hour per internet address
+# without a token (a shared address, such as a university or a CI runner, can use that
+# up). A refused lookup is reported as such, not as a missing bundle. Set GITHUB_TOKEN
+# to a GitHub token to lift the limit.
+AUTH=()
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
+RELEASE_JSON="$(mktemp)"
+HTTP_CODE="$(curl -sSL ${AUTH[@]+"${AUTH[@]}"} -o "$RELEASE_JSON" -w '%{http_code}' \
+    "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}")" || {
+    rm -f "$RELEASE_JSON"
+    log_error "Could not reach api.github.com to look up vhs-decode ${VERSION} (offline?)"; exit 1
+}
+if [[ "$HTTP_CODE" != "200" ]]; then
+    rm -f "$RELEASE_JSON"
+    if [[ "$HTTP_CODE" == "403" || "$HTTP_CODE" == "429" ]]; then
+        log_error "GitHub refused the release lookup (HTTP ${HTTP_CODE}): its limit of 60 requests an hour"
+        log_error "per internet address without a token is used up. Wait an hour and run setup again,"
+        log_error "or set GITHUB_TOKEN to a GitHub token first."
+    else
+        log_error "Looking up vhs-decode release ${VERSION} on GitHub returned HTTP ${HTTP_CODE}"
+    fi
+    exit 1
+fi
+ASSET="$("$PY" -c "
 import json, sys
 suffix = 'linux_${ARCH}.tar.xz'
-names = [a['name'] for a in json.load(sys.stdin).get('assets', [])]
+names = [a['name'] for a in json.load(open(sys.argv[1])).get('assets', [])]
 print(next((n for n in names if n.startswith('tbc-tools_') and n.endswith(suffix)), ''))
-")" || ASSET=""
+" "$RELEASE_JSON")" || { rm -f "$RELEASE_JSON"; log_error "Could not read GitHub's reply for vhs-decode ${VERSION}"; exit 1; }
+rm -f "$RELEASE_JSON"
 if [[ -z "$ASSET" ]]; then
     log_warning "vhs-decode ${VERSION} has no tbc-tools bundle for Linux ${ARCH}; ld-analyse will not be available"
     exit 0
