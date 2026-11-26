@@ -68,6 +68,19 @@ jobs:
       - name: Dependency check inside the environment
         run: conda run --no-capture-output -n ddd-capture-toolkit python check_dependencies.py
 
+      # check_dependencies.py only reports some programs; on Linux easy mode
+      # every one of these must be installed and start.
+      - name: Installed programs start
+        run: |
+          for cmd in "vhs-decode --help" "tape-decode --help" "tbc-video-export --version" \
+                     "ld-chroma-decoder --version" "ld-dropout-correct --version" "ld-process-vbi --version" \
+                     "ld-lds-converter --version" "ld-ldf-reader --help" "ld-analyse --version"; do
+            echo "== $cmd"
+            # shellcheck disable=SC2086
+            conda run -n ddd-capture-toolkit $cmd > /tmp/out 2>&1 || { cat /tmp/out; echo "::error::'$cmd' did not run"; exit 1; }
+            head -2 /tmp/out
+          done
+
       - name: Tests inside the environment
         run: |
           for t in test_*.py; do
