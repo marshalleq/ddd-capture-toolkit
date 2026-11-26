@@ -74,12 +74,14 @@ jobs:
         run: |
           for cmd in "vhs-decode --help" "tape-decode --help" "tbc-video-export --version" \
                      "ld-chroma-decoder --version" "ld-dropout-correct --version" "ld-process-vbi --version" \
-                     "ld-lds-converter --version" "ld-ldf-reader --help" "ld-analyse --version"; do
+                     "ld-lds-converter --version" "ld-ldf-reader --help"; do
             echo "== $cmd"
             # shellcheck disable=SC2086
             conda run -n ddd-capture-toolkit $cmd > /tmp/out 2>&1 || { cat /tmp/out; echo "::error::'$cmd' did not run"; exit 1; }
             head -2 /tmp/out
           done
+          # ld-analyse is a graphical viewer and cannot start without a display.
+          conda run -n ddd-capture-toolkit sh -c 'command -v ld-analyse' || { echo "::error::ld-analyse is not installed"; exit 1; }
 
       - name: Tests inside the environment
         run: |
