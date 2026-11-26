@@ -11,7 +11,10 @@ def extract_audio_segment(video_or_audio_file, start_seconds=10, duration_second
     """
     Extract a segment of audio from video or audio file for analysis
     """
-    temp_wav = tempfile.mktemp(suffix='.wav')
+    # mkstemp creates the file, so no other process can take the name first;
+    # ffmpeg's -y then overwrites it.
+    fd, temp_wav = tempfile.mkstemp(suffix='.wav')
+    os.close(fd)
     
     ffmpeg_cmd = [
         'ffmpeg', '-y', '-v', 'quiet',
